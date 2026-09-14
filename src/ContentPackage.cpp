@@ -3,7 +3,7 @@
 #include "Log.h"
 
 #include "../third_party/json/json.hpp"
-#include "miniz.h"
+#include "../third_party/miniz/miniz.h"
 
 #include <memory>
 
