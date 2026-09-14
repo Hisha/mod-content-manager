@@ -1,6 +1,7 @@
 #include "Chat.h"
 #include "CommandScript.h"
 #include "ContentManager.h"
+#include "ContentPackage.h"
 #include "RBAC.h"
 
 using namespace Acore::ChatCommands;
@@ -65,23 +66,51 @@ public:
         return true;
     }
 
-    static bool HandleScanCommand(ChatHandler* handler)
-    {
-        auto packages = sContentManager.ScanPatchHold();
+	static bool HandleScanCommand(ChatHandler* handler)
+	{
+	    auto packages = sContentManager.ScanPatchHold();
 
-        handler->PSendSysMessage(
-            "Content Manager found {} EPF package(s).",
-            packages.size());
+	    handler->PSendSysMessage(
+	        "Content Manager found {} EPF package(s).",
+	        packages.size());
 
-        for (auto const& package : packages)
-        {
-            handler->PSendSysMessage(
-                " - {}",
-                package.filename);
-        }
+	    for (auto const& package : packages)
+	    {
+	        ContentPackage contentPackage(package.path);
+	        auto result = contentPackage.Validate();
 
-        return true;
-    }
+	        handler->PSendSysMessage(
+	            " - {}",
+	            package.filename);
+
+	        if (!result.valid)
+	        {
+	            handler->PSendSysMessage(
+	                "   INVALID: {}",
+	                result.error);
+
+	            continue;
+	        }
+
+	        handler->PSendSysMessage(
+	            "   Package: {}",
+	            result.manifest.packageKey);
+
+	        handler->PSendSysMessage(
+	            "   Name: {}",
+	            result.manifest.name);
+
+	        handler->PSendSysMessage(
+	            "   Version: {}",
+	            result.manifest.version);
+
+	        handler->PSendSysMessage(
+	            "   Schema: {}",
+	            result.manifest.schema);
+	    }
+
+	    return true;
+	}
 };
 
 void AddSC_content_manager_commands()
