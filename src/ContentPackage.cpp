@@ -2,8 +2,8 @@
 
 #include "Log.h"
 
-#include "../third_party/json/json.hpp"
-#include "../third_party/miniz/miniz.h"
+#include "third_party/json/json.hpp"
+#include "third_party/miniz/miniz.h"
 
 #include <memory>
 
