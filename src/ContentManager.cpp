@@ -2,9 +2,54 @@
 
 #include "Config.h"
 #include "Log.h"
-#include "World.h"
 
 #include <algorithm>
+#include <cctype>
+
+namespace
+{
+    bool EnsureDirectory(std::string const& directory, char const* description)
+    {
+        std::error_code ec;
+        std::filesystem::path path(directory);
+
+        if (std::filesystem::exists(path, ec))
+        {
+            if (!std::filesystem::is_directory(path, ec))
+            {
+                LOG_ERROR(
+                    "module",
+                    "mod-content-manager: {} '{}' exists but is not a directory",
+                    description,
+                    directory);
+
+                return false;
+            }
+
+            return true;
+        }
+
+        if (!std::filesystem::create_directories(path, ec))
+        {
+            LOG_ERROR(
+                "module",
+                "mod-content-manager: failed to create {} '{}': {}",
+                description,
+                directory,
+                ec.message());
+
+            return false;
+        }
+
+        LOG_INFO(
+            "module",
+            "mod-content-manager: created {} '{}'",
+            description,
+            directory);
+
+        return true;
+    }
+}
 
 ContentManager& ContentManager::Instance()
 {
@@ -39,30 +84,6 @@ void ContentManager::LoadConfig()
 		_workDirectory,
 		_outputDirectory);
 		
-		if (_enabled)
-		{
-		    bool directoriesOk = true;
-
-		    directoriesOk &= EnsureDirectory(
-		        _patchHoldDirectory,
-		        "patchhold directory");
-
-		    directoriesOk &= EnsureDirectory(
-		        _workDirectory,
-		        "work directory");
-
-		    directoriesOk &= EnsureDirectory(
-		        _outputDirectory,
-		        "output directory");
-
-		    if (!directoriesOk)
-		    {
-		        LOG_ERROR(
-		            "module",
-		            "mod-content-manager: one or more required directories "
-		            "could not be initialized");
-		    }
-		}	
 }
 
 bool ContentManager::IsEnabled() const
