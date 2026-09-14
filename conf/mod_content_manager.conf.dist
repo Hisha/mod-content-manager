@@ -1,0 +1,12 @@
+[worldserver]
+
+ContentManager.Enable = 1
+
+# Directory where portable .epf packages are dropped.
+ContentManager.PatchHoldDirectory = "/home/smithkt/azerothcore-wotlk/patchhold"
+
+# Working directory used while unpacking/building content.
+ContentManager.WorkDirectory = "/home/smithkt/azerothcore-wotlk/patchwork"
+
+# Final generated realm patches.
+ContentManager.OutputDirectory = "/home/smithkt/azerothcore-wotlk/patches"
