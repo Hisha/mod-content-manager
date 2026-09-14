@@ -2,7 +2,7 @@
 
 #include "Log.h"
 
-#include "json.hpp"
+#include "../third_party/json/json.hpp"
 #include "miniz.h"
 
 #include <memory>
