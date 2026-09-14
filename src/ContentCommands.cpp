@@ -51,10 +51,6 @@ public:
                 : "disabled");
 
         handler->PSendSysMessage(
-            "Realm: {}",
-            sContentManager.GetRealmName());
-
-        handler->PSendSysMessage(
             "PatchHold: {}",
             sContentManager.GetPatchHoldDirectory());
 
