@@ -2,8 +2,12 @@
 #include "CommandScript.h"
 #include "ContentManager.h"
 #include "ContentPackage.h"
+#include "ContentPackageRegistry.h"
 #include "MpqBuilder.h"
 #include "RBAC.h"
+
+#include <algorithm>
+#include <set>
 
 using namespace Acore::ChatCommands;
 
@@ -92,6 +96,8 @@ public:
     {
         static ChatCommandTable contentCommandTable =
         {
+            { "install", HandleInstallCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes },
+            { "uninstall", HandleUninstallCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes },
             {
                 "status",
                 HandleStatusCommand,
@@ -146,67 +152,163 @@ public:
         return true;
     }
 
-	static bool HandleScanCommand(ChatHandler* handler)
-	{
-	    auto packages = sContentManager.ScanAvailablePackages();
+    static bool HandleScanCommand(ChatHandler* handler)
+    {
+        auto installed = ContentPackageRegistry().GetInstalledPackages();
+        if (!installed.success)
+        {
+            handler->PSendSysMessage("Cannot read package states: {}", installed.error);
+            return false;
+        }
+        auto packages = sContentManager.ScanAvailablePackages();
+        handler->PSendSysMessage("Content Manager found {} EPF package(s).", packages.size());
+        std::set<std::string> displayed;
+        for (auto const& candidate : packages)
+        {
+            auto validation = ContentPackage(candidate.path).Validate();
+            if (!validation.valid)
+            {
+                handler->PSendSysMessage(" - {}: INVALID: {}", candidate.path.string(), validation.error);
+                continue;
+            }
+            auto const& manifest = validation.manifest;
+            auto row = std::find_if(installed.packages.begin(), installed.packages.end(),
+                [&](InstalledContentPackage const& package) { return package.packageKey == manifest.packageKey; });
+            handler->PSendSysMessage("Package: {}", manifest.packageKey);
+            if (row == installed.packages.end())
+                handler->SendSysMessage("  State: AVAILABLE");
+            else
+            {
+                ReportInstalledPackage(handler, *row);
+                displayed.insert(row->packageKey);
+            }
+            handler->PSendSysMessage("  Name: {}", manifest.name);
+            handler->PSendSysMessage("  Available version: {}", manifest.version);
+            handler->PSendSysMessage("  Provider: {}", candidate.provider);
+            handler->PSendSysMessage("  Source: {}", candidate.path.string());
+            handler->PSendSysMessage("  Schema: {}", manifest.schema);
+            handler->PSendSysMessage("  Content: {} item(s)", manifest.content.size());
+            for (auto const& entry : manifest.content)
+                handler->PSendSysMessage("    {} -> {}", entry.type, entry.target);
+        }
+        // Discovery cannot show a removed module. Still display its persistent row.
+        for (auto const& row : installed.packages)
+        {
+            if (displayed.count(row.packageKey))
+                continue;
+            handler->PSendSysMessage("Package: {}", row.packageKey);
+            ReportInstalledPackage(handler, row);
+            handler->PSendSysMessage("  Installed name: {}", row.name);
+            handler->SendSysMessage("  No valid EPF with this key is currently discovered.");
+        }
+        return true;
+    }
 
-	    handler->PSendSysMessage(
-	        "Content Manager found {} EPF package(s).",
-	        packages.size());
+    static void ReportInstalledPackage(ChatHandler* handler, InstalledContentPackage const& package)
+    {
+        std::error_code ec;
+        auto status = std::filesystem::status(package.sourcePath, ec);
+        if (ec == std::errc::no_such_file_or_directory || ec == std::errc::not_a_directory
+            || (!ec && !std::filesystem::exists(status)))
+            handler->SendSysMessage("  State: INSTALLED - SOURCE MISSING");
+        else if (ec || !std::filesystem::is_regular_file(status))
+            handler->PSendSysMessage("  State: INSTALLED - SOURCE UNAVAILABLE: {}",
+                ec ? ec.message() : "Source is not a regular file");
+        else
+            handler->SendSysMessage("  State: INSTALLED");
+        handler->PSendSysMessage("  Installed version: {}", package.version);
+        handler->PSendSysMessage("  Installed provider: {}", package.provider);
+        handler->PSendSysMessage("  Installed source: {}", package.sourcePath);
+        handler->PSendSysMessage("  Installed at: {}", package.installedAt);
+    }
 
-		handler->PSendSysMessage(
-			"Module Directory: {}",
-			sContentManager.GetModuleDirectory());
-				
-	    for (auto const& package : packages)
-	    {
-	        ContentPackage contentPackage(package.path);
-	        auto result = contentPackage.Validate();
+    static bool HandleInstallCommand(ChatHandler* handler, std::string packageKey)
+    {
+        if (packageKey.empty())
+        {
+            handler->SendSysMessage("Usage: .content install <package-key>");
+            return false;
+        }
+        std::vector<ContentPackageCandidate> matches;
+        for (auto const& candidate : sContentManager.ScanAvailablePackages())
+        {
+            auto validation = ContentPackage(candidate.path).Validate();
+            // Count any readable manifest declaring this key, even when a later
+            // content validation fails. Never choose arbitrarily between matches.
+            if (validation.manifest.packageKey == packageKey)
+                matches.push_back(candidate);
+        }
+        if (matches.empty())
+        {
+            handler->PSendSysMessage("Package '{}' is not available.", packageKey);
+            return false;
+        }
+        if (matches.size() != 1)
+        {
+            handler->PSendSysMessage("Cannot install '{}': multiple discovered EPFs declare this package key.", packageKey);
+            for (auto const& candidate : matches)
+                handler->PSendSysMessage("  Conflict: {} (provider: {})", candidate.path.string(), candidate.provider);
+            return false;
+        }
+        auto const& candidate = matches.front();
+        // Validate again immediately before asking the registry to change desired state.
+        auto validation = ContentPackage(candidate.path).Validate();
+        if (!validation.valid || validation.manifest.packageKey != packageKey)
+        {
+            handler->PSendSysMessage("Cannot install '{}': {}", packageKey,
+                validation.valid ? "Package key changed during validation" : validation.error);
+            return false;
+        }
+        std::error_code ec;
+        auto source = std::filesystem::canonical(candidate.path, ec);
+        if (ec)
+        {
+            handler->PSendSysMessage("Cannot resolve package source: {}", ec.message());
+            return false;
+        }
+        auto const& manifest = validation.manifest;
+        auto result = ContentPackageRegistry().Install({manifest.packageKey, manifest.name,
+            manifest.version, candidate.provider, source.string(), {}});
+        if (!result.success)
+        {
+            handler->PSendSysMessage("Install failed: {}", result.error);
+            return false;
+        }
+        if (!result.changed)
+        {
+            handler->PSendSysMessage("Package '{}' is already installed. Installed metadata was not changed.", packageKey);
+            return true;
+        }
+        handler->SendSysMessage("Installed package:");
+        handler->PSendSysMessage("  {} {}", packageKey, manifest.version);
+        handler->PSendSysMessage("  Provider: {}", candidate.provider);
+        handler->SendSysMessage("Only the desired package set changed. A future content build is required to affect clients; no patch was rebuilt or published.");
+        return true;
+    }
 
-	        handler->PSendSysMessage(
-	            " - {}",
-	            package.filename);
+    static bool HandleUninstallCommand(ChatHandler* handler, std::string packageKey)
+    {
+        if (packageKey.empty())
+        {
+            handler->SendSysMessage("Usage: .content uninstall <package-key>");
+            return false;
+        }
+        auto result = ContentPackageRegistry().Uninstall(packageKey);
+        if (!result.success)
+        {
+            handler->PSendSysMessage("Uninstall failed: {}", result.error);
+            return false;
+        }
+        if (!result.changed)
+        {
+            handler->PSendSysMessage("Package '{}' is not installed.", packageKey);
+            return true;
+        }
+        handler->PSendSysMessage("Uninstalled package: {}", packageKey);
+        handler->SendSysMessage("The EPF was preserved. A future content build is required to affect clients; no patch was rebuilt or published.");
+        return true;
+    }
 
-	        if (!result.valid)
-	        {
-	            handler->PSendSysMessage(
-	                "   INVALID: {}",
-	                result.error);
-
-	            continue;
-	        }
-
-	        handler->PSendSysMessage(
-	            "   Package: {}",
-	            result.manifest.packageKey);
-
-	        handler->PSendSysMessage(
-	            "   Name: {}",
-	            result.manifest.name);
-
-	        handler->PSendSysMessage(
-	            "   Version: {}",
-	            result.manifest.version);
-
-	        handler->PSendSysMessage(
-	            "   Schema: {}",
-	            result.manifest.schema);
-				
-			handler->PSendSysMessage(
-			    "   Content: {} item(s)",
-			    result.manifest.content.size());
-
-			for (auto const& entry : result.manifest.content)
-			{
-			    handler->PSendSysMessage(
-			        "     {} -> {}",
-			        entry.type,
-			        entry.target);
-			}	
-	    }
-
-	    return true;
-	}
 	static bool HandleStageCommand(
 	    ChatHandler* handler,
 	    std::string packageKey)
@@ -313,3 +415,4 @@ void AddSC_content_manager_commands()
 {
     new content_manager_commandscript();
 }
+
