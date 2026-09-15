@@ -1,6 +1,8 @@
 #include "ContentPackageRegistry.h"
 
 #include "DatabaseEnv.h"
+#include "Field.h"
+#include "QueryResult.h"
 
 #include <algorithm>
 #include <mutex>
@@ -158,3 +160,4 @@ PackageRegistryChangeResult ContentPackageRegistry::Uninstall(std::string const&
     result.changed = true;
     return result;
 }
+
