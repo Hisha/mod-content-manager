@@ -82,13 +82,17 @@ void ContentManager::LoadConfig()
             "ContentManager.OutputDirectory",
             "./patches");
 
+    _publishDirectory = sConfigMgr->GetOption<std::string>(
+        "ContentManager.PublishDirectory", "./published-content");
+
 	LOG_INFO(
 		"module",
-		"mod-content-manager: enabled={}, patchhold='{}', work='{}', output='{}'",
+		"mod-content-manager: enabled={}, patchhold='{}', work='{}', output='{}', publish='{}'",
 		_enabled,
 		_patchHoldDirectory,
 		_workDirectory,
-		_outputDirectory);
+		_outputDirectory,
+        _publishDirectory);
 		
 }
 
@@ -110,6 +114,11 @@ std::string const& ContentManager::GetWorkDirectory() const
 std::string const& ContentManager::GetOutputDirectory() const
 {
     return _outputDirectory;
+}
+
+std::string const& ContentManager::GetPublishDirectory() const
+{
+    return _publishDirectory;
 }
 
 std::string const& ContentManager::GetModuleDirectory() const

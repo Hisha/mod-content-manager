@@ -32,6 +32,7 @@ public:
     std::string const& GetPatchHoldDirectory() const;
     std::string const& GetWorkDirectory() const;
     std::string const& GetOutputDirectory() const;
+    std::string const& GetPublishDirectory() const;
 	std::string const& GetModuleDirectory() const;
 
 	std::vector<ContentPackageCandidate> ScanAvailablePackages() const;
@@ -45,6 +46,7 @@ private:
     std::string _patchHoldDirectory;
     std::string _workDirectory;
     std::string _outputDirectory;
+    std::string _publishDirectory;
 	std::string _moduleDirectory;
 };
 

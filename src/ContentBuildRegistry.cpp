@@ -146,10 +146,12 @@ bool ContentBuildRegistry::GetActiveBuild(std::optional<ContentBuildRecord>& rec
 }
 
 bool ContentBuildRegistry::ActivateBuild(std::uint32_t number, std::filesystem::path const& outputDirectory,
+    std::filesystem::path const& publishDirectory, ContentPublicationResult& publication,
     bool& alreadyActive, std::string& error) const
 {
     std::lock_guard<std::mutex> lock(lifecycleMutex);
     alreadyActive = false;
+    publication = {};
     try
     {
         using ContentBuildPaths::Require;
@@ -158,9 +160,13 @@ bool ContentBuildRegistry::ActivateBuild(std::uint32_t number, std::filesystem::
         Require(record.has_value(), "Build does not exist");
         Require(ContentBuildHash::Valid(record->sha256), "Build record has an invalid SHA256; activation refused");
         Require(record->state == "STAGED" || record->state == "ACTIVE" || record->state == "SUPERSEDED", "Unknown build state");
-        std::string actual;
-        if (!ContentBuildHash::Calculate(Artifact(*record, outputDirectory), actual, error)) return false;
-        Require(actual == record->sha256, "SHA256 mismatch; activation refused and states unchanged");
+        publication = ContentBuildPublisher().Publish(Artifact(*record, outputDirectory), publishDirectory, record->sha256);
+        if (!publication.success)
+        {
+            error = "Publication failed; build states unchanged: " + publication.error;
+            return false;
+        }
+        auto const& actual = publication.sha256;
         if (record->state == "ACTIVE") { alreadyActive = true; return true; }
         auto transaction = WorldDatabase.BeginTransaction();
         // This singleton write serializes lifecycle transactions across worldserver processes.

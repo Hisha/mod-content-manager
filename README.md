@@ -1,20 +1,21 @@
 # mod-content-manager
 
 AzerothCore module for discovering and validating EPF content packages, persistently
-selecting packages, and building cumulative WoW 3.3.5a realm MPQs with bundled StormLib.
+selecting packages, building cumulative WoW 3.3.5a realm MPQs with bundled StormLib, and publishing
+approved versioned artifacts to a filesystem directory.
 
 ## Commands
 
 | Command | Behavior |
 | --- | --- |
-| `.content status` | Shows whether Content Manager is enabled and its configured directories. |
+| `.content status` | Shows whether Content Manager is enabled and its configured directories, including Publish Directory. |
 | `.content scan` | Discovers EPFs, validates them, and shows persistent package selection, including missing installed sources. |
 | `.content install <package-key>` | Validates exactly one discovered EPF with this key and persistently selects its version for future builds. |
 | `.content uninstall <package-key>` | Removes the package selection; preserves the EPF and existing builds. |
 | `.content stage <package-key>` | Stages one package and builds a separate development test MPQ, without installing it or creating a build record. |
 | `.content build` | Creates a new cumulative MPQ from all INSTALLED packages, hashes it, records STAGED, then cleans its workspace. No argument is required. |
 | `.content build list` | Lists completed realm builds newest first, with state, filename, package/file counts and SHA256. |
-| `.content activate <build-number>` | Verifies an existing artifact and its SHA256, then selects it as ACTIVE. Also supports rollback. |
+| `.content activate <build-number>` | Verifies and publishes the versioned artifact, verifies the published SHA256, then selects it as ACTIVE. Also supports rollback. |
 
 Activation requires an administrator session or the server console. Handled Content
 Manager errors print their explanation without appending generic command usage.
@@ -137,11 +138,12 @@ in OutputDirectory, recalculates SHA256, and requires a match with the stored di
 Missing, empty, non-regular, symlinked or modified artifacts refuse activation before
 any state writes. Unsafe stored filenames are refused as well.
 
-Successful activation runs in an InnoDB transaction: the current ACTIVE build becomes
+Only after successful publication and final verification does activation run in an InnoDB transaction: the current ACTIVE build becomes
 SUPERSEDED and the selected build becomes ACTIVE. A singleton lock row serializes
 module activation transactions across processes. There is one active selection per
-world database. Selecting an already ACTIVE build still verifies its artifact and
-hash, then reports that it is active without an unnecessary write.
+world database. Selecting an already ACTIVE build still verifies its source and ensures a matching
+published copy exists, repairing a missing or corrupt copy if needed. It then reports
+that it is active without an unnecessary database write.
 
 A SUPERSEDED build can become ACTIVE again:
 
@@ -162,9 +164,104 @@ reading; it does not lock out external filesystem writers. Synchronous database
 writes are read back because the core API does not return success. Inspect the SQL
 log when an operation cannot be verified. Do not edit lifecycle rows while commands run.
 
-Activation currently changes **Content Manager state only**. It does not copy MPQs
-to a web-served directory, update `mod_realm_config_patch`, publish `realm.conf`, or
-notify Portalkeeper. These are future integration work.
+## Filesystem publication
+
+Content Manager owns this sequence:
+
+```text
+EPF -> cumulative MPQ -> SHA256 -> build lifecycle -> published filesystem artifact
+```
+
+It discovers EPFs, manages installed packages, builds and hashes cumulative realm
+MPQs, and publishes approved versioned artifacts. Its responsibility ends at the
+published filesystem artifact. It does not determine how that directory is exposed
+publicly, what URL clients use, what client filename is used, or how realm
+configuration advertises the patch. Those decisions belong to an independent
+configuration/distribution system consuming the ACTIVE build metadata. No such
+system is required for Content Manager to function.
+
+### Configuration
+
+```ini
+ContentManager.OutputDirectory = "./patches"
+ContentManager.PublishDirectory = "./published-content"
+```
+
+`PublishDirectory` is a filesystem path only. The default is `./published-content`;
+relative paths resolve from worldserver's working directory. Use an absolute path
+when desired. The module creates the directory during activation if necessary;
+worldserver needs permission to create directories, copy files, and rename files
+there. It is shown by `.content status` as `Publish Directory: <path>`.
+
+PublishDirectory and OutputDirectory must be separate and non-overlapping. Keep
+private output outside any publicly exposed tree. `.content build` never publishes,
+so a STAGED build remains private until activation is explicitly requested. Keep
+both directories administrator-owned, without symlink components, and do not modify
+artifacts while commands run. Published files retain the source file permissions;
+grant the intended distribution process read access through normal filesystem policy.
+
+### Activation and rollback
+
+Activation first verifies the source in OutputDirectory against the stored SHA256.
+It preserves the exact versioned filename, for example:
+
+```text
+./patches/Realm-Content-000001.mpq
+    -> ./published-content/Realm-Content-000001.mpq
+```
+
+If the final published file already has the expected SHA256, it is reused without
+rewriting it. A corrupt regular file is safely replaced from the verified source.
+Symlinks and non-regular destinations are refused.
+
+For a new or replacement copy, Content Manager reserves a unique, owner-only
+`.content-publish-*` staging directory inside PublishDirectory, copies to its
+`artifact.tmp`, and verifies that copy's SHA256. It then promotes the completed file
+with a same-filesystem rename and verifies the final published artifact again.
+Readers of the final versioned filename never see a partial copy. Filesystem
+operations are in-process; no shell copy, rename or hash utilities are invoked.
+The temporary directory must not be served by the distribution system; it is
+owner-only, and the final artifact becomes visible only at promotion.
+
+Only after those checks does the database transaction select ACTIVE and supersede
+the former selection. Source, copy, hashing, directory, promotion or final verification
+failure leaves lifecycle states unchanged and reports the cause. Temporary files
+are cleaned when safe; cleanup errors report the path. Sources and unrelated
+published files are never deleted. Atomic replacement of an existing file is supported
+on the deployment's Linux filesystem; platforms that reject replacement by rename
+fail safely without first removing the destination. This is atomic visibility,
+not a guarantee of persistence through sudden power loss.
+
+Rollback uses the same workflow, and older published versions are retained. There
+is no garbage collection. Concurrent publication of the same filename from separate
+processes can produce a safe verification refusal if the file changes during hashing;
+retry the activation after competing work finishes. Database state transitions remain
+serialized by the existing activation lock.
+
+Filesystem publication and the database transaction are separate operations. If
+publication succeeds but database activation fails, the verified published artifact
+can remain on disk without becoming ACTIVE. A failed activation never intentionally
+changes the previous ACTIVE selection. Retry after inspecting the SQL error log;
+the matching published copy is reused. The ACTIVE row is authoritative for consumers,
+not mere presence of a filename in the publication directory.
+
+A successful activation reports the verified build number, full published path,
+SHA256 and ACTIVE status. The build metadata contract remains `build_number`,
+`realm_name`, `filename`, `sha256`, `state`, `package_count`, `file_count`, and
+`created_at`. An independent consumer can query `state = 'ACTIVE'` to discover the
+filename, hash and realm without any consumer-specific schema or dependency here.
+
+### Publication checks
+
+Run `python3 tests/test_publication.py` with a C++17 compiler and OpenSSL development
+files. Tests cover initial publication, verified reuse without rewriting, corrupt
+and empty destination repair, source mismatch, missing sources, unsafe destinations,
+overlapping directories, retained rollback artifacts, concurrent attempts, and
+partial-copy failure cleanup (POSIX).
+
+On a development worldserver, also verify that a forced publication failure leaves
+the current ACTIVE row unchanged, that an already ACTIVE build repairs its published
+copy, and that activating a SUPERSEDED build preserves other published versions.
 
 ## Development test MPQ
 

@@ -1,6 +1,8 @@
 #ifndef CONTENT_BUILD_REGISTRY_H
 #define CONTENT_BUILD_REGISTRY_H
 
+#include "ContentBuildPublisher.h"
+
 #include <cstdint>
 #include <string>
 #include <optional>
@@ -25,9 +27,10 @@ public:
     bool GetBuild(std::uint32_t number, std::optional<ContentBuildRecord>& record, std::string& error) const;
     bool GetActiveBuild(std::optional<ContentBuildRecord>& record, std::string& error) const;
     bool ActivateBuild(std::uint32_t number, std::filesystem::path const& outputDirectory,
+        std::filesystem::path const& publishDirectory, ContentPublicationResult& publication,
         bool& alreadyActive, std::string& error) const;
     bool NextNumber(std::uint32_t& number, std::string& error) const;
-    // Called only after the MPQ is closed and published successfully.
+    // Called only after the private output MPQ is closed and hashed successfully.
     bool Record(ContentBuildRecord const& record, std::string& error) const;
 };
 #endif

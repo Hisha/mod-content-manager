@@ -161,6 +161,7 @@ public:
         handler->PSendSysMessage(
             "Output: {}",
             sContentManager.GetOutputDirectory());
+        handler->PSendSysMessage("Publish Directory: {}", sContentManager.GetPublishDirectory());
 
         return true;
     }
@@ -367,11 +368,20 @@ public:
         std::string error;
         bool alreadyActive = false;
         ContentBuildRegistry registry;
-        if (!registry.ActivateBuild(number, sContentManager.GetOutputDirectory(), alreadyActive, error))
+        ContentPublicationResult publication;
+        if (!registry.ActivateBuild(number, sContentManager.GetOutputDirectory(),
+            sContentManager.GetPublishDirectory(), publication, alreadyActive, error))
             handler->PSendSysMessage("Activation refused: {}", error);
         else
+        {
+            handler->PSendSysMessage("Build {} verified.", ContentBuildService::Number(number));
+            handler->PSendSysMessage("Published: {}", publication.path.string());
+            handler->PSendSysMessage("SHA256: {}", publication.sha256);
+            if (publication.reused)
+                handler->SendSysMessage("Matching published artifact reused.");
             handler->PSendSysMessage("Build {} {}", ContentBuildService::Number(number),
-                alreadyActive ? "is already ACTIVE." : "is now ACTIVE. Content Manager state updated.");
+                alreadyActive ? "is already ACTIVE." : "is now ACTIVE.");
+        }
         return true;
     }
 
