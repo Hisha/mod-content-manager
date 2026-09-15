@@ -3,6 +3,7 @@
 #include "ContentManager.h"
 #include "ContentBuildService.h"
 #include "World.h"
+#include "Realm.h"
 #include "ContentPackage.h"
 #include "ContentPackageRegistry.h"
 #include "MpqBuilder.h"
@@ -314,7 +315,7 @@ public:
 
     static bool HandleBuildCommand(ChatHandler* handler)
     {
-        auto result = ContentBuildService().Build(sContentManager, sWorld->GetRealmName(),
+        auto result = ContentBuildService().Build(sContentManager, realm.Name,
             [handler](std::string const& message) { handler->PSendSysMessage("{}", message); });
         if (!result.success)
         {
@@ -323,7 +324,8 @@ public:
                 handler->PSendSysMessage("Workspace preserved: {}", result.workspace.string());
             if (result.mpqCreated)
                 handler->PSendSysMessage("Completed MPQ preserved: {}", result.outputPath.string());
-            return false;
+            // The failure was reported above; do not append generic command usage.
+            return true;
         }
         return true;
     }
