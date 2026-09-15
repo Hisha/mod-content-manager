@@ -9,7 +9,7 @@ ContentManager.PatchHoldDirectory = "./patchhold"
 ContentManager.WorkDirectory = "./patchwork"
 
 # Final generated realm patches.
-ContentManager.OutputDirectory = "/mnt/ai_data/linkable/"
+ContentManager.OutputDirectory = "/home/smithkt/azerothcore-wotlk/patches"
 
 #
 #    ContentManager.ModuleDirectory
@@ -25,4 +25,4 @@ ContentManager.ModuleDirectory = "../modules"
 # Filesystem destination for versioned MPQs published by explicit activation.
 # Relative paths resolve from the worldserver working directory.
 # Must not overlap OutputDirectory. Created on activation if needed.
-ContentManager.PublishDirectory = "./published-content"
+ContentManager.PublishDirectory = "/mnt/ai_data/linkable"
