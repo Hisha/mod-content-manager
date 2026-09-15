@@ -7,6 +7,79 @@
 
 using namespace Acore::ChatCommands;
 
+namespace
+{
+bool CleanupStagingDirectory(std::filesystem::path const& stagingDirectory,
+    std::filesystem::path const& workDirectory, std::string& error)
+{
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (stagingDirectory.empty() || workDirectory.empty())
+    {
+        error = "Staging and work directory paths must not be empty.";
+        return false;
+    }
+
+    auto work = fs::canonical(workDirectory, ec);
+    if (ec)
+    {
+        error = "Could not resolve work directory: " + ec.message();
+        return false;
+    }
+
+    auto staging = fs::absolute(stagingDirectory, ec);
+    if (ec)
+    {
+        error = "Could not resolve staging directory: " + ec.message();
+        return false;
+    }
+
+    // Refuse links before canonicalization so a redirected staging path cannot
+    // cause cleanup of another package, even if its target is inside WorkDirectory.
+    fs::path prefix;
+    for (auto const& component : staging)
+    {
+        prefix /= component;
+        auto status = fs::symlink_status(prefix, ec);
+        if (ec || fs::is_symlink(status))
+        {
+            error = ec ? "Could not inspect staging path: " + ec.message()
+                : "Refusing cleanup through a symlink.";
+            return false;
+        }
+    }
+
+    staging = fs::canonical(staging, ec);
+    if (ec)
+    {
+        error = "Could not resolve staging directory: " + ec.message();
+        return false;
+    }
+    auto relative = staging.lexically_relative(work);
+    if (relative.empty() || relative == "." || relative.is_absolute()
+        || *relative.begin() == "..")
+    {
+        error = "Refusing cleanup: staging directory must be strictly beneath WorkDirectory.";
+        return false;
+    }
+    if (!fs::is_directory(staging, ec) || ec)
+    {
+        error = ec ? "Could not inspect staging directory: " + ec.message()
+            : "Staging path is not a directory.";
+        return false;
+    }
+
+    // Delete only the validated directory derived from the successful Stage result.
+    fs::remove_all(staging, ec);
+    if (ec)
+    {
+        error = "Could not remove staging directory: " + ec.message();
+        return false;
+    }
+    return true;
+}
+}
+
 class content_manager_commandscript : public CommandScript
 {
 public:
@@ -213,6 +286,18 @@ public:
             handler->SendSysMessage("MPQ built successfully.");
             handler->PSendSysMessage("MPQ: {}", build.outputPath.string());
             handler->PSendSysMessage("MPQ files: {}", build.fileCount);
+            std::string cleanupError;
+            if (CleanupStagingDirectory(result.stagingDirectory,
+                sContentManager.GetWorkDirectory(), cleanupError))
+            {
+                handler->SendSysMessage("Staging cleanup completed.");
+            }
+            else
+            {
+                handler->PSendSysMessage(
+                    "WARNING: MPQ was built successfully, but staging cleanup failed: {}",
+                    cleanupError);
+            }
 	        return true;
 	    }
 
