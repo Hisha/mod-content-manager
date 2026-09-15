@@ -2,6 +2,7 @@
 #include "CommandScript.h"
 #include "ContentManager.h"
 #include "ContentPackage.h"
+#include "MpqBuilder.h"
 #include "RBAC.h"
 
 using namespace Acore::ChatCommands;
@@ -145,6 +146,13 @@ public:
 	        return false;
 	    }
 
+        // The package key is used as a single staging/output path component.
+        if (packageKey == "." || packageKey == ".."
+            || packageKey.find_first_of("/\\:") != std::string::npos)
+        {
+            handler->SendSysMessage("Invalid package key: expected a single directory name.");
+            return false;
+        }
 	    auto packages =
 	        sContentManager.ScanAvailablePackages();
 
@@ -193,6 +201,18 @@ public:
 	        handler->SendSysMessage(
 	            "Package staged successfully.");
 
+            handler->PSendSysMessage("Staged files: {}", result.stagedFiles.size());
+            auto output = std::filesystem::path(sContentManager.GetOutputDirectory())
+                / (validation.manifest.packageKey + "-test.mpq");
+            auto build = MpqBuilder().Build(result.stagingDirectory, output);
+            if (!build.success)
+            {
+                handler->PSendSysMessage("MPQ build failed: {}", build.error);
+                return false;
+            }
+            handler->SendSysMessage("MPQ built successfully.");
+            handler->PSendSysMessage("MPQ: {}", build.outputPath.string());
+            handler->PSendSysMessage("MPQ files: {}", build.fileCount);
 	        return true;
 	    }
 
