@@ -1,4 +1,5 @@
 #include "ContentPackage.h"
+#include "ContentBuildPaths.h"
 
 #include "Log.h"
 
@@ -14,24 +15,21 @@ namespace
 {
     bool IsSafeRelativePath(std::string const& value)
     {
-        if (value.empty())
+        try { ContentBuildPaths::Target(value); return true; }
+        catch (std::exception const&) { return false; }
+    }
+
+    bool IsRegularZipEntry(mz_zip_archive& zip, int index)
+    {
+        mz_zip_archive_file_stat stat{};
+        if (!mz_zip_reader_file_stat(&zip, index, &stat) || stat.m_is_directory)
             return false;
-
-        std::filesystem::path path(value);
-
-        if (path.is_absolute())
-            return false;
-
-        for (auto const& part : path)
-        {
-            if (part == "..")
-                return false;
-        }
-
-        return true;
+        // ZIP Unix mode bits distinguish files from symlinks/devices. Zero means
+        // the producer did not supply Unix type metadata (normal DOS/Windows ZIP).
+        auto type = (stat.m_external_attr >> 16) & 0170000;
+        return type == 0 || type == 0100000;
     }
 }
-
 ContentPackage::ContentPackage(std::filesystem::path path)
     : _path(std::move(path))
 {
@@ -40,6 +38,16 @@ ContentPackage::ContentPackage(std::filesystem::path path)
 ContentPackageValidationResult ContentPackage::Validate() const
 {
     ContentPackageValidationResult result;
+    try
+    {
+        ContentBuildPaths::RejectLinks(_path);
+        ContentBuildPaths::Require(std::filesystem::is_regular_file(_path), "EPF source is not a regular file");
+    }
+    catch (std::exception const& exception)
+    {
+        result.error = exception.what();
+        return result;
+    }
 
     mz_zip_archive zip{};
 
@@ -71,6 +79,11 @@ ContentPackageValidationResult ContentPackage::Validate() const
         return result;
     }
 
+    if (!IsRegularZipEntry(zip, fileIndex))
+    {
+        result.error = "manifest.json is not a regular ZIP file";
+        return result;
+    }
     size_t manifestSize = 0;
 
     void* manifestData =
@@ -124,6 +137,8 @@ ContentPackageValidationResult ContentPackage::Validate() const
         result.error = "Missing or invalid 'package'";
         return result;
     }
+
+    result.manifest.packageKey = manifest["package"].get<std::string>();
 
     if (!manifest.contains("name") ||
         !manifest["name"].is_string())
@@ -320,6 +335,11 @@ ContentPackageValidationResult ContentPackage::Validate() const
             return result;
         }
 
+        if (!IsRegularZipEntry(zip, sourceIndex))
+        {
+            result.error = "Content source is not a regular ZIP file: " + entry.source;
+            return result;
+        }
         result.manifest.content.push_back(
             std::move(entry));
     }
@@ -328,152 +348,92 @@ ContentPackageValidationResult ContentPackage::Validate() const
     return result;
 }
 
-ContentPackageStageResult ContentPackage::Stage(
-    std::filesystem::path const& workDirectory) const
+ContentPackageStageResult ContentPackage::Stage(std::filesystem::path const& workDirectory) const
 {
-    ContentPackageStageResult stageResult;
-
-    // Always validate before extracting anything.
-    ContentPackageValidationResult validation = Validate();
-
-    if (!validation.valid)
+    namespace fs = std::filesystem;
+    using namespace ContentBuildPaths;
+    ContentPackageStageResult result;
+    try
     {
-        stageResult.error =
-            "Package validation failed: " +
-            validation.error;
-
-        return stageResult;
+        auto validation = Validate();
+        Require(validation.valid, "Package validation failed: " + validation.error);
+        auto const& key = validation.manifest.packageKey;
+        Require(Target(key) == key && key.find('/') == std::string::npos,
+            "Package key must be a single safe directory name");
+        Require(!workDirectory.empty(), "WorkDirectory must not be empty");
+        RejectLinks(workDirectory);
+        fs::create_directories(workDirectory);
+        auto root = fs::canonical(workDirectory);
+        result.stagingDirectory = root / key;
+        RejectLinks(result.stagingDirectory);
+        if (fs::exists(result.stagingDirectory))
+        {
+            std::string error;
+            if (!Cleanup(result.stagingDirectory, root, error))
+                throw std::runtime_error("Could not clear staging directory: " + error);
+        }
+        Require(fs::create_directory(result.stagingDirectory), "Could not create clean staging directory");
+        return StageInto(result.stagingDirectory, validation.manifest);
     }
-
-    std::filesystem::path stagingDirectory =
-        workDirectory /
-        validation.manifest.packageKey;
-
-    stageResult.stagingDirectory =
-        stagingDirectory;
-
-    std::error_code ec;
-
-    // Schema 1 staging is a clean rebuild of this package's
-    // staging directory.
-    if (std::filesystem::exists(stagingDirectory, ec))
+    catch (std::exception const& exception)
     {
-        std::filesystem::remove_all(
-            stagingDirectory,
-            ec);
-
-        if (ec)
-        {
-            stageResult.error =
-                "Could not clear staging directory '" +
-                stagingDirectory.string() +
-                "': " +
-                ec.message();
-
-            return stageResult;
-        }
+        result.error = exception.what();
+        return result;
     }
-
-    if (!std::filesystem::create_directories(
-            stagingDirectory,
-            ec))
-    {
-        if (ec)
-        {
-            stageResult.error =
-                "Could not create staging directory '" +
-                stagingDirectory.string() +
-                "': " +
-                ec.message();
-
-            return stageResult;
-        }
-    }
-
-    mz_zip_archive zip{};
-
-    if (!mz_zip_reader_init_file(
-            &zip,
-            _path.string().c_str(),
-            0))
-    {
-        stageResult.error =
-            "Could not reopen EPF archive";
-
-        return stageResult;
-    }
-
-    struct ZipCloser
-    {
-        mz_zip_archive* zip;
-
-        ~ZipCloser()
-        {
-            mz_zip_reader_end(zip);
-        }
-    } closer{ &zip };
-
-    for (auto const& entry :
-         validation.manifest.content)
-    {
-        int sourceIndex =
-            mz_zip_reader_locate_file(
-                &zip,
-                entry.source.c_str(),
-                nullptr,
-                0);
-
-        if (sourceIndex < 0)
-        {
-            stageResult.error =
-                "Content source disappeared from EPF: " +
-                entry.source;
-
-            return stageResult;
-        }
-
-        std::filesystem::path destination =
-            stagingDirectory /
-            std::filesystem::path(entry.target);
-
-        std::filesystem::path parent =
-            destination.parent_path();
-
-        std::filesystem::create_directories(
-            parent,
-            ec);
-
-        if (ec)
-        {
-            stageResult.error =
-                "Could not create directory '" +
-                parent.string() +
-                "': " +
-                ec.message();
-
-            return stageResult;
-        }
-
-        if (!mz_zip_reader_extract_to_file(
-                &zip,
-                sourceIndex,
-                destination.string().c_str(),
-                0))
-        {
-            stageResult.error =
-                "Could not extract '" +
-                entry.source +
-                "' to '" +
-                destination.string() +
-                "'";
-
-            return stageResult;
-        }
-
-        stageResult.stagedFiles.push_back(
-            destination);
-    }
-
-    stageResult.success = true;
-    return stageResult;
 }
+
+ContentPackageStageResult ContentPackage::StageInto(std::filesystem::path const& stagingDirectory,
+    ContentPackageManifest const& expected) const
+{
+    namespace fs = std::filesystem;
+    using namespace ContentBuildPaths;
+    ContentPackageStageResult result;
+    result.stagingDirectory = stagingDirectory;
+    try
+    {
+        auto validation = Validate();
+        Require(validation.valid, "Package validation failed: " + validation.error);
+        auto const& actual = validation.manifest;
+        bool same = actual.schema == expected.schema && actual.packageKey == expected.packageKey
+            && actual.version == expected.version && actual.content.size() == expected.content.size();
+        if (same)
+            for (std::size_t i = 0; i < actual.content.size(); ++i)
+                same = same && actual.content[i].type == expected.content[i].type
+                    && actual.content[i].source == expected.content[i].source
+                    && actual.content[i].target == expected.content[i].target;
+        Require(same, "Package manifest changed after build preflight: " + expected.packageKey);
+        RejectLinks(stagingDirectory);
+        Require(fs::is_directory(stagingDirectory), "Staging workspace does not exist");
+        auto root = fs::canonical(stagingDirectory);
+
+        mz_zip_archive zip{};
+        Require(mz_zip_reader_init_file(&zip, _path.string().c_str(), 0), "Could not reopen EPF archive");
+        struct ZipCloser
+        {
+            mz_zip_archive* zip;
+            ~ZipCloser() { mz_zip_reader_end(zip); }
+        } closer{&zip};
+
+        for (auto const& entry : expected.content)
+        {
+            auto destination = root / Target(entry.target);
+            RejectLinks(destination);
+            Require(IsBeneath(fs::weakly_canonical(destination), root), "Target escapes staging workspace");
+            Require(!fs::exists(fs::symlink_status(destination)), "Staging target already exists: " + entry.target);
+            fs::create_directories(destination.parent_path());
+            RejectLinks(destination);
+            auto index = mz_zip_reader_locate_file(&zip, entry.source.c_str(), nullptr, 0);
+            Require(index >= 0 && IsRegularZipEntry(zip, index), "Missing or non-regular EPF source: " + entry.source);
+            Require(mz_zip_reader_extract_to_file(&zip, index, destination.string().c_str(), 0),
+                "Could not extract '" + entry.source + "' to '" + destination.string() + "'");
+            result.stagedFiles.push_back(destination);
+        }
+        result.success = true;
+    }
+    catch (std::exception const& exception)
+    {
+        result.error = exception.what();
+    }
+    return result;
+}
+

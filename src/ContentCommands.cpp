@@ -1,6 +1,8 @@
 #include "Chat.h"
 #include "CommandScript.h"
 #include "ContentManager.h"
+#include "ContentBuildService.h"
+#include "World.h"
 #include "ContentPackage.h"
 #include "ContentPackageRegistry.h"
 #include "MpqBuilder.h"
@@ -96,6 +98,7 @@ public:
     {
         static ChatCommandTable contentCommandTable =
         {
+            { "build", HandleBuildCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes },
             { "install", HandleInstallCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes },
             { "uninstall", HandleUninstallCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes },
             {
@@ -282,7 +285,7 @@ public:
         handler->SendSysMessage("Installed package:");
         handler->PSendSysMessage("  {} {}", packageKey, manifest.version);
         handler->PSendSysMessage("  Provider: {}", candidate.provider);
-        handler->SendSysMessage("Only the desired package set changed. A future content build is required to affect clients; no patch was rebuilt or published.");
+        handler->SendSysMessage("Only the desired package set changed. Run .content build to generate a cumulative MPQ; no patch was rebuilt or published.");
         return true;
     }
 
@@ -305,10 +308,25 @@ public:
             return true;
         }
         handler->PSendSysMessage("Uninstalled package: {}", packageKey);
-        handler->SendSysMessage("The EPF was preserved. A future content build is required to affect clients; no patch was rebuilt or published.");
+        handler->SendSysMessage("The EPF was preserved. Run .content build to generate a cumulative MPQ; no patch was rebuilt or published.");
         return true;
     }
 
+    static bool HandleBuildCommand(ChatHandler* handler)
+    {
+        auto result = ContentBuildService().Build(sContentManager, sWorld->GetRealmName(),
+            [handler](std::string const& message) { handler->PSendSysMessage("{}", message); });
+        if (!result.success)
+        {
+            handler->PSendSysMessage("Content build failed: {}", result.error);
+            if (!result.workspace.empty())
+                handler->PSendSysMessage("Workspace preserved: {}", result.workspace.string());
+            if (result.mpqCreated)
+                handler->PSendSysMessage("Completed MPQ preserved: {}", result.outputPath.string());
+            return false;
+        }
+        return true;
+    }
 	static bool HandleStageCommand(
 	    ChatHandler* handler,
 	    std::string packageKey)
@@ -415,4 +433,6 @@ void AddSC_content_manager_commands()
 {
     new content_manager_commandscript();
 }
+
+
 

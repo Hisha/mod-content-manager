@@ -1,6 +1,7 @@
 #ifndef CONTENT_PACKAGE_H
 #define CONTENT_PACKAGE_H
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -47,6 +48,12 @@ public:
 
     ContentPackageStageResult Stage(
         std::filesystem::path const& workDirectory) const;
+
+    // Append only declared files to an existing owned workspace. Never clears
+    // directories or overwrites files; revalidates against the preflight manifest.
+    ContentPackageStageResult StageInto(
+        std::filesystem::path const& stagingDirectory,
+        ContentPackageManifest const& expected) const;
 
 private:
     std::filesystem::path _path;
