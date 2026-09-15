@@ -23,6 +23,14 @@ struct ContentPackageManifest
     std::vector<ContentPackageEntry> content;
 };
 
+struct ContentPackageStageResult
+{
+    bool success = false;
+    std::string error;
+    std::filesystem::path stagingDirectory;
+    std::vector<std::filesystem::path> stagedFiles;
+};
+
 struct ContentPackageValidationResult
 {
     bool valid = false;
@@ -36,6 +44,9 @@ public:
     explicit ContentPackage(std::filesystem::path path);
 
     ContentPackageValidationResult Validate() const;
+
+    ContentPackageStageResult Stage(
+        std::filesystem::path const& workDirectory) const;
 
 private:
     std::filesystem::path _path;

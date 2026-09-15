@@ -29,7 +29,13 @@ public:
                 HandleScanCommand,
                 rbac::RBAC_PERM_COMMAND_SERVER_INFO,
                 Console::Yes
-            }
+            },
+			{ 
+				"stage",
+				 HandleStageCommand,
+				 rbac::RBAC_PERM_COMMAND_SERVER_INFO,
+				 Console::Yes
+			},
         };
 
         static ChatCommandTable commandTable =
@@ -126,6 +132,75 @@ public:
 	    }
 
 	    return true;
+	}
+	static bool HandleStageCommand(
+	    ChatHandler* handler,
+	    std::string packageKey)
+	{
+	    if (packageKey.empty())
+	    {
+	        handler->SendSysMessage(
+	            "Usage: .content stage <package-key>");
+
+	        return false;
+	    }
+
+	    auto packages =
+	        sContentManager.ScanAvailablePackages();
+
+	    for (auto const& candidate : packages)
+	    {
+	        ContentPackage package(candidate.path);
+
+	        ContentPackageValidationResult validation =
+	            package.Validate();
+
+	        if (!validation.valid)
+	            continue;
+
+	        if (validation.manifest.packageKey != packageKey)
+	            continue;
+
+	        handler->PSendSysMessage(
+	            "Staging package '{}'...",
+	            validation.manifest.name);
+
+	        ContentPackageStageResult result =
+	            package.Stage(
+	                sContentManager.GetWorkDirectory());
+
+	        if (!result.success)
+	        {
+	            handler->PSendSysMessage(
+	                "Stage failed: {}",
+	                result.error);
+
+	            return false;
+	        }
+
+	        handler->PSendSysMessage(
+	            "Staged {} content item(s).",
+	            result.stagedFiles.size());
+
+	        for (auto const& file :
+	             result.stagedFiles)
+	        {
+	            handler->PSendSysMessage(
+	                " - {}",
+	                file.string());
+	        }
+
+	        handler->SendSysMessage(
+	            "Package staged successfully.");
+
+	        return true;
+	    }
+
+	    handler->PSendSysMessage(
+	        "Content package '{}' was not found.",
+	        packageKey);
+
+	    return false;
 	}
 };
 

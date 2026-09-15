@@ -327,3 +327,153 @@ ContentPackageValidationResult ContentPackage::Validate() const
     result.valid = true;
     return result;
 }
+
+ContentPackageStageResult ContentPackage::Stage(
+    std::filesystem::path const& workDirectory) const
+{
+    ContentPackageStageResult stageResult;
+
+    // Always validate before extracting anything.
+    ContentPackageValidationResult validation = Validate();
+
+    if (!validation.valid)
+    {
+        stageResult.error =
+            "Package validation failed: " +
+            validation.error;
+
+        return stageResult;
+    }
+
+    std::filesystem::path stagingDirectory =
+        workDirectory /
+        validation.manifest.packageKey;
+
+    stageResult.stagingDirectory =
+        stagingDirectory;
+
+    std::error_code ec;
+
+    // Schema 1 staging is a clean rebuild of this package's
+    // staging directory.
+    if (std::filesystem::exists(stagingDirectory, ec))
+    {
+        std::filesystem::remove_all(
+            stagingDirectory,
+            ec);
+
+        if (ec)
+        {
+            stageResult.error =
+                "Could not clear staging directory '" +
+                stagingDirectory.string() +
+                "': " +
+                ec.message();
+
+            return stageResult;
+        }
+    }
+
+    if (!std::filesystem::create_directories(
+            stagingDirectory,
+            ec))
+    {
+        if (ec)
+        {
+            stageResult.error =
+                "Could not create staging directory '" +
+                stagingDirectory.string() +
+                "': " +
+                ec.message();
+
+            return stageResult;
+        }
+    }
+
+    mz_zip_archive zip{};
+
+    if (!mz_zip_reader_init_file(
+            &zip,
+            _path.string().c_str(),
+            0))
+    {
+        stageResult.error =
+            "Could not reopen EPF archive";
+
+        return stageResult;
+    }
+
+    struct ZipCloser
+    {
+        mz_zip_archive* zip;
+
+        ~ZipCloser()
+        {
+            mz_zip_reader_end(zip);
+        }
+    } closer{ &zip };
+
+    for (auto const& entry :
+         validation.manifest.content)
+    {
+        int sourceIndex =
+            mz_zip_reader_locate_file(
+                &zip,
+                entry.source.c_str(),
+                nullptr,
+                0);
+
+        if (sourceIndex < 0)
+        {
+            stageResult.error =
+                "Content source disappeared from EPF: " +
+                entry.source;
+
+            return stageResult;
+        }
+
+        std::filesystem::path destination =
+            stagingDirectory /
+            std::filesystem::path(entry.target);
+
+        std::filesystem::path parent =
+            destination.parent_path();
+
+        std::filesystem::create_directories(
+            parent,
+            ec);
+
+        if (ec)
+        {
+            stageResult.error =
+                "Could not create directory '" +
+                parent.string() +
+                "': " +
+                ec.message();
+
+            return stageResult;
+        }
+
+        if (!mz_zip_reader_extract_to_file(
+                &zip,
+                sourceIndex,
+                destination.string().c_str(),
+                0))
+        {
+            stageResult.error =
+                "Could not extract '" +
+                entry.source +
+                "' to '" +
+                destination.string() +
+                "'";
+
+            return stageResult;
+        }
+
+        stageResult.stagedFiles.push_back(
+            destination);
+    }
+
+    stageResult.success = true;
+    return stageResult;
+}
