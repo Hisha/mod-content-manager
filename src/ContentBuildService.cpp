@@ -2,6 +2,7 @@
 
 #include "ContentBuildPaths.h"
 #include "ContentBuildRegistry.h"
+#include "ContentBuildHash.h"
 #include "ContentManager.h"
 #include "ContentPackage.h"
 #include "ContentPackageRegistry.h"
@@ -160,10 +161,15 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
         report("MPQ: " + result.outputPath.string());
         report("Packages: " + std::to_string(result.packageCount));
         report("MPQ files: " + std::to_string(result.fileCount));
+        std::string hash;
+        if (!ContentBuildHash::Calculate(result.outputPath, hash, error))
+            throw std::runtime_error("MPQ SHA256 failed: " + error);
+        report("SHA256: " + hash);
         if (!builds.Record({result.buildNumber, realmName, filename,
-            static_cast<std::uint32_t>(result.packageCount), static_cast<std::uint32_t>(result.fileCount)}, error))
+            static_cast<std::uint32_t>(result.packageCount), static_cast<std::uint32_t>(result.fileCount), "STAGED", hash}, error))
             throw std::runtime_error("MPQ was created, but recording the build could not be verified: " + error);
         result.recorded = true;
+        report("Build state: STAGED");
         report("Build recorded successfully.");
         result.cleaned = Cleanup(result.workspace, workRoot, result.cleanupWarning);
         result.success = true;
@@ -176,7 +182,7 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
     {
         result.error = exception.what();
         // No artifact or workspace deletion on failure. A DB failure after MPQ
-        // publication is explicitly reported and can be reconciled by an administrator.
+        // publication is explicitly reported for administrator inspection.
     }
     return result;
 }

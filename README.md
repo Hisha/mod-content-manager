@@ -1,136 +1,178 @@
 # mod-content-manager
-AzerothCore module for installing portable custom content packs, dynamically allocating realm-safe IDs, and generating synchronized server and WoW 3.3.5a client content.
 
-## Test MPQ workflow
+AzerothCore module for discovering and validating EPF content packages, persistently
+selecting packages, and building cumulative WoW 3.3.5a realm MPQs with bundled StormLib.
 
-`.content stage <package-key>` validates the EPF, extracts its declared content into
-`<ContentManager.WorkDirectory>/<package-key>/`, and builds
-`<ContentManager.OutputDirectory>/<package-key>-test.mpq`.
-
-After a successful MPQ build, the command removes only the package staging directory
-returned by staging, after checking that it is strictly beneath the configured work
-directory. The original EPF, work directory, other packages, and generated MPQ are
-preserved. Cleanup through symlink paths is refused.
-
-Staging or MPQ build failures leave existing staging data available for troubleshooting.
-If the MPQ succeeds but cleanup fails, the command reports a cleanup warning and keeps
-the valid MPQ. A removal failure may leave a partially cleaned staging directory.
-Existing MPQ output files are never overwritten.
-
-## Persistent package selection
-
-- **AVAILABLE**: a valid EPF is currently discovered and its key is not installed.
-- **INSTALLED**: the package is persistently selected in the world database for realm content builds.
+## Commands
 
 | Command | Behavior |
 | --- | --- |
-| `.content scan` | Shows discovered EPFs, validation errors, and persistent package state. Also lists installed packages that are no longer discovered. |
-| `.content install <package-key>` | Requires one matching discovered EPF, validates it again, and records its key, name, version, provider, absolute source path, and installation time. |
-| `.content uninstall <package-key>` | Removes the installation record, even if the EPF is missing. Does not delete the EPF. |
-| `.content build` | Reconstructs all installed content from the current EPFs, writes one realm MPQ, records the completed build, and cleans its workspace. |
-| `.content stage <package-key>` | Runs the existing development test: stage, build a test MPQ, then clean up successful staging. Installation is not required. |
+| `.content status` | Shows whether Content Manager is enabled and its configured directories. |
+| `.content scan` | Discovers EPFs, validates them, and shows persistent package selection, including missing installed sources. |
+| `.content install <package-key>` | Validates exactly one discovered EPF with this key and persistently selects its version for future builds. |
+| `.content uninstall <package-key>` | Removes the package selection; preserves the EPF and existing builds. |
+| `.content stage <package-key>` | Stages one package and builds a separate development test MPQ, without installing it or creating a build record. |
+| `.content build` | Creates a new cumulative MPQ from all INSTALLED packages, hashes it, records STAGED, then cleans its workspace. No argument is required. |
+| `.content build list` | Lists completed realm builds newest first, with state, filename, package/file counts and SHA256. |
+| `.content activate <build-number>` | Verifies an existing artifact and its SHA256, then selects it as ACTIVE. Also supports rollback. |
 
-Installing and uninstalling change only the desired package set. They do not stage
-files, rebuild or publish a client patch, or change realm configuration. A future
-content build will be required for selection changes to affect clients.
+Activation requires an administrator session or the server console. Handled Content
+Manager errors print their explanation without appending generic command usage.
 
-Discovery never automatically installs a package. Duplicate manifest keys cause
-installation to fail with the conflicting paths and providers. Reinstalling an
-already installed key leaves its metadata and installation time unchanged.
+## Package selection
 
-When a discovered version differs from the stored version, scan displays both
-installed and available versions. It does not update the stored selection.
-Missing source EPFs are shown as `INSTALLED - SOURCE MISSING`, including when the
-provider module has been removed. Their database rows are retained until explicitly
-uninstalled. An inaccessible or non-regular source is reported as unavailable.
+- **AVAILABLE**: a valid EPF currently discovered.
+- **INSTALLED**: a package persistently selected for inclusion in future realm builds.
 
-### Database setup
+The world database's `content_manager_package` table stores installed package keys,
+names, versions, providers, source paths and installation times. Discovery supplies
+available packages; it does not automatically install anything.
 
-The module owns `content_manager_package` in the world database. Each row represents
-an installed package; available packages come from discovery and are not stored.
-The table has no package/build-state column. Apply module world SQL updates through
-the normal AzerothCore database update mechanism before using registry commands:
+Installation requires exactly one discovered EPF declaring the package key. Duplicate
+keys are reported with their conflicting sources. Reinstalling an already installed
+key preserves its metadata and installation time. Uninstalling removes selection
+even when the source is missing, without deleting the original EPF.
 
-- Fresh schema: `data/sql/db-world/base/content_manager.sql`
-- Existing deployments: `data/sql/db-world/updates/2026_09_15_00_package_installation_registry.sql`
+Scan shows both installed and available versions when they differ. It also shows
+installed packages whose EPFs are missing or unavailable. Changing package selection
+does not rebuild, activate, or publish a patch. The next build uses the selected set.
+Package keys are case-sensitive, limited to 191 UTF-8 bytes, and cannot contain NUL
+or end in a space. Registry writes are synchronous and verified by reading back.
 
-Both files use `CREATE TABLE IF NOT EXISTS` and can be rerun without changing existing
-installation records. Reconfigure/rebuild the module to pick up the new registry source.
-Registry failures are reported as errors rather than treating packages as available
-or reporting an unverified installation as successful. Writes are synchronous and
-verified by reading back the database state. Package keys are case-sensitive, limited
-to 191 UTF-8 bytes, and may not contain NUL or end in a space. Metadata byte limits
-are checked before writing to prevent truncation under permissive SQL settings.
+## Current world schema
 
+The module has one schema file:
 
-## Cumulative realm builds
+`data/sql/db-world/base/content_manager_schema.sql`
 
-`.content build` reads the persistent **INSTALLED** package set and creates one
-cumulative MPQ. Each selected key must have exactly one currently discovered,
-valid EPF with the same version as the installed record. Missing sources,
-duplicate keys, or version changes refuse the build and identify the package.
-Sources are resolved through current discovery; the recorded installation path is
-not used as a substitute for a missing discovered source.
+AzerothCore's module database updater discovers SQL beneath `data/sql/db-world`.
+Apply the schema through that updater before using the module, then reconfigure and
+rebuild AzerothCore to include the module sources and bundled StormLib. OpenSSL's
+crypto library, already required by AzerothCore, provides in-process SHA256.
 
-The relationship is:
+The schema creates:
 
-- **AVAILABLE**: a valid EPF is discovered, but its key has not been installed.
-- **INSTALLED**: the administrator selected the package for the desired realm content set.
-- **BUILD**: a completed cumulative MPQ generated from a snapshot of all installed packages.
+- `content_manager_package`: the working persistent package registry.
+- `content_manager_build`: build number, realm name, filename, package/file counts,
+  state, SHA256, and creation timestamp.
+- `content_manager_build_lock`: a singleton InnoDB row serializing activation
+  transactions across worldserver processes sharing the world database.
 
-Every build starts in a newly created directory beneath WorkDirectory, named
-`build-<number>-<unique-suffix>`. Only manifest-declared files are extracted directly
-into this workspace. Old package staging directories and earlier failed build
-workspaces are never sources for a new build. Original EPFs remain authoritative.
+Build state is `VARCHAR(16)` with default `STAGED`. SHA256 is `CHAR(64) NOT NULL`
+with no default. The application requires a lowercase 64-character hexadecimal
+digest before recording any build. Invalid stored digests cause a registry error;
+they are never displayed as successful builds or accepted for activation.
 
-All targets are checked together before staging. Comparison is case-insensitive,
-and both slash styles map to the same archive path. Duplicate targets, including
-DBC files, and file/directory conflicts fail with both package keys. There is no
-DBC row merging. Paths use portable ASCII characters; traversal, rooted paths,
-Windows drive/stream/device aliases, trailing dots/spaces, symlinks, and ZIP
-symlink/device entries are refused. This validation also protects `.content stage`.
+`CREATE TABLE IF NOT EXISTS` and the idempotent lock-row insert make the schema
+rerunnable on fresh installations and installations already using this design.
+They preserve package rows, build hashes and lifecycle states. They intentionally
+do not reshape incompatible development tables. Before first use on an older
+development database, stop worldserver and reset/recreate only the development
+build tables as needed, then explicitly apply the current schema. Preserve
+`content_manager_package`. Move conflicting development MPQs out of OutputDirectory
+before restarting build numbering; the builder never overwrites an existing MPQ.
+A manual table reset may require explicitly reapplying SQL if the updater has
+already marked the schema file as applied. No runtime migration is performed.
 
-The filename uses AzerothCore's current realm name, sanitized for a filesystem:
+## Cumulative builds
 
-    <ContentManager.OutputDirectory>/<Realm>-Content-000001.mpq
+Every `.content build` reads all INSTALLED packages and rediscovers their original
+EPFs. Each key must have exactly one valid source whose version matches the installed
+record. Missing sources, duplicate keys, invalid EPFs, or version differences refuse
+the build. Recorded source paths do not substitute for discovery. There are no
+automatic upgrades or background workers.
 
-ASCII letters, digits and underscores are retained; other runs become hyphens.
-An otherwise empty sanitized name becomes `Realm`. Numbers are padded to at least
-six digits. The original realm name is kept in the database record.
+The build creates a fresh workspace beneath `ContentManager.WorkDirectory`, named
+`build-<number>-<unique-suffix>`. Only manifest-declared files are extracted. Earlier
+workspaces and test MPQs are never used as build inputs.
 
-The command runs synchronously, reporting packages, file counts, workspace and
-output paths. It uses the existing StormLib MPQ v1 builder. It does not activate or
-publish the result, copy it to a web directory, or change realm configuration.
-Keep EPFs and the owned workspace unchanged while a build is running.
+All target paths are checked together before staging. Comparison is case-insensitive
+and normalizes slash styles. Duplicate targets, including DBC files, and file/directory
+conflicts fail with both package keys. Paths reject traversal, rooted paths, Windows
+drive/stream/device aliases, trailing dots/spaces, and symlinks. There is no DBC row
+merging or dynamic ID allocation.
 
-### Build records and failures
+Bundled StormLib creates the cumulative MPQ at:
 
-Apply `data/sql/db-world/updates/2026_09_15_01_cumulative_content_build.sql` through
-the normal module world database updater. Fresh installations also have
-`data/sql/db-world/base/content_manager_build.sql`. Both use
-`CREATE TABLE IF NOT EXISTS`; rerunning them preserves completed build records.
+```text
+<ContentManager.OutputDirectory>/<Realm>-Content-000001.mpq
+```
 
-`content_manager_build` stores build number, realm name, filename, package count,
-file count, and completion timestamp. There is no build-state column. The next
-candidate is one above the highest recorded number, so successful numbering
-continues after worldserver restarts. Do not delete build-history rows if that
-numbering history must be retained.
+The realm name comes from AzerothCore's current realm and is sanitized for filenames;
+no realm is hard-coded. ASCII letters, digits and underscores are retained, other
+runs become hyphens, and an empty sanitized name becomes `Realm`. The original realm
+name is stored in the database. Build numbers are padded to at least six digits and
+continue from the highest recorded number after restarts.
 
-No build row is inserted until MPQ creation succeeds. Only one build runs at a time
-within a worldserver. A candidate output that already exists is preserved and the
-command fails with its path; it is never overwritten. Failed attempts do not
-register successful builds or prevent retrying with a new clean workspace.
+After the MPQ is complete and closed, Content Manager calculates its SHA256 and
+records the build as STAGED. Output includes the MPQ path, package/file counts,
+SHA256, state and recording result. Only then does successful workspace cleanup run.
+Building another MPQ leaves the current ACTIVE build unchanged.
 
-- Validation/collision failures occur before cumulative extraction.
-- Staging or MPQ failures leave the newly owned workspace for troubleshooting and
-  do not insert a completed-build row.
-- If the MPQ succeeds but database recording cannot be verified, the MPQ and workspace
-  are preserved and the command reports failure. Inspect the database and SQL log
-  before reconciling that artifact; a retry may refuse its existing filename.
-- After verified recording, workspace cleanup checks that the owned path is strictly
-  below WorkDirectory. Cleanup failure is a warning: the valid MPQ and successful
-  build record remain. Removal errors may leave a partially cleaned workspace.
+### Failure handling
 
-Original EPFs, installed package records, other package workspaces, and generated
-MPQs are preserved. `.content stage <package-key>` remains a separate one-package
-development command; it neither requires installation nor inserts a build record.
+Only one cumulative build runs at a time within a worldserver. A candidate output
+file that already exists is preserved and causes failure. Do not delete build-history
+rows if their numbering history must be retained.
+
+Validation errors occur before cumulative extraction. Staging, MPQ, hashing or database
+recording failures preserve useful workspace/output data and report an error. Hashing
+failure never inserts a successful STAGED record. A preserved unrecorded MPQ may block
+reuse of its filename; inspect the failure and explicitly move that attempt aside
+before retrying. No other successful builds are deleted or overwritten.
+
+Cleanup only removes the successfully built workspace after verifying it is strictly
+beneath WorkDirectory and does not traverse symlinks. Cleanup failure is a warning:
+the valid MPQ and build record remain. Filesystem removal failure can leave a partially
+cleaned workspace. Original EPFs and package installation records remain intact.
+
+## Build lifecycle
+
+- **STAGED**: a successfully built and hashed cumulative MPQ awaiting approval.
+- **ACTIVE**: an administrator-approved realm content build.
+- **SUPERSEDED**: a previous build retained and available for rollback.
+
+Before activation, Content Manager loads the build, verifies that its artifact exists
+in OutputDirectory, recalculates SHA256, and requires a match with the stored digest.
+Missing, empty, non-regular, symlinked or modified artifacts refuse activation before
+any state writes. Unsafe stored filenames are refused as well.
+
+Successful activation runs in an InnoDB transaction: the current ACTIVE build becomes
+SUPERSEDED and the selected build becomes ACTIVE. A singleton lock row serializes
+module activation transactions across processes. There is one active selection per
+world database. Selecting an already ACTIVE build still verifies its artifact and
+hash, then reports that it is active without an unnecessary write.
+
+A SUPERSEDED build can become ACTIVE again:
+
+```text
+.content build
+.content build list
+.content activate 1
+```
+
+After activating a newer build, `.content activate 1` selects build 1 again and
+supersedes the current selection. Activation never rebuilds an MPQ or changes package
+INSTALLED state. STAGED and SUPERSEDED artifacts are retained; there is no automatic
+activation or old-build garbage collection.
+
+Keep OutputDirectory administrator-owned and artifacts immutable during and after
+hashing/activation. Hashing detects read failures and size/timestamp changes during
+reading; it does not lock out external filesystem writers. Synchronous database
+writes are read back because the core API does not return success. Inspect the SQL
+log when an operation cannot be verified. Do not edit lifecycle rows while commands run.
+
+Activation currently changes **Content Manager state only**. It does not copy MPQs
+to a web-served directory, update `mod_realm_config_patch`, publish `realm.conf`, or
+notify Portalkeeper. These are future integration work.
+
+## Development test MPQ
+
+`.content stage <package-key>` validates and extracts one EPF into
+`<ContentManager.WorkDirectory>/<package-key>/`, then builds
+`<ContentManager.OutputDirectory>/<package-key>-test.mpq`. Installation is not required.
+It neither creates a cumulative build record nor changes the active build.
+
+Successful staging cleanup checks that the returned staging directory is strictly
+beneath the work directory and rejects symlink paths. Failure preserves useful
+troubleshooting data. Existing MPQ files are never overwritten.

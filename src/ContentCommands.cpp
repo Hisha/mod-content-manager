@@ -2,7 +2,10 @@
 #include "CommandScript.h"
 #include "ContentManager.h"
 #include "ContentBuildService.h"
+#include "ContentBuildRegistry.h"
+#include <charconv>
 #include "World.h"
+#include "WorldSession.h"
 #include "Realm.h"
 #include "ContentPackage.h"
 #include "ContentPackageRegistry.h"
@@ -97,9 +100,15 @@ public:
 
     ChatCommandTable GetCommands() const override
     {
+        static ChatCommandTable buildCommandTable =
+        {
+            { "list", HandleBuildListCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes },
+            { "", HandleBuildCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes },
+        };
         static ChatCommandTable contentCommandTable =
         {
-            { "build", HandleBuildCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes },
+            { "activate", HandleActivateCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes },
+            { "build", buildCommandTable },
             { "install", HandleInstallCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes },
             { "uninstall", HandleUninstallCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes },
             {
@@ -162,7 +171,7 @@ public:
         if (!installed.success)
         {
             handler->PSendSysMessage("Cannot read package states: {}", installed.error);
-            return false;
+            return true;
         }
         auto packages = sContentManager.ScanAvailablePackages();
         handler->PSendSysMessage("Content Manager found {} EPF package(s).", packages.size());
@@ -231,7 +240,7 @@ public:
         if (packageKey.empty())
         {
             handler->SendSysMessage("Usage: .content install <package-key>");
-            return false;
+            return true;
         }
         std::vector<ContentPackageCandidate> matches;
         for (auto const& candidate : sContentManager.ScanAvailablePackages())
@@ -245,14 +254,14 @@ public:
         if (matches.empty())
         {
             handler->PSendSysMessage("Package '{}' is not available.", packageKey);
-            return false;
+            return true;
         }
         if (matches.size() != 1)
         {
             handler->PSendSysMessage("Cannot install '{}': multiple discovered EPFs declare this package key.", packageKey);
             for (auto const& candidate : matches)
                 handler->PSendSysMessage("  Conflict: {} (provider: {})", candidate.path.string(), candidate.provider);
-            return false;
+            return true;
         }
         auto const& candidate = matches.front();
         // Validate again immediately before asking the registry to change desired state.
@@ -261,14 +270,14 @@ public:
         {
             handler->PSendSysMessage("Cannot install '{}': {}", packageKey,
                 validation.valid ? "Package key changed during validation" : validation.error);
-            return false;
+            return true;
         }
         std::error_code ec;
         auto source = std::filesystem::canonical(candidate.path, ec);
         if (ec)
         {
             handler->PSendSysMessage("Cannot resolve package source: {}", ec.message());
-            return false;
+            return true;
         }
         auto const& manifest = validation.manifest;
         auto result = ContentPackageRegistry().Install({manifest.packageKey, manifest.name,
@@ -276,7 +285,7 @@ public:
         if (!result.success)
         {
             handler->PSendSysMessage("Install failed: {}", result.error);
-            return false;
+            return true;
         }
         if (!result.changed)
         {
@@ -295,13 +304,13 @@ public:
         if (packageKey.empty())
         {
             handler->SendSysMessage("Usage: .content uninstall <package-key>");
-            return false;
+            return true;
         }
         auto result = ContentPackageRegistry().Uninstall(packageKey);
         if (!result.success)
         {
             handler->PSendSysMessage("Uninstall failed: {}", result.error);
-            return false;
+            return true;
         }
         if (!result.changed)
         {
@@ -310,6 +319,59 @@ public:
         }
         handler->PSendSysMessage("Uninstalled package: {}", packageKey);
         handler->SendSysMessage("The EPF was preserved. Run .content build to generate a cumulative MPQ; no patch was rebuilt or published.");
+        return true;
+    }
+
+    static bool HandleBuildListCommand(ChatHandler* handler)
+    {
+        std::vector<ContentBuildRecord> records;
+        std::string error;
+        if (!ContentBuildRegistry().GetBuilds(records, error))
+            handler->PSendSysMessage("Cannot list builds: {}", error);
+        else if (records.empty())
+            handler->SendSysMessage("No realm content builds exist.");
+        else
+        {
+            handler->SendSysMessage("Realm content builds:");
+            for (auto const& row : records)
+            {
+                handler->PSendSysMessage("{}  {}", ContentBuildService::Number(row.buildNumber), row.state);
+                handler->PSendSysMessage("  {}", row.filename);
+                handler->PSendSysMessage("  Packages: {}", row.packageCount);
+                handler->PSendSysMessage("  Files: {}", row.fileCount);
+                handler->PSendSysMessage("  SHA256: {}", row.sha256);
+            }
+        }
+        return true;
+    }
+
+    static bool HandleActivateCommand(ChatHandler* handler, std::string argument)
+    {
+        if (handler->GetSession() && handler->GetSession()->GetSecurity() < SEC_ADMINISTRATOR)
+        {
+            handler->SendSysMessage("Build activation requires administrator access.");
+            return true;
+        }
+        if (!sContentManager.IsEnabled())
+        {
+            handler->SendSysMessage("Content Manager is disabled.");
+            return true;
+        }
+        std::uint32_t number = 0;
+        auto parsed = std::from_chars(argument.data(), argument.data() + argument.size(), number);
+        if (parsed.ec != std::errc() || parsed.ptr != argument.data() + argument.size() || !number)
+        {
+            handler->SendSysMessage("Invalid build number: expected a positive 32-bit decimal integer.");
+            return true;
+        }
+        std::string error;
+        bool alreadyActive = false;
+        ContentBuildRegistry registry;
+        if (!registry.ActivateBuild(number, sContentManager.GetOutputDirectory(), alreadyActive, error))
+            handler->PSendSysMessage("Activation refused: {}", error);
+        else
+            handler->PSendSysMessage("Build {} {}", ContentBuildService::Number(number),
+                alreadyActive ? "is already ACTIVE." : "is now ACTIVE. Content Manager state updated.");
         return true;
     }
 
@@ -338,7 +400,7 @@ public:
 	        handler->SendSysMessage(
 	            "Usage: .content stage <package-key>");
 
-	        return false;
+	        return true;
 	    }
 
         // The package key is used as a single staging/output path component.
@@ -346,7 +408,7 @@ public:
             || packageKey.find_first_of("/\\:") != std::string::npos)
         {
             handler->SendSysMessage("Invalid package key: expected a single directory name.");
-            return false;
+            return true;
         }
 	    auto packages =
 	        sContentManager.ScanAvailablePackages();
@@ -378,7 +440,7 @@ public:
 	                "Stage failed: {}",
 	                result.error);
 
-	            return false;
+	            return true;
 	        }
 
 	        handler->PSendSysMessage(
@@ -403,7 +465,7 @@ public:
             if (!build.success)
             {
                 handler->PSendSysMessage("MPQ build failed: {}", build.error);
-                return false;
+                return true;
             }
             handler->SendSysMessage("MPQ built successfully.");
             handler->PSendSysMessage("MPQ: {}", build.outputPath.string());
@@ -427,7 +489,7 @@ public:
 	        "Content package '{}' was not found.",
 	        packageKey);
 
-	    return false;
+	    return true;
 	}
 };
 
