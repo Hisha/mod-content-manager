@@ -20,4 +20,4 @@ ContentManager.OutputDirectory = "/home/smithkt/azerothcore-wotlk/patches"
 #        Default: "./modules"
 #
 
-ContentManager.ModuleDirectory = "./modules"
+ContentManager.ModuleDirectory = "../modules"
