@@ -17,7 +17,7 @@ ContentManager.OutputDirectory = "/home/smithkt/azerothcore-wotlk/patches"
 #        Content Manager searches <module>/content/*.epf for
 #        module-provided content packages.
 #
-#        Default: "./modules"
+#        Default: "../modules"
 #
 
 ContentManager.ModuleDirectory = "../modules"

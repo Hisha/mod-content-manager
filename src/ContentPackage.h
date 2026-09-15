@@ -3,6 +3,14 @@
 
 #include <filesystem>
 #include <string>
+#include <vector>
+
+struct ContentPackageEntry
+{
+    std::string type;
+    std::string source;
+    std::string target;
+};
 
 struct ContentPackageManifest
 {
@@ -10,6 +18,9 @@ struct ContentPackageManifest
     std::string packageKey;
     std::string name;
     std::string version;
+    std::string description;
+
+    std::vector<ContentPackageEntry> content;
 };
 
 struct ContentPackageValidationResult

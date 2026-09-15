@@ -6,8 +6,31 @@
 #include "third_party/miniz/miniz.h"
 
 #include <memory>
+#include <utility>
 
 using json = nlohmann::json;
+
+namespace
+{
+    bool IsSafeRelativePath(std::string const& value)
+    {
+        if (value.empty())
+            return false;
+
+        std::filesystem::path path(value);
+
+        if (path.is_absolute())
+            return false;
+
+        for (auto const& part : path)
+        {
+            if (part == "..")
+                return false;
+        }
+
+        return true;
+    }
+}
 
 ContentPackage::ContentPackage(std::filesystem::path path)
     : _path(std::move(path))
@@ -19,6 +42,7 @@ ContentPackageValidationResult ContentPackage::Validate() const
     ContentPackageValidationResult result;
 
     mz_zip_archive zip{};
+
     if (!mz_zip_reader_init_file(&zip, _path.string().c_str(), 0))
     {
         result.error = "File is not a valid ZIP archive";
@@ -28,6 +52,7 @@ ContentPackageValidationResult ContentPackage::Validate() const
     struct ZipCloser
     {
         mz_zip_archive* zip;
+
         ~ZipCloser()
         {
             mz_zip_reader_end(zip);
@@ -82,6 +107,10 @@ ContentPackageValidationResult ContentPackage::Validate() const
         return result;
     }
 
+    // ---------------------------------------------------------
+    // Required manifest metadata
+    // ---------------------------------------------------------
+
     if (!manifest.contains("schema") ||
         !manifest["schema"].is_number_unsigned())
     {
@@ -122,6 +151,10 @@ ContentPackageValidationResult ContentPackage::Validate() const
     result.manifest.version =
         manifest["version"].get<std::string>();
 
+    // ---------------------------------------------------------
+    // Validate basic metadata
+    // ---------------------------------------------------------
+
     if (result.manifest.schema != 1)
     {
         result.error =
@@ -147,6 +180,148 @@ ContentPackageValidationResult ContentPackage::Validate() const
     {
         result.error = "'version' cannot be empty";
         return result;
+    }
+
+    // ---------------------------------------------------------
+    // Optional description
+    // ---------------------------------------------------------
+
+    if (manifest.contains("description"))
+    {
+        if (!manifest["description"].is_string())
+        {
+            result.error = "Invalid 'description'";
+            return result;
+        }
+
+        result.manifest.description =
+            manifest["description"].get<std::string>();
+    }
+
+    // ---------------------------------------------------------
+    // Content array
+    // ---------------------------------------------------------
+
+    if (!manifest.contains("content") ||
+        !manifest["content"].is_array())
+    {
+        result.error = "Missing or invalid 'content'";
+        return result;
+    }
+
+    if (manifest["content"].empty())
+    {
+        result.error = "'content' cannot be empty";
+        return result;
+    }
+
+    for (auto const& item : manifest["content"])
+    {
+        if (!item.is_object())
+        {
+            result.error =
+                "Content entry must be an object";
+
+            return result;
+        }
+
+        if (!item.contains("type") ||
+            !item["type"].is_string())
+        {
+            result.error =
+                "Content entry missing or invalid 'type'";
+
+            return result;
+        }
+
+        if (!item.contains("source") ||
+            !item["source"].is_string())
+        {
+            result.error =
+                "Content entry missing or invalid 'source'";
+
+            return result;
+        }
+
+        if (!item.contains("target") ||
+            !item["target"].is_string())
+        {
+            result.error =
+                "Content entry missing or invalid 'target'";
+
+            return result;
+        }
+
+        ContentPackageEntry entry;
+
+        entry.type =
+            item["type"].get<std::string>();
+
+        entry.source =
+            item["source"].get<std::string>();
+
+        entry.target =
+            item["target"].get<std::string>();
+
+        if (entry.type.empty() ||
+            entry.source.empty() ||
+            entry.target.empty())
+        {
+            result.error =
+                "Content entry fields cannot be empty";
+
+            return result;
+        }
+
+        // Schema 1 currently supports raw files only.
+        if (entry.type != "file")
+        {
+            result.error =
+                "Unsupported content type '" +
+                entry.type + "'";
+
+            return result;
+        }
+
+        // Never allow an EPF to escape its staging area.
+        if (!IsSafeRelativePath(entry.source))
+        {
+            result.error =
+                "Unsafe content source path: " +
+                entry.source;
+
+            return result;
+        }
+
+        if (!IsSafeRelativePath(entry.target))
+        {
+            result.error =
+                "Unsafe content target path: " +
+                entry.target;
+
+            return result;
+        }
+
+        // Make sure the source declared by the manifest
+        // really exists inside this EPF.
+        int sourceIndex =
+            mz_zip_reader_locate_file(
+                &zip,
+                entry.source.c_str(),
+                nullptr,
+                0);
+
+        if (sourceIndex < 0)
+        {
+            result.error =
+                "Content source not found in EPF: " +
+                entry.source;
+
+            return result;
+        }
+
+        result.manifest.content.push_back(
+            std::move(entry));
     }
 
     result.valid = true;

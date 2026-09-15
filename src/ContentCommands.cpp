@@ -74,6 +74,10 @@ public:
 	        "Content Manager found {} EPF package(s).",
 	        packages.size());
 
+		handler->PSendSysMessage(
+			"Module Directory: {}",
+			sContentManager.GetModuleDirectory());
+				
 	    for (auto const& package : packages)
 	    {
 	        ContentPackage contentPackage(package.path);
@@ -107,6 +111,18 @@ public:
 	        handler->PSendSysMessage(
 	            "   Schema: {}",
 	            result.manifest.schema);
+				
+			handler->PSendSysMessage(
+			    "   Content: {} item(s)",
+			    result.manifest.content.size());
+
+			for (auto const& entry : result.manifest.content)
+			{
+			    handler->PSendSysMessage(
+			        "     {} -> {}",
+			        entry.type,
+			        entry.target);
+			}	
 	    }
 
 	    return true;
