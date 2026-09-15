@@ -68,7 +68,7 @@ public:
 
 	static bool HandleScanCommand(ChatHandler* handler)
 	{
-	    auto packages = sContentManager.ScanPatchHold();
+	    auto packages = sContentManager.ScanAvailablePackages();
 
 	    handler->PSendSysMessage(
 	        "Content Manager found {} EPF package(s).",

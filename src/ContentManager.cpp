@@ -61,6 +61,11 @@ void ContentManager::LoadConfig()
 {
     _enabled = sConfigMgr->GetOption<bool>("ContentManager.Enable", false);
 
+	_moduleDirectory =
+		sConfigMgr->GetOption<std::string>(
+	    	"ContentManager.ModuleDirectory",
+	    	"./modules");
+	
     _patchHoldDirectory =
         sConfigMgr->GetOption<std::string>(
             "ContentManager.PatchHoldDirectory",
@@ -104,6 +109,11 @@ std::string const& ContentManager::GetWorkDirectory() const
 std::string const& ContentManager::GetOutputDirectory() const
 {
     return _outputDirectory;
+}
+
+std::string const& ContentManager::GetModuleDirectory() const
+{
+    return _moduleDirectory;
 }
 
 std::vector<ContentPackageCandidate> ContentManager::ScanPatchHold() const
@@ -154,8 +164,10 @@ std::vector<ContentPackageCandidate> ContentManager::ScanPatchHold() const
 
         packages.push_back(
         {
-            path,
-            path.filename().string()
+			path,
+			path.filename().string(),
+			ContentPackageSource::PatchHold,
+			"patchhold"
         });
     }
 
@@ -171,44 +183,106 @@ std::vector<ContentPackageCandidate> ContentManager::ScanPatchHold() const
     return packages;
 }
 
-bool EnsureDirectory(std::string const& directory, char const* description)
+std::vector<ContentPackageCandidate>
+ContentManager::ScanAvailablePackages() const
 {
+    std::vector<ContentPackageCandidate> packages =
+        ScanPatchHold();
+
+    if (!_enabled)
+        return packages;
+
+    std::filesystem::path modulesRoot(_moduleDirectory);
+
     std::error_code ec;
-    std::filesystem::path path(directory);
 
-    if (std::filesystem::exists(path, ec))
+    if (!std::filesystem::exists(modulesRoot, ec))
     {
-        if (!std::filesystem::is_directory(path, ec))
-        {
-            LOG_ERROR(
-                "module",
-                "mod-content-manager: {} '{}' exists but is not a directory",
-                description,
-                directory);
+        LOG_WARN(
+            "module",
+            "mod-content-manager: module directory '{}' does not exist",
+            modulesRoot.string());
 
-            return false;
+        return packages;
+    }
+
+    for (auto const& moduleEntry :
+         std::filesystem::directory_iterator(modulesRoot, ec))
+    {
+        if (ec)
+            break;
+
+        if (!moduleEntry.is_directory())
+            continue;
+
+        std::filesystem::path contentDirectory =
+            moduleEntry.path() / "content";
+
+        std::error_code contentEc;
+
+        if (!std::filesystem::exists(
+                contentDirectory,
+                contentEc) ||
+            !std::filesystem::is_directory(
+                contentDirectory,
+                contentEc))
+        {
+            continue;
         }
 
-        return true;
+        std::string provider =
+            moduleEntry.path().filename().string();
+
+        for (auto const& entry :
+             std::filesystem::directory_iterator(
+                 contentDirectory,
+                 contentEc))
+        {
+            if (contentEc)
+                break;
+
+            if (!entry.is_regular_file())
+                continue;
+
+            std::filesystem::path path = entry.path();
+
+            std::string extension =
+                path.extension().string();
+
+            std::transform(
+                extension.begin(),
+                extension.end(),
+                extension.begin(),
+                [](unsigned char c)
+                {
+                    return static_cast<char>(
+                        std::tolower(c));
+                });
+
+            if (extension != ".epf")
+                continue;
+
+            packages.push_back(
+            {
+                path,
+                path.filename().string(),
+                ContentPackageSource::Module,
+                provider
+            });
+        }
     }
 
-    if (!std::filesystem::create_directories(path, ec))
-    {
-        LOG_ERROR(
-            "module",
-            "mod-content-manager: failed to create {} '{}': {}",
-            description,
-            directory,
-            ec.message());
+    std::sort(
+        packages.begin(),
+        packages.end(),
+        [](ContentPackageCandidate const& a,
+           ContentPackageCandidate const& b)
+        {
+            if (a.provider != b.provider)
+                return a.provider < b.provider;
 
-        return false;
-    }
+            return a.filename < b.filename;
+        });
 
-    LOG_INFO(
-        "module",
-        "mod-content-manager: created {} '{}'",
-        description,
-        directory);
-
-    return true;
+    return packages;
 }

@@ -5,10 +5,19 @@
 #include <string>
 #include <vector>
 
+enum class ContentPackageSource
+{
+    PatchHold,
+    Module
+};
+
 struct ContentPackageCandidate
 {
     std::filesystem::path path;
     std::string filename;
+
+    ContentPackageSource source;
+    std::string provider;
 };
 
 class ContentManager
@@ -23,7 +32,9 @@ public:
     std::string const& GetPatchHoldDirectory() const;
     std::string const& GetWorkDirectory() const;
     std::string const& GetOutputDirectory() const;
+	std::string const& GetModuleDirectory() const;
 
+	std::vector<ContentPackageCandidate> ScanAvailablePackages() const;
     std::vector<ContentPackageCandidate> ScanPatchHold() const;
 
 private:
@@ -34,6 +45,7 @@ private:
     std::string _patchHoldDirectory;
     std::string _workDirectory;
     std::string _outputDirectory;
+	std::string _moduleDirectory;
 };
 
 #define sContentManager ContentManager::Instance()

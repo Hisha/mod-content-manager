@@ -10,3 +10,14 @@ ContentManager.WorkDirectory = "/home/smithkt/azerothcore-wotlk/patchwork"
 
 # Final generated realm patches.
 ContentManager.OutputDirectory = "/home/smithkt/azerothcore-wotlk/patches"
+
+#
+#    ContentManager.ModuleDirectory
+#        Directory containing installed AzerothCore modules.
+#        Content Manager searches <module>/content/*.epf for
+#        module-provided content packages.
+#
+#        Default: "./modules"
+#
+
+ContentManager.ModuleDirectory = "./modules"
