@@ -16,14 +16,19 @@ std::array<char const*, 14> const columns = {"class", "subclass", "SoundOverride
     "name", "displayid", "Quality", "InventoryType", "stackable", "bonding",
     "description", "Material", "sheath", "BagFamily", "Flags"};
 
-bool IsTextColumn(std::string const& column)
+char const* TargetCollation(std::string const& column)
 {
-    return column == "name" || column == "description";
+    auto const* descriptor = FindServerTableDescriptor("item_template");
+    if (!descriptor) throw std::runtime_error("item_template descriptor is unavailable");
+    for (auto const& field : descriptor->columns)
+        if (column == field.name) return field.collation;
+    throw std::runtime_error("Unknown item_template column: " + column);
 }
 
 std::string SqlValue(json const& value, std::string const& column)
 {
-    if (IsTextColumn(column)) return ContentServerBundle::SqlText(value.get<std::string>());
+    if (auto const* collation = TargetCollation(column))
+        return ContentServerBundle::SqlText(value.get<std::string>()) + " COLLATE " + collation;
     return value.dump();
 }
 
@@ -65,6 +70,12 @@ std::string ContentServerBundle::SqlText(std::string const& value)
     std::string sql = "CONVERT(X'";
     for (unsigned char byte : value) { sql += digits[byte >> 4]; sql += digits[byte & 15]; }
     return sql + "' USING utf8mb4)";
+}
+
+std::string ContentServerBundle::SqlIdentityText(std::string const& value)
+{
+    // Content Manager identity and provenance columns use utf8mb4_bin.
+    return SqlText(value) + " COLLATE utf8mb4_bin";
 }
 
 std::string ContentServerBundle::RowJson(ResolvedServerItem const& row)

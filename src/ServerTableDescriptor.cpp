@@ -11,10 +11,10 @@ ServerTableDescriptor const* FindServerTableDescriptor(std::string const& table)
          {"BagFamily", ServerFieldType::Int32, true, 0, 0}},
         {{"entry", "int unsigned", false}, {"class", "tinyint unsigned", false},
          {"subclass", "tinyint unsigned", false}, {"SoundOverrideSubclass", "tinyint", false},
-         {"name", "varchar(255)", false}, {"displayid", "int unsigned", false},
+         {"name", "varchar(255)", false, "utf8mb4_unicode_ci"}, {"displayid", "int unsigned", false},
          {"Quality", "tinyint unsigned", false}, {"InventoryType", "tinyint unsigned", false},
          {"stackable", "int", true}, {"bonding", "tinyint unsigned", false},
-         {"description", "varchar(255)", false}, {"Material", "tinyint", false},
+         {"description", "varchar(255)", false, "utf8mb4_unicode_ci"}, {"Material", "tinyint", false},
          {"sheath", "tinyint unsigned", false}, {"BagFamily", "int", false},
          {"Flags", "int unsigned", false}}};
     return table == item.table ? &item : nullptr;

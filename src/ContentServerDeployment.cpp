@@ -77,7 +77,8 @@ bool ValidateItemSchema(std::string& error)
         first = false;
         sql += "(COLUMN_NAME=" + ContentServerBundle::SqlText(column.name)
             + " AND COLUMN_TYPE=" + ContentServerBundle::SqlText(column.columnType)
-            + " AND IS_NULLABLE='" + (column.nullable ? std::string("YES") : std::string("NO")) + "')";
+            + " AND IS_NULLABLE='" + (column.nullable ? std::string("YES") : std::string("NO")) + "'"
+            + (column.collation ? " AND COLLATION_NAME='" + std::string(column.collation) + "'" : "") + ")";
         included += ContentServerBundle::SqlText(column.name);
     }
     sql += ")";
@@ -252,14 +253,15 @@ bool ContentServerDeployment::Apply(std::uint32_t build, std::string const& real
         }
         auto tx = WorldDatabase.BeginTransaction();
         tx->Append("INSERT INTO content_manager_build_lock (id) VALUES (1) ON DUPLICATE KEY UPDATE id=1");
+        auto identityText = ContentServerBundle::SqlIdentityText;
         for (std::size_t i = 0; i < rows.size(); ++i)
         {
             auto const& row = rows[i];
             auto const rowJson = ContentServerBundle::RowJson(row);
             auto identity = "o.entry=" + std::to_string(row.id) + " AND o.realm_name="
-                + ContentServerBundle::SqlText(realm) + " AND o.package_key="
-                + ContentServerBundle::SqlText(row.packageKey) + " AND o.symbol="
-                + ContentServerBundle::SqlText(row.symbol) + " AND o.resource_kind='item.id'";
+                + identityText(realm) + " AND o.package_key="
+                + identityText(row.packageKey) + " AND o.symbol="
+                + identityText(row.symbol) + " AND o.resource_kind=" + identityText("item.id");
             if (!before[i].owner)
             {
                 tx->Append("INSERT INTO content_manager_item_owner (entry,realm_name,package_key,symbol,"
@@ -278,7 +280,7 @@ bool ContentServerDeployment::Apply(std::uint32_t build, std::string const& real
                     "SET o.applied_build=" + std::to_string(build) + ",o.artifact_sha256="
                     + ContentServerBundle::SqlText(status.bundleSha256) + ",o.row_json="
                     + ContentServerBundle::SqlText(rowJson) + " WHERE " + identity
-                    + " AND o.row_json=" + ContentServerBundle::SqlText(before[i].provenance.rowJson)
+                    + " AND o.row_json=" + identityText(before[i].provenance.rowJson)
                     + " AND " + ContentServerBundle::MatchSql(row, "t"));
             }
         }
@@ -286,25 +288,25 @@ bool ContentServerDeployment::Apply(std::uint32_t build, std::string const& real
         for (auto const& row : rows)
         {
             condition += " AND EXISTS(SELECT 1 FROM content_manager_allocation a WHERE a.realm_name="
-                + ContentServerBundle::SqlText(realm) + " AND a.package_key="
-                + ContentServerBundle::SqlText(row.packageKey) + " AND a.symbol="
-                + ContentServerBundle::SqlText(row.symbol)
-                + " AND a.resource_kind='item.id' AND a.allocated_value=" + std::to_string(row.id)
-                + " AND a.baseline_sha256=" + ContentServerBundle::SqlText(baseline) + ")";
+                + identityText(realm) + " AND a.package_key="
+                + identityText(row.packageKey) + " AND a.symbol="
+                + identityText(row.symbol)
+                + " AND a.resource_kind=" + identityText("item.id") + " AND a.allocated_value=" + std::to_string(row.id)
+                + " AND a.baseline_sha256=" + identityText(baseline) + ")";
             condition += " AND EXISTS(SELECT 1 FROM content_manager_item_owner o JOIN item_template t "
                 "ON t.entry=o.entry WHERE o.entry=" + std::to_string(row.id)
-                + " AND o.realm_name=" + ContentServerBundle::SqlText(realm)
-                + " AND o.package_key=" + ContentServerBundle::SqlText(row.packageKey)
-                + " AND o.symbol=" + ContentServerBundle::SqlText(row.symbol)
-                + " AND o.resource_kind='item.id' AND o.row_json="
-                + ContentServerBundle::SqlText(ContentServerBundle::RowJson(row))
-                + " AND o.artifact_sha256=" + ContentServerBundle::SqlText(status.bundleSha256)
+                + " AND o.realm_name=" + identityText(realm)
+                + " AND o.package_key=" + identityText(row.packageKey)
+                + " AND o.symbol=" + identityText(row.symbol)
+                + " AND o.resource_kind=" + identityText("item.id") + " AND o.row_json="
+                + identityText(ContentServerBundle::RowJson(row))
+                + " AND o.artifact_sha256=" + identityText(status.bundleSha256)
                 + " AND " + ContentServerBundle::MatchSql(row, "t") + ")";
         }
         tx->Append("UPDATE content_manager_server_build SET server_state='APPLIED',applied_at=NOW() "
-            "WHERE build_number=" + std::to_string(build) + " AND server_state='STAGED' AND bundle_sha256="
-            + ContentServerBundle::SqlText(status.bundleSha256) + " AND parity_sha256="
-            + ContentServerBundle::SqlText(status.paritySha256) + condition);
+            "WHERE build_number=" + std::to_string(build) + " AND server_state=" + identityText("STAGED") + " AND bundle_sha256="
+            + identityText(status.bundleSha256) + " AND parity_sha256="
+            + identityText(status.paritySha256) + condition);
         WorldDatabase.DirectCommitTransaction(tx);
         ContentServerStatus after;
         Require(ReadStatus(build, exists, after, error) && exists && after.state == "APPLIED",

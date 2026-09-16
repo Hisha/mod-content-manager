@@ -19,6 +19,8 @@ struct ServerSqlColumnDescriptor
     char const* name;
     char const* columnType;
     bool nullable;
+    // Null for numeric columns; textual columns require this deployed collation.
+    char const* collation = nullptr;
 };
 struct ServerTableDescriptor
 {

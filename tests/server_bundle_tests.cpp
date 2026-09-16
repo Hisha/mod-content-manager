@@ -1,6 +1,7 @@
 #include "ContentServerBundle.h"
 #include "ContentServerOwnership.h"
 #include "ContentBuildHash.h"
+#include "ServerTableDescriptor.h"
 #include <cassert>
 #include <string>
 
@@ -61,9 +62,31 @@ int main()
     assert(sql.find("Huntmaster's Seal") == std::string::npos); // SQL text is hex encoded.
     assert(sql.find("CONVERT(X'") != std::string::npos);
     assert(sql.find("REPLACE") == std::string::npos);
+    assert(sql == ContentServerBundle::InsertSql(row)); // Stable generated SQL.
+    auto const* descriptor = FindServerTableDescriptor("item_template");
+    assert(descriptor);
+    for (auto const& column : descriptor->columns)
+        if (std::string(column.name) == "name" || std::string(column.name) == "description")
+            assert(std::string(column.collation) == "utf8mb4_unicode_ci");
+    assert(sql.find("USING utf8mb4) COLLATE utf8mb4_unicode_ci") != std::string::npos);
+    assert(sql.find("utf8mb4_0900_ai_ci") == std::string::npos);
     auto update = ContentServerBundle::UpdateSql(row, ContentServerBundle::RowJson(row));
     assert(update.find("WHERE `entry`=56807") != std::string::npos);
     assert(update.find(" AND `name`=") != std::string::npos); // Optimistic drift guard.
+    assert(update == ContentServerBundle::UpdateSql(row, ContentServerBundle::RowJson(row)));
+    assert(update.find(" AND `name`=CONVERT(X'") != std::string::npos);
+    assert(update.find(" COLLATE utf8mb4_unicode_ci") != std::string::npos);
+    assert(update.find("utf8mb4_0900_ai_ci") == std::string::npos);
+    auto match = ContentServerBundle::MatchSql(row, "t");
+    assert(match.find("t.`name`=CONVERT(X'") != std::string::npos);
+    assert(match.find("t.`description`=CONVERT(X'") != std::string::npos);
+    assert(match.find(" COLLATE utf8mb4_unicode_ci") != std::string::npos);
+    assert(match.find("utf8mb4_0900_ai_ci") == std::string::npos);
+    assert(match == ContentServerBundle::MatchSql(row, "t")); // Used by convergence and post-apply guards.
+    auto identity = ContentServerBundle::SqlIdentityText("mod-hunts' seal");
+    assert(identity.find(" COLLATE utf8mb4_bin") != std::string::npos);
+    assert(identity.find("mod-hunts' seal") == std::string::npos);
+    assert(identity.find("utf8mb4_unicode_ci") == std::string::npos);
 
     ContentItemOwner owner{"Eitrigg", "mod-hunts", "seal", "item.id", 7, hash,
         ContentServerBundle::RowJson(row)};

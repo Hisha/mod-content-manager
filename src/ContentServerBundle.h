@@ -35,6 +35,7 @@ public:
         std::vector<ItemAllocation> const& allocations, std::string& error);
     static std::string RowJson(ResolvedServerItem const& row);
     static std::string SqlText(std::string const& value);
+    static std::string SqlIdentityText(std::string const& value);
     static std::string InsertSql(ResolvedServerItem const& row);
     static std::string UpdateSql(ResolvedServerItem const& row, std::string const& previousRowJson);
     static std::string MatchSql(ResolvedServerItem const& row, std::string const& alias);
