@@ -15,6 +15,7 @@
 #include "ContentBuildPaths.h"
 #include "DbcDescriptor.h"
 #include "DbcReader.h"
+#include "CurrencyDbcComposer.h"
 #include "ContentAllocationRegistry.h"
 #include "ContentServerDeployment.h"
 
@@ -198,10 +199,10 @@ public:
             handler->PSendSysMessage("Allocation lookup failed: {}", error);
             return true;
         }
-        handler->PSendSysMessage("Retained item.id allocations for realm {}: {}", realm.Name, rows.size());
+        handler->PSendSysMessage("Retained resource allocations for realm {}: {}", realm.Name, rows.size());
         for (auto const& row : rows)
-            handler->PSendSysMessage("{} / {} / item.id = {} [{}], builds {}..{}, baseline {}",
-                row.packageKey, row.symbol, row.value, row.state, row.firstBuild, row.lastBuild,
+            handler->PSendSysMessage("{} / {} / {} = {} [{}], builds {}..{}, baseline {}",
+                row.packageKey, row.symbol, row.resourceKind, row.value, row.state, row.firstBuild, row.lastBuild,
                 row.baselineSha256);
         return true;
     }
@@ -246,8 +247,13 @@ public:
             status.state, build->state);
         handler->PSendSysMessage("Server item_template rows: {}", rows.size());
         for (auto const& row : rows)
+        {
             handler->PSendSysMessage("{} / {} / item.id = {}; item_template.entry = {}",
                 row.packageKey, row.symbol, row.id, row.id);
+            if (row.currency.itemId)
+                handler->PSendSysMessage("{} / {} / currency.known-bit = {}; CurrencyTypes / currencytypes_dbc ID=ItemID={}; CategoryID={}; BagFamily=8192",
+                    row.packageKey, row.currency.symbol, row.currency.bitIndex, row.id, row.currency.categoryId);
+        }
         handler->PSendSysMessage("Server bundle SHA-256: {}", status.bundleSha256);
         handler->PSendSysMessage("Parity manifest SHA-256: {}", status.paritySha256);
         return true;
@@ -276,7 +282,7 @@ public:
         }
         if (!IsKnownDbcTable(table))
         {
-            handler->PSendSysMessage("Unsupported DBC table '{}'. Registered table: Item.", table);
+            handler->PSendSysMessage("Unsupported DBC table '{}'. Registered tables: Item, CurrencyTypes.", table);
             return true;
         }
         auto build = sContentManager.GetClientBuild();
@@ -303,6 +309,10 @@ public:
             std::string sha256, hashError;
             if (!ContentBuildHash::Calculate(source, sha256, hashError))
                 throw std::runtime_error("SHA-256 failed: " + hashError);
+            if (sha256 != ContentBuildHash::Bytes(DbcReader::Serialize(parsed.document)))
+                throw std::runtime_error("DBC baseline changed between read and hashing");
+            auto currencyOccupancy = table == "CurrencyTypes"
+                ? CurrencyDbcComposer::Inspect(parsed.document) : CurrencyOccupancy{};
             handler->PSendSysMessage("DBC inspection PASS: {} (descriptor v{})", table, descriptor->version);
             handler->PSendSysMessage("Client build: {}", build);
             handler->PSendSysMessage("Baseline directory: {}", directory.string());
@@ -311,6 +321,14 @@ public:
             handler->PSendSysMessage("Records: {}; fields: {}; record bytes: {}; string bytes: {}",
                 parsed.document.recordCount, parsed.document.fieldCount,
                 parsed.document.recordSize, parsed.document.stringBlockSize);
+            if (table == "CurrencyTypes")
+            {
+                handler->SendSysMessage("Fields: ID int32, ItemID int32, CategoryID int32, BitIndex int32; no string fields.");
+                handler->SendSysMessage("BitIndex is one-based: 1..64. ID is distinct from the ItemID lookup key.");
+                std::string bits;
+                for (auto bit : currencyOccupancy.bits) bits += (bits.empty() ? "" : ",") + std::to_string(bit);
+                handler->PSendSysMessage("Baseline occupied known-bit indexes: {}", bits);
+            }
             handler->SendSysMessage("Layout validation passed. Baseline provenance is reported, not approved or pinned by this phase.");
         }
         catch (std::exception const& e)

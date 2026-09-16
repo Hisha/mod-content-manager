@@ -381,3 +381,11 @@ Use `.content server status [build-number]` to inspect the server bundle and ind
 Allocation state remains `reserved`; build state remains `STAGED` until the separate client activation command changes it. Server state is `STAGED` or `APPLIED` in `content_manager_server_build`. A server apply does not activate or publish the client patch. AzerothCore caches item templates at worldserver startup, so restart worldserver after server apply before using `.additem`.
 
 Future runtime modules should receive an optional `ContentManager::Resolve(package, symbol, resourceKind)` API backed by the retained allocation registry and ownership checks. Do not make `mod-hunts` query allocation SQL or take a hard dependency in this phase.
+
+## Phase 4 currency tokens
+
+Schema 2 now supports a `currencies` declaration, independent `currency.known-bit`
+leases, cumulative CurrencyTypes.dbc composition and explicit typed server overlay
+deployment. See [Phase 4 implementation and acceptance guide](docs/PHASE4.md) for
+syntax, baseline verification, SQL migration, exact commands and limitations.
+The Phase 3-only BagFamily=0 restriction is extended to declared tokens (8192).

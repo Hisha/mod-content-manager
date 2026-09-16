@@ -12,6 +12,8 @@
 #include "ContentServerOwnership.h"
 #include "ContentResourceAllocator.h"
 #include "ItemDbcComposer.h"
+#include "CurrencyDbcComposer.h"
+#include "ContentCurrencyServer.h"
 #include "DbcDescriptor.h"
 #include "DbcReader.h"
 
@@ -119,6 +121,17 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
         for (auto const& source : selected)
             for (auto const& row : source.validation.manifest.itemRows)
                 itemRequests.push_back({source.validation.manifest.packageKey, row.symbol});
+        std::vector<ResourceAllocationRequest> currencyRequests;
+        for (auto const& source : selected)
+            for (auto const& row : source.validation.manifest.currencyRows)
+                currencyRequests.push_back({source.validation.manifest.packageKey, row.symbol, "currency.known-bit"});
+        bool composingCurrency = !currencyRequests.empty();
+        if (composingCurrency)
+        {
+            auto key = Fold("DBFilesClient/CurrencyTypes.dbc");
+            Require(!owners.count(key), "Raw CurrencyTypes.dbc conflicts with semantic composition");
+            owners.emplace(key, "CurrencyTypes composer");
+        }
         bool composingItem = !itemRequests.empty();
         if (composingItem)
         {
@@ -149,7 +162,32 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
         std::vector<ResolvedServerItem> resolvedServerRows;
         std::string baselineHash;
         std::string composedHash;
+        std::vector<std::uint8_t> composedCurrencyBytes;
+        std::string currencyBaselineHash, currencyHash;
+        DbcReadResult currencyBaseline;
+        std::set<std::uint32_t> currencyExternalBits, currencyExternalIds;
         std::uint32_t expectedItemRecords = 0;
+        if (composingCurrency)
+        {
+            Require(manager.GetClientBuild() == 12340, "CurrencyTypes supports build 12340 only");
+            Require(ContentBuildHash::Valid(manager.GetCurrencyTypesBaselineSha256()),
+                "Inspect CurrencyTypes and pin ContentManager.CurrencyTypesBaselineSha256 before building");
+            auto descriptor = FindDbcDescriptor(12340, "CurrencyTypes");
+            currencyBaseline = DbcReader::ReadBaseline(manager.GetBaselineDbcDirectory(), *descriptor);
+            Require(currencyBaseline.valid, currencyBaseline.error);
+            auto path = fs::canonical(manager.GetBaselineDbcDirectory()) / descriptor->serverFile;
+            Require(ContentBuildHash::Calculate(path, currencyBaselineHash, error), error);
+            Require(currencyBaselineHash == ContentBuildHash::Bytes(DbcReader::Serialize(currencyBaseline.document)),
+                "CurrencyTypes baseline changed between read and hashing");
+            Require(currencyBaselineHash == manager.GetCurrencyTypesBaselineSha256(), "CurrencyTypes baseline hash mismatch");
+            auto occupancy = CurrencyDbcComposer::Inspect(currencyBaseline.document);
+            std::vector<ItemAllocation> retained;
+            Require(ContentAllocationRegistry().Read(realmName, retained, error), error);
+            Require(ContentCurrencyServer::Occupancy(realmName, retained, currencyExternalBits, currencyExternalIds, error), error);
+            currencyExternalBits.insert(occupancy.bits.begin(), occupancy.bits.end());
+            currencyExternalIds.insert(occupancy.ids.begin(), occupancy.ids.end());
+            currencyExternalIds.insert(occupancy.items.begin(), occupancy.items.end());
+        }
         if (composingItem)
         {
             Require(manager.GetClientBuild() == 12340, "Item composition supports only client build 12340");
@@ -161,6 +199,8 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
             Require(baseline.valid, "Item baseline validation failed: " + baseline.error);
             fs::path baselinePath = fs::canonical(manager.GetBaselineDbcDirectory()) / descriptor->serverFile;
             Require(ContentBuildHash::Calculate(baselinePath, baselineHash, error), "Item baseline SHA-256 failed: " + error);
+            Require(baselineHash == ContentBuildHash::Bytes(DbcReader::Serialize(baseline.document)),
+                "Item baseline changed between read and hashing");
             Require(baselineHash == manager.GetItemBaselineSha256(),
                 "Item baseline SHA-256 differs from ContentManager.ItemBaselineSha256; composition refused");
             std::set<std::uint32_t> baselineIDs;
@@ -173,6 +213,8 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
             Require(registry.OccupiedWorldItems(worldIDs, error), error);
             Require(ContentServerOwnership::ExcludeOwned(realmName, retained, worldIDs, error), error);
             worldIDs.insert(baselineIDs.begin(), baselineIDs.end());
+            // CurrencyTypes.ID derives from ItemID; exclude both external keys before Item allocation.
+            worldIDs.insert(currencyExternalIds.begin(), currencyExternalIds.end());
             auto policy = ContentResourceAllocator::ItemIdPolicy(baselineIDs);
             allocationPlan = ContentResourceAllocator::Plan(realmName, policy, itemRequests,
                 retained, worldIDs, result.buildNumber, baselineHash);
@@ -211,6 +253,41 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
             Require(ContentBuildHash::Calculate(baselinePath, recheckHash, error) && recheckHash == baselineHash,
                 "Item baseline changed during composition");
         }
+        if (composingCurrency)
+        {
+            std::vector<ItemAllocation> retained;
+            Require(ContentAllocationRegistry().Read(realmName, retained, error), error);
+            auto currencyPlan = ContentResourceAllocator::Plan(realmName,
+                ContentResourceAllocator::CurrencyKnownBitPolicy(), currencyRequests, retained,
+                currencyExternalBits, result.buildNumber, currencyBaselineHash);
+            std::vector<ResolvedCurrency> rows;
+            for (auto const& source : selected)
+                for (auto const& declaration : source.validation.manifest.currencyRows)
+                {
+                    auto const& package = source.validation.manifest.packageKey;
+                    auto item = std::find_if(resolvedServerRows.begin(), resolvedServerRows.end(), [&](auto const& r) {
+                        return r.packageKey == package && r.symbol == declaration.itemSymbol;
+                    });
+                    auto bit = std::find_if(currencyPlan.begin(), currencyPlan.end(), [&](auto const& a) {
+                        return a.packageKey == package && a.symbol == declaration.symbol;
+                    });
+                    Require(item != resolvedServerRows.end() && bit != currencyPlan.end(), "Currency plan reference missing");
+                    item->currency = {declaration.symbol, item->id,
+                        CurrencyDbcComposer::Category(currencyBaseline.document, declaration.categoryCopyFromItem), bit->value};
+                    rows.push_back(item->currency);
+                    report("Planned currency.known-bit: " + package + "/" + declaration.symbol + " = " + std::to_string(bit->value));
+                    report("Currency parity: CurrencyTypes.ID/ItemID = currencytypes_dbc.ID/ItemID = item_template.entry = "
+                        + std::to_string(item->id) + "; BitIndex = " + std::to_string(bit->value) + "; BagFamily = 8192");
+                }
+            composedCurrencyBytes = CurrencyDbcComposer::Compose(currencyBaseline.document, rows);
+            allocationPlan.insert(allocationPlan.end(), currencyPlan.begin(), currencyPlan.end());
+            std::string recheck;
+            Require(ContentBuildHash::Calculate(fs::canonical(manager.GetBaselineDbcDirectory()) / "CurrencyTypes.dbc", recheck, error)
+                && recheck == currencyBaselineHash, "CurrencyTypes baseline changed during composition");
+            report("CurrencyTypes baseline SHA-256: " + currencyBaselineHash);
+            report("CurrencyTypes records: " + std::to_string(currencyBaseline.document.recordCount) + " -> "
+                + std::to_string(currencyBaseline.document.recordCount + rows.size()));
+        }
         Require(!manager.GetOutputDirectory().empty() && !manager.GetWorkDirectory().empty(), "Build directories must not be empty");
         auto filename = FilenameRealm(realmName) + "-Content-" + Number(result.buildNumber) + ".mpq";
         result.outputPath = fs::absolute(fs::path(manager.GetOutputDirectory()) / filename);
@@ -246,7 +323,7 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
             result.fileCount += staged.stagedFiles.size();
             report("  " + std::to_string(staged.stagedFiles.size()) + " file(s)");
         }
-        Require(result.fileCount + (composingItem ? 1 : 0) == owners.size(),
+        Require(result.fileCount + (composingItem ? 1 : 0) + (composingCurrency ? 1 : 0) == owners.size(),
             "Staged file count does not match the declared cumulative set");
         if (composingItem)
         {
@@ -285,6 +362,25 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
             }
             ++result.fileCount;
         }
+        if (composingCurrency)
+        {
+            auto target = result.workspace / "DBFilesClient" / "CurrencyTypes.dbc";
+            RejectLinks(target);
+            fs::create_directories(target.parent_path());
+            Require(!fs::exists(fs::symlink_status(target)), "CurrencyTypes target already exists");
+            {
+                std::ofstream output(target, std::ios::binary);
+                Require(output.is_open(), "Cannot create CurrencyTypes.dbc");
+                output.write(reinterpret_cast<char const*>(composedCurrencyBytes.data()), composedCurrencyBytes.size());
+                Require(output.good(), "Cannot write CurrencyTypes.dbc");
+            }
+            auto parsed = DbcReader::Read(target, *FindDbcDescriptor(12340, "CurrencyTypes"));
+            Require(parsed.valid && DbcReader::Serialize(parsed.document) == composedCurrencyBytes,
+                "CurrencyTypes disk readback failed");
+            Require(ContentBuildHash::Calculate(target, currencyHash, error), error);
+            report("Composed CurrencyTypes.dbc SHA-256: " + currencyHash);
+            ++result.fileCount;
+        }
         report("Cumulative files: " + std::to_string(result.fileCount));
         auto mpq = MpqBuilder().Build(result.workspace, result.outputPath);
         Require(mpq.success, "MPQ build failed: " + mpq.error);
@@ -313,7 +409,7 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
             Require(ContentBuildHash::Calculate(serverPath, serverRecord.bundleSha256, error),
                 "Server bundle SHA-256 failed: " + error);
             writeSidecar(parityPath, ContentServerBundle::ParityJson(realmName, result.buildNumber,
-                allocationPlan, resolvedServerRows, baselineHash, composedHash, hash, serverRecord.bundleSha256));
+                allocationPlan, resolvedServerRows, baselineHash, composedHash, hash, serverRecord.bundleSha256, currencyHash));
             serverRecord.parityFilename = parityPath.filename().string();
             Require(ContentBuildHash::Calculate(parityPath, serverRecord.paritySha256, error),
                 "Parity manifest SHA-256 failed: " + error);

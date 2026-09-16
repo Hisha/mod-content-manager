@@ -63,6 +63,21 @@ int main(int argc, char** argv)
     invalidServer = withServer;
     invalidServer["serverRows"][0]["fields"]["BagFamily"] = 8192;
     Save(path, invalidServer); assert(!ContentPackage(path).Validate().valid);
+    auto currency = withServer;
+    currency["serverRows"][0]["fields"]["BagFamily"] = 8192;
+    currency["currencies"] = json::array({{{"symbol","seal-currency"},{"item","seal"},{"categoryCopyFromItem",40752}}});
+    Save(path,currency); assert(ContentPackage(path).Validate().valid);
+    for (auto key : {"ID","BitIndex","knownBit"})
+    {
+        auto invalid=currency;invalid["currencies"][0][key]=4;
+        Save(path,invalid);assert(!ContentPackage(path).Validate().valid);
+    }
+    auto invalid=currency;invalid["currencies"][0]["item"]="absent";
+    Save(path,invalid);assert(!ContentPackage(path).Validate().valid);
+    invalid=currency;invalid["currencies"].push_back(invalid["currencies"][0]);
+    Save(path,invalid);assert(!ContentPackage(path).Validate().valid);
+    invalid=currency;invalid["serverRows"][0]["fields"]["BagFamily"]=0;
+    Save(path,invalid);assert(!ContentPackage(path).Validate().valid);
     auto bad = manifest; bad["dbcRows"][0]["table"] = "CurrencyTypes";
     Save(path, bad); assert(!ContentPackage(path).Validate().valid);
     bad = manifest; bad["dbcRows"][0]["op"] = "modify";

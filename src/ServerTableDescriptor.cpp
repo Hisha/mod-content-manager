@@ -8,7 +8,7 @@ ServerTableDescriptor const* FindServerTableDescriptor(std::string const& table)
          {"Quality", ServerFieldType::UInt8, true, 0, 7},
          {"stackable", ServerFieldType::Int32, true, 1, 1000},
          {"bonding", ServerFieldType::UInt8, true, 0, 5},
-         {"BagFamily", ServerFieldType::Int32, true, 0, 0}},
+         {"BagFamily", ServerFieldType::Int32, true, 0, 8192}},
         {{"entry", "int unsigned", false}, {"class", "tinyint unsigned", false},
          {"subclass", "tinyint unsigned", false}, {"SoundOverrideSubclass", "tinyint", false},
          {"name", "varchar(255)", false, "utf8mb4_unicode_ci"}, {"displayid", "int unsigned", false},

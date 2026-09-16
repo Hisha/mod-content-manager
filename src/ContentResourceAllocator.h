@@ -14,7 +14,7 @@ struct ResourceAllocationRequest
 };
 
 // Each future resource supplies its own valid space and occupancy sources.
-// Only the item.id policy is registered in Phase 2.
+// item.id and currency.known-bit have independent policies and retained leases.
 struct ResourceAllocationPolicy
 {
     std::string resourceKind;
@@ -26,6 +26,7 @@ struct ResourceAllocationPolicy
 class ContentResourceAllocator
 {
 public:
+    static ResourceAllocationPolicy CurrencyKnownBitPolicy() { return {"currency.known-bit", 1, 64}; }
     static ResourceAllocationPolicy ItemIdPolicy(std::set<std::uint32_t> const& baselineIDs);
     static std::vector<ItemAllocation> Plan(std::string const& realm,
         ResourceAllocationPolicy const& policy,

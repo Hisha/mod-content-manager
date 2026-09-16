@@ -34,8 +34,15 @@ std::vector<ItemAllocation> ContentResourceAllocator::Plan(std::string const& re
     std::map<std::tuple<std::string, std::string, std::string>, ItemAllocation> byIdentity;
     for (auto const& lease : retained)
     {
-        if (lease.realm != realm || lease.resourceKind != policy.resourceKind)
+        if (lease.resourceKind != policy.resourceKind) continue;
+        if (lease.realm != realm)
             throw std::runtime_error("Retained allocation scope does not match resource policy");
+        if (!byIdentity.empty())
+            for (auto const& prior : byIdentity)
+                if (prior.second.value == lease.value)
+                    throw std::runtime_error("Duplicate retained resource value");
+        if (!lease.value || lease.value > policy.lastCandidate)
+            throw std::runtime_error("Retained allocation outside resource bounds");
         occupied.insert(lease.value); // Removed and retired leases remain occupied.
         if (!byIdentity.emplace(std::make_tuple(lease.packageKey, lease.symbol, lease.resourceKind), lease).second)
             throw std::runtime_error("Duplicate retained resource allocation identity");

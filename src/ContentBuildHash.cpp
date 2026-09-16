@@ -59,3 +59,15 @@ bool ContentBuildHash::Calculate(std::filesystem::path const& path, std::string&
         return false;
     }
 }
+
+std::string ContentBuildHash::Bytes(std::vector<std::uint8_t> const& bytes)
+{
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int length = 0;
+    if (EVP_Digest(bytes.data(), bytes.size(), digest, &length, EVP_sha256(), nullptr) != 1 || length != 32)
+        throw std::runtime_error("SHA256 memory digest failed");
+    static char const digits[] = "0123456789abcdef";
+    std::string hash;
+    for (unsigned i = 0; i < length; ++i) { hash += digits[digest[i] >> 4]; hash += digits[digest[i] & 15]; }
+    return hash;
+}

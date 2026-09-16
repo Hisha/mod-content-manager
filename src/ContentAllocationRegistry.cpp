@@ -2,6 +2,7 @@
 #include "ContentBuildHash.h"
 #include "ContentItemOccupancy.h"
 #include "ContentServerOwnership.h"
+#include "ContentCurrencyServer.h"
 #include "DatabaseEnv.h"
 #include "Field.h"
 #include "QueryResult.h"
@@ -17,7 +18,7 @@ std::string SqlText(std::string const& value)
     static char const digits[] = "0123456789abcdef";
     std::string sql = "CONVERT(X'";
     for (unsigned char c : value) { sql += digits[c >> 4]; sql += digits[c & 15]; }
-    return sql + "' USING utf8mb4)";
+    return sql + "' USING utf8mb4) COLLATE utf8mb4_bin";
 }
 char const* DbError = "Allocation registry query failed; apply module world SQL and check SQL logs";
 }
@@ -26,16 +27,16 @@ bool ContentAllocationRegistry::Read(std::string const& realm, std::vector<ItemA
 {
     rows.clear();
     auto query = WorldDatabase.Query("SELECT a.package_key, a.symbol, a.allocated_value, a.state, "
-        "a.first_build, a.last_build, a.baseline_sha256, a.policy_version FROM (SELECT 1) seed LEFT JOIN "
+        "a.first_build, a.last_build, a.baseline_sha256, a.policy_version, a.resource_kind FROM (SELECT 1) seed LEFT JOIN "
         "content_manager_allocation a ON a.realm_name=" + SqlText(realm)
-        + " AND a.resource_kind='item.id' ORDER BY a.package_key, a.symbol");
+        + " ORDER BY a.package_key, a.symbol,a.resource_kind");
     if (!query) { error = DbError; return false; }
     do
     {
         auto f = query->Fetch();
         if (!f[0].IsNull()) rows.push_back({realm, f[0].Get<std::string>(), f[1].Get<std::string>(),
             f[2].Get<uint32>(), f[3].Get<std::string>(), f[4].Get<uint32>(),
-            f[5].Get<uint32>(), f[6].Get<std::string>(), "item.id", f[7].Get<uint32>()});
+            f[5].Get<uint32>(), f[6].Get<std::string>(), f[8].Get<std::string>(), f[7].Get<uint32>()});
     } while (query->NextRow());
     return true;
 }
@@ -98,39 +99,48 @@ bool ContentAllocationRegistry::CommitComposed(ContentBuildRecord const& build,
     std::set<std::uint32_t> occupied;
     for (auto const& row : plan)
     {
-        if (row.realm != build.realmName || row.resourceKind != "item.id" || row.policyVersion != 1 || !row.value
+        if (row.realm != build.realmName || (row.resourceKind != "item.id" && row.resourceKind != "currency.known-bit") || row.policyVersion != 1 || !row.value
             || !ContentBuildHash::Valid(row.baselineSha256))
         { error = "Invalid allocation plan"; return false; }
         for (auto const& prior : before)
-            if ((prior.packageKey == row.packageKey && prior.symbol == row.symbol
+            if (prior.resourceKind == row.resourceKind && ((prior.packageKey == row.packageKey && prior.symbol == row.symbol
                     && (prior.value != row.value || prior.policyVersion != row.policyVersion
                         || prior.baselineSha256 != row.baselineSha256))
-                || (prior.value == row.value && (prior.packageKey != row.packageKey || prior.symbol != row.symbol)))
+                || (prior.value == row.value && (prior.packageKey != row.packageKey || prior.symbol != row.symbol))))
             { error = "Allocation registry changed since planning; rebuild required"; return false; }
     }
     if (!OccupiedWorldItems(occupied, error)) return false;
     if (!ContentServerOwnership::ExcludeOwned(build.realmName, before, occupied, error)) return false;
     for (auto const& row : plan)
-        if (occupied.count(row.value))
+        if (row.resourceKind == "item.id" && occupied.count(row.value))
         { error = "Planned Item ID became occupied in item_template: " + std::to_string(row.value); return false; }
+    if (std::any_of(plan.begin(), plan.end(), [](auto const& a) { return a.resourceKind == "currency.known-bit"; }))
+    {
+        std::set<std::uint32_t> bits, ids;
+        if (!ContentCurrencyServer::Occupancy(build.realmName, before, bits, ids, error)) return false;
+        for (auto const& row : plan)
+            if ((row.resourceKind == "currency.known-bit" && (row.value > 64 || bits.count(row.value)))
+                || (row.resourceKind == "item.id" && ids.count(row.value)))
+            { error = "Planned currency bit or derived CurrencyTypes ID became occupied or invalid"; return false; }
+    }
     auto tx = WorldDatabase.BeginTransaction();
     tx->Append("INSERT INTO content_manager_build_lock (id) VALUES (1) ON DUPLICATE KEY UPDATE id=1");
     for (auto const& row : plan)
     {
         bool existing = false;
         for (auto const& old : before)
-            if (old.packageKey == row.packageKey && old.symbol == row.symbol)
+            if (old.packageKey == row.packageKey && old.symbol == row.symbol && old.resourceKind == row.resourceKind)
                 existing = true;
         if (existing)
             tx->Append("UPDATE content_manager_allocation SET last_build=" + std::to_string(build.buildNumber)
                 + " WHERE realm_name=" + SqlText(row.realm) + " AND package_key=" + SqlText(row.packageKey)
-                + " AND symbol=" + SqlText(row.symbol) + " AND resource_kind='item.id' AND allocated_value="
+                + " AND symbol=" + SqlText(row.symbol) + " AND resource_kind=" + SqlText(row.resourceKind) + " AND allocated_value="
                 + std::to_string(row.value));
         else
             tx->Append("INSERT INTO content_manager_allocation (realm_name,package_key,symbol,resource_kind,"
             "allocated_value,state,first_build,last_build,baseline_sha256,descriptor_version,policy_version) VALUES ("
             + SqlText(row.realm) + "," + SqlText(row.packageKey) + "," + SqlText(row.symbol)
-            + ",'item.id'," + std::to_string(row.value) + ",'reserved',"
+            + "," + SqlText(row.resourceKind) + "," + std::to_string(row.value) + ",'reserved',"
             + std::to_string(build.buildNumber) + "," + std::to_string(build.buildNumber) + ","
             + SqlText(row.baselineSha256) + ",1," + std::to_string(row.policyVersion) + ")");
     }
@@ -162,7 +172,7 @@ bool ContentAllocationRegistry::CommitComposed(ContentBuildRecord const& build,
     {
         bool found = false;
         for (auto const& saved : after)
-            if (saved.packageKey == row.packageKey && saved.symbol == row.symbol && saved.value == row.value
+            if (saved.packageKey == row.packageKey && saved.symbol == row.symbol && saved.resourceKind == row.resourceKind && saved.value == row.value
                 && saved.lastBuild == build.buildNumber && saved.baselineSha256 == row.baselineSha256)
                 found = true;
         if (!found) { error = "Committed allocation did not verify; inspect SQL logs"; return false; }

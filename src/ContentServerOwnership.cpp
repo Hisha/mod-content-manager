@@ -53,7 +53,7 @@ bool ContentServerOwnership::ExcludeOwned(std::string const& realm,
 {
     for (auto const& lease : retained)
     {
-        if (!occupied.count(lease.value)) continue;
+        if (lease.resourceKind != "item.id" || !occupied.count(lease.value)) continue;
         bool owned = false;
         ContentItemOwner owner;
         if (!ReadOwner(lease.value, owned, owner, error)) return false;

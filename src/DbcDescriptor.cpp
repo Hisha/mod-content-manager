@@ -15,14 +15,26 @@ DbcDescriptor const item12340 = {
         {"SheatheType", DbcFieldType::UInt32}
     }
 };
+DbcDescriptor const currency12340 = {
+    12340, "CurrencyTypes", 1, "DBFilesClient/CurrencyTypes.dbc", "CurrencyTypes.dbc",
+    {
+        {"ID", DbcFieldType::Int32, true},
+        {"ItemID", DbcFieldType::Int32, false, "Item"},
+        {"CategoryID", DbcFieldType::Int32, false, "CurrencyCategory"},
+        {"BitIndex", DbcFieldType::Int32, false, nullptr, "currency.known-bit"}
+    }
+};
 }
 
 DbcDescriptor const* FindDbcDescriptor(std::uint32_t clientBuild, std::string const& tableName)
 {
-    return clientBuild == item12340.clientBuild && tableName == item12340.tableName ? &item12340 : nullptr;
+    if (clientBuild != 12340) return nullptr;
+    if (tableName == "Item") return &item12340;
+    if (tableName == "CurrencyTypes") return &currency12340;
+    return nullptr;
 }
 
 bool IsKnownDbcTable(std::string const& tableName)
 {
-    return tableName == item12340.tableName;
+    return tableName == "Item" || tableName == "CurrencyTypes";
 }

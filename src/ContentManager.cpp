@@ -72,6 +72,7 @@ void ContentManager::LoadConfig()
     _clientBuild = sConfigMgr->GetOption<std::uint32_t>(
         "ContentManager.ClientBuild", 12340);
     _itemBaselineSha256 = sConfigMgr->GetOption<std::string>("ContentManager.ItemBaselineSha256", "");
+    _currencyTypesBaselineSha256 = sConfigMgr->GetOption<std::string>("ContentManager.CurrencyTypesBaselineSha256", "");
 	
     _patchHoldDirectory =
         sConfigMgr->GetOption<std::string>(

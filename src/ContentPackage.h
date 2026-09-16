@@ -49,6 +49,18 @@ struct ContentServerItemRow
     }
 };
 
+struct ContentCurrencyRow
+{
+    std::string symbol;
+    std::string itemSymbol;
+    std::uint32_t categoryCopyFromItem = 0;
+    bool operator==(ContentCurrencyRow const& other) const
+    {
+        return symbol == other.symbol && itemSymbol == other.itemSymbol
+            && categoryCopyFromItem == other.categoryCopyFromItem;
+    }
+};
+
 struct ContentPackageManifest
 {
     uint32_t schema = 0;
@@ -60,6 +72,7 @@ struct ContentPackageManifest
     std::vector<ContentPackageEntry> content;
     std::vector<ContentItemRow> itemRows;
     std::vector<ContentServerItemRow> serverItemRows;
+    std::vector<ContentCurrencyRow> currencyRows;
 };
 
 struct ContentPackageStageResult

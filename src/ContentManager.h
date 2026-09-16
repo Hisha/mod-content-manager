@@ -38,6 +38,7 @@ public:
     std::string const& GetBaselineDbcDirectory() const;
     std::uint32_t GetClientBuild() const;
     std::string const& GetItemBaselineSha256() const;
+    std::string const& GetCurrencyTypesBaselineSha256() const { return _currencyTypesBaselineSha256; }
 
 	std::vector<ContentPackageCandidate> ScanAvailablePackages() const;
     std::vector<ContentPackageCandidate> ScanPatchHold() const;
@@ -55,6 +56,7 @@ private:
     std::string _baselineDbcDirectory;
     std::uint32_t _clientBuild = 12340;
     std::string _itemBaselineSha256;
+    std::string _currencyTypesBaselineSha256;
 };
 
 #define sContentManager ContentManager::Instance()

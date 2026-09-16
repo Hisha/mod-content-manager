@@ -39,3 +39,7 @@ ContentManager.ItemBaselineSha256 = "d455bc30b59bc368b2a972a913864dd092d50695140
 # Relative paths resolve from the worldserver working directory.
 # Must not overlap OutputDirectory. Created on activation if needed.
 ContentManager.PublishDirectory = "/mnt/ai_data/linkable"
+
+# Phase 4: inspect CurrencyTypes before pinning its real server baseline hash.
+# Empty permits inspection but refuses semantic currency builds.
+ContentManager.CurrencyTypesBaselineSha256 = ""

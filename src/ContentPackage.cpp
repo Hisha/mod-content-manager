@@ -2,7 +2,6 @@
 #include "ContentBuildPaths.h"
 #include "ServerTableDescriptor.h"
 
-#include "Log.h"
 
 #include "third_party/json/json.hpp"
 #include "third_party/miniz/miniz.h"
@@ -191,7 +190,7 @@ ContentPackageValidationResult ContentPackage::Validate() const
 
         return result;
     }
-    if (result.manifest.schema == 1 && manifest.contains("serverRows"))
+    if (result.manifest.schema == 1 && (manifest.contains("serverRows") || manifest.contains("currencies")))
     { result.error = "serverRows require Schema 2"; return result; }
 
     if (result.manifest.packageKey.empty())
@@ -493,6 +492,36 @@ ContentPackageValidationResult ContentPackage::Validate() const
             item.bagFamily = fields["BagFamily"].get<std::int32_t>();
             result.manifest.serverItemRows.push_back(std::move(item));
         }
+        if (manifest.contains("currencies"))
+        {
+            if (!manifest["currencies"].is_array())
+            { result.error = "currencies must be an array"; return result; }
+            std::set<std::string> currencyItems;
+            for (auto const& currency : manifest["currencies"])
+            {
+                if (!currency.is_object() || currency.size() != 3
+                    || !currency.contains("symbol") || !currency["symbol"].is_string()
+                    || !currency.contains("item") || !currency["item"].is_string()
+                    || !currency.contains("categoryCopyFromItem") || !currency["categoryCopyFromItem"].is_number_unsigned())
+                { result.error = "Currency requires symbol, item and categoryCopyFromItem; numeric identities are allocator-owned"; return result; }
+                ContentCurrencyRow row{currency["symbol"].get<std::string>(), currency["item"].get<std::string>(), 0};
+                auto donor = currency["categoryCopyFromItem"].get<std::uint64_t>();
+                if (!ValidSymbol(row.symbol) || !symbols.insert(row.symbol).second || !donor || donor > 0x7fffffffULL
+                    || !currencyItems.insert(row.itemSymbol).second)
+                { result.error = "Invalid/duplicate currency symbol, item or category donor"; return result; }
+                auto server = std::find_if(result.manifest.serverItemRows.begin(), result.manifest.serverItemRows.end(),
+                    [&](auto const& item) { return item.symbol == row.itemSymbol; });
+                if (server == result.manifest.serverItemRows.end() || server->bagFamily != 8192)
+                { result.error = "Currency must reference a package-local server Item with BagFamily=8192"; return result; }
+                row.categoryCopyFromItem = static_cast<std::uint32_t>(donor);
+                result.manifest.currencyRows.push_back(row);
+            }
+        }
+        for (auto const& server : result.manifest.serverItemRows)
+            if (server.bagFamily != 0 && (server.bagFamily != 8192 || std::none_of(
+                result.manifest.currencyRows.begin(), result.manifest.currencyRows.end(),
+                [&](auto const& row) { return row.itemSymbol == server.symbol; })))
+            { result.error = "BagFamily supports only 0 or a declared currency token (8192)"; return result; }
         if (result.manifest.content.empty() && result.manifest.itemRows.empty())
         { result.error = "Schema 2 needs content or dbcRows"; return result; }
     }
@@ -548,7 +577,8 @@ ContentPackageStageResult ContentPackage::StageInto(std::filesystem::path const&
         auto const& actual = validation.manifest;
         bool same = actual.schema == expected.schema && actual.packageKey == expected.packageKey
             && actual.version == expected.version && actual.content.size() == expected.content.size()
-            && actual.itemRows == expected.itemRows && actual.serverItemRows == expected.serverItemRows;
+            && actual.itemRows == expected.itemRows && actual.serverItemRows == expected.serverItemRows
+            && actual.currencyRows == expected.currencyRows;
         if (same)
             for (std::size_t i = 0; i < actual.content.size(); ++i)
                 same = same && actual.content[i].type == expected.content[i].type

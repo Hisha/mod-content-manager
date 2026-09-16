@@ -4,6 +4,8 @@
 #include "ContentBuildPaths.h"
 #include "ContentBuildRegistry.h"
 #include "ContentServerBundle.h"
+#include "ContentCurrencyServer.h"
+#include <tuple>
 #include "ContentServerOwnership.h"
 #include "ServerTableDescriptor.h"
 #include "DatabaseEnv.h"
@@ -98,7 +100,7 @@ std::vector<ItemAllocation> ManifestAllocations(json const& parity,
     std::vector<ItemAllocation> const& current)
 {
     std::vector<ItemAllocation> result;
-    std::set<std::pair<std::string, std::string>> identities;
+    std::set<std::tuple<std::string, std::string, std::string>> identities;
     if (!parity.at("resources").is_array()) throw std::runtime_error("parity resources are not an array");
     for (auto const& resource : parity.at("resources"))
     {
@@ -107,11 +109,13 @@ std::vector<ItemAllocation> ManifestAllocations(json const& parity,
         auto value = resource.at("value").get<std::uint32_t>();
         auto baseline = resource.at("baselineSha256").get<std::string>();
         auto policy = resource.at("allocationPolicyVersion").get<std::uint32_t>();
-        if (!value || resource.at("resourceKind") != "item.id" || !ContentBuildHash::Valid(baseline)
-            || !identities.emplace(package, symbol).second)
+        auto kind = resource.at("resourceKind").get<std::string>();
+        if (!value || (kind != "item.id" && kind != "currency.known-bit")
+            || (kind == "currency.known-bit" && value > 64) || !ContentBuildHash::Valid(baseline)
+            || !identities.emplace(package, symbol, kind).second)
             throw std::runtime_error("invalid parity allocation");
         auto found = std::find_if(current.begin(), current.end(), [&](auto const& lease) {
-            return lease.packageKey == package && lease.symbol == symbol && lease.resourceKind == "item.id";
+            return lease.packageKey == package && lease.symbol == symbol && lease.resourceKind == kind;
         });
         if (found == current.end() || found->value != value || found->baselineSha256 != baseline
             || found->policyVersion != policy)
@@ -160,6 +164,8 @@ bool ContentServerDeployment::Inspect(std::uint32_t build, std::string const& re
         if (status.state == "APPLIED")
             for (auto const& row : rows)
             {
+                if (row.currency.itemId && !ContentCurrencyServer::Verify(row, realm, build, status.bundleSha256, error))
+                    return false;
                 bool owned = false, itemExists = false;
                 ContentItemOwner owner;
                 std::string current;
@@ -221,12 +227,26 @@ bool ContentServerDeployment::Apply(std::uint32_t build, std::string const& real
         for (auto const& row : rows)
         {
             auto found = std::find_if(allocations.begin(), allocations.end(), [&](auto const& lease) {
-                return lease.packageKey == row.packageKey && lease.symbol == row.symbol && lease.value == row.id;
+                return lease.resourceKind == "item.id" && lease.packageKey == row.packageKey && lease.symbol == row.symbol && lease.value == row.id;
             });
             Require(found != allocations.end() && found->baselineSha256 == baseline,
                 "Server item does not match retained allocation or baseline: " + row.packageKey + "/" + row.symbol);
         }
         if (!ValidateItemSchema(error)) return false;
+        bool hasCurrency = std::any_of(rows.begin(), rows.end(), [](auto const& row) { return row.currency.itemId != 0; });
+        std::vector<bool> currencyExists(rows.size(), false);
+        if (hasCurrency)
+        {
+            std::set<std::uint32_t> bits, ids;
+            Require(ContentCurrencyServer::Occupancy(realm, retained, bits, ids, error), error);
+            for (std::size_t i = 0; i < rows.size(); ++i)
+                if (rows[i].currency.itemId)
+                {
+                    bool present = false;
+                    Require(ContentCurrencyServer::Check(rows[i], realm, present, error), error);
+                    currencyExists[i] = present;
+                }
+        }
         struct Existing { bool item = false; bool owner = false; ContentItemOwner provenance; };
         std::vector<Existing> before;
         for (auto const& row : rows)
@@ -248,11 +268,65 @@ bool ContentServerDeployment::Apply(std::uint32_t build, std::string const& real
             for (std::size_t i = 0; i < rows.size(); ++i)
                 Require(before[i].owner && before[i].provenance.rowJson == ContentServerBundle::RowJson(rows[i]),
                     "APPLIED state has item_template drift; inspect ownership before retrying");
+            for (auto const& row : rows)
+                if (row.currency.itemId)
+                    Require(ContentCurrencyServer::Verify(row, realm, build, status.bundleSha256, error), error);
             summary = "Server content already APPLIED and verified. Restart worldserver for item-template visibility.";
             return true;
         }
         auto tx = WorldDatabase.BeginTransaction();
         tx->Append("INSERT INTO content_manager_build_lock (id) VALUES (1) ON DUPLICATE KEY UPDATE id=1");
+        if (hasCurrency)
+        {
+            // Lock the small overlay range before checking its alternate ItemID/BitIndex keys.
+            tx->Append("UPDATE currencytypes_dbc SET ID=ID");
+            tx->Append("UPDATE content_manager_currency_owner SET entry=entry");
+        }
+        // A failed guard deliberately duplicates the locked primary key, aborting the entire
+        // InnoDB transaction. Conditional UPDATEs alone do not guarantee rollback on drift.
+        auto guard = [&](std::string const& condition) {
+            tx->Append("INSERT INTO content_manager_build_lock (id) SELECT 1 WHERE NOT (" + condition + ")");
+        };
+        auto registryCondition = [&](char const* serverState) {
+            return "EXISTS(SELECT 1 FROM content_manager_build b JOIN content_manager_server_build s "
+                "ON s.build_number=b.build_number WHERE b.build_number=" + std::to_string(build)
+                + " AND b.realm_name=" + ContentServerBundle::SqlIdentityText(realm)
+                + " AND b.state='STAGED' AND b.sha256=" + ContentServerBundle::SqlIdentityText(record->sha256)
+                + " AND b.filename=" + ContentServerBundle::SqlIdentityText(record->filename)
+                + " AND s.server_state=" + ContentServerBundle::SqlIdentityText(serverState)
+                + " AND s.bundle_sha256=" + ContentServerBundle::SqlIdentityText(status.bundleSha256)
+                + " AND s.parity_sha256=" + ContentServerBundle::SqlIdentityText(status.paritySha256) + ")";
+        };
+        guard(registryCondition("STAGED"));
+        for (std::size_t i = 0; i < rows.size(); ++i)
+        {
+            auto const& row = rows[i];
+            if (row.currency.itemId)
+                guard(ContentCurrencyServer::Condition(row, realm, currencyExists[i]));
+            if (!before[i].owner)
+                guard("NOT EXISTS(SELECT 1 FROM item_template WHERE entry=" + std::to_string(row.id)
+                    + ") AND NOT EXISTS(SELECT 1 FROM content_manager_item_owner WHERE entry=" + std::to_string(row.id) + ")");
+            else
+                guard("EXISTS(SELECT 1 FROM content_manager_item_owner WHERE entry=" + std::to_string(row.id)
+                    + " AND realm_name=" + ContentServerBundle::SqlIdentityText(realm)
+                    + " AND package_key=" + ContentServerBundle::SqlIdentityText(row.packageKey)
+                    + " AND symbol=" + ContentServerBundle::SqlIdentityText(row.symbol)
+                    + " AND resource_kind=" + ContentServerBundle::SqlIdentityText("item.id")
+                    + " AND row_json=" + ContentServerBundle::SqlIdentityText(before[i].provenance.rowJson) + ")");
+        }
+        for (auto const& allocation : allocations)
+            guard("EXISTS(SELECT 1 FROM content_manager_allocation WHERE realm_name="
+                + ContentServerBundle::SqlIdentityText(realm) + " AND package_key="
+                + ContentServerBundle::SqlIdentityText(allocation.packageKey) + " AND symbol="
+                + ContentServerBundle::SqlIdentityText(allocation.symbol) + " AND resource_kind="
+                + ContentServerBundle::SqlIdentityText(allocation.resourceKind) + " AND allocated_value="
+                + std::to_string(allocation.value) + " AND baseline_sha256="
+                + ContentServerBundle::SqlIdentityText(allocation.baselineSha256) + " AND policy_version="
+                + std::to_string(allocation.policyVersion) + ")");
+        for (std::size_t i = 0; i < rows.size(); ++i)
+            if (rows[i].currency.itemId)
+                for (auto const& sql : ContentCurrencyServer::ApplySql(rows[i], realm, currencyExists[i], build, status.bundleSha256))
+                    tx->Append(sql);
         auto identityText = ContentServerBundle::SqlIdentityText;
         for (std::size_t i = 0; i < rows.size(); ++i)
         {
@@ -303,10 +377,21 @@ bool ContentServerDeployment::Apply(std::uint32_t build, std::string const& real
                 + " AND o.artifact_sha256=" + identityText(status.bundleSha256)
                 + " AND " + ContentServerBundle::MatchSql(row, "t") + ")";
         }
+        if (hasCurrency)
+        {
+            // The reference core orders its SQL overlay by ID before sizing the ItemID index.
+            guard("(SELECT ItemID FROM currencytypes_dbc ORDER BY ID DESC LIMIT 1)="
+                "(SELECT MAX(ItemID) FROM currencytypes_dbc)");
+            for (auto const& row : rows)
+                if (row.currency.itemId)
+                    guard(ContentCurrencyServer::Condition(row, realm, true));
+        }
+        guard("1=1" + condition);
         tx->Append("UPDATE content_manager_server_build SET server_state='APPLIED',applied_at=NOW() "
             "WHERE build_number=" + std::to_string(build) + " AND server_state=" + identityText("STAGED") + " AND bundle_sha256="
             + identityText(status.bundleSha256) + " AND parity_sha256="
             + identityText(status.paritySha256) + condition);
+        guard(registryCondition("APPLIED"));
         WorldDatabase.DirectCommitTransaction(tx);
         ContentServerStatus after;
         Require(ReadStatus(build, exists, after, error) && exists && after.state == "APPLIED",
@@ -324,8 +409,11 @@ bool ContentServerDeployment::Apply(std::uint32_t build, std::string const& real
                 && owner.rowJson == ContentServerBundle::RowJson(row) && currentRow == owner.rowJson,
                 "Post-apply item_template/ownership verification failed");
         }
+        for (auto const& row : rows)
+            if (row.currency.itemId)
+                Require(ContentCurrencyServer::Verify(row, realm, build, status.bundleSha256, error), error);
         summary = "Server content APPLIED for build " + std::to_string(build)
-            + ". Restart worldserver before using the new item template; client patch remains unactivated.";
+            + ". Restart worldserver to load item_template and currencytypes_dbc before testing; client patch remains unactivated.";
         return true;
     }
     catch (std::exception const& exception)

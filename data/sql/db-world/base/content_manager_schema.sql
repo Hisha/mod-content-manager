@@ -74,3 +74,17 @@ CREATE TABLE IF NOT EXISTS `content_manager_allocation` (
     PRIMARY KEY (`realm_name`, `package_key`, `symbol`, `resource_kind`),
     UNIQUE KEY `uq_allocation_value` (`realm_name`, `resource_kind`, `allocated_value`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+-- Phase 4 ownership only. No authored currency ID or world content is installed here.
+CREATE TABLE IF NOT EXISTS `content_manager_currency_owner` (
+  `entry` int unsigned NOT NULL,
+  `realm_name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  `package_key` varchar(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  `item_symbol` varchar(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  `symbol` varchar(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  `category_id` int unsigned NOT NULL,
+  `bit_index` int unsigned NOT NULL,
+  `applied_build` int unsigned NOT NULL,
+  `artifact_sha256` char(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  PRIMARY KEY (`entry`),
+  UNIQUE KEY `currency_bit` (`bit_index`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
