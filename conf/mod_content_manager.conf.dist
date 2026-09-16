@@ -30,9 +30,9 @@ ContentManager.BaselineDbcDirectory = "/home/smithkt/azerothcore-wotlk/env/data/
 # Raw Schema 1 EPF operations are independent of this setting.
 ContentManager.ClientBuild = 12340
 
-# Required only for Schema 2 Item composition. Pin to the administrator-verified
-# baseline hash; leave empty to disable semantic composition.
-ContentManager.ItemBaselineSha256 = "d455bc30b59bc368b2a972a913864dd092d50695140b9513582100dc56ed777d"
+# Optional stricter Item pin. Existing configured pins are validated during registry
+# migration and every build. Empty uses the persistent generic baseline registry.
+ContentManager.ItemBaselineSha256 = ""
 
 
 # Filesystem destination for versioned MPQs published by explicit activation.
@@ -40,6 +40,14 @@ ContentManager.ItemBaselineSha256 = "d455bc30b59bc368b2a972a913864dd092d50695140
 # Must not overlap OutputDirectory. Created on activation if needed.
 ContentManager.PublishDirectory = "/mnt/ai_data/linkable"
 
-# Phase 4: inspect CurrencyTypes before pinning its real server baseline hash.
-# Empty permits inspection but refuses semantic currency builds.
-ContentManager.CurrencyTypesBaselineSha256 = "61ed134510b11f4c010e505d3167240924e4c105839c15c5ec473cbc51f1844d"
+# Optional stricter CurrencyTypes pin, retained for backward compatibility.
+# Empty uses automatic first-use registration and exact subsequent matching.
+ContentManager.CurrencyTypesBaselineSha256 = ""
+
+# BaselineDbcDirectory and ClientBuild select administrator-provided baseline files.
+# Validated baselines register automatically on first build; later bytes must match
+# the persistent baseline registry. Existing SHA settings above are optional stricter
+# overrides. No per-DBC SHA setting is needed for CurrencyCategory or future tables.
+# Inspect: .content dbc inspect <table> (read-only, no pin required)
+# Replace intentionally: .content dbc review <table>, then .content dbc approve <table> <review-number>
+# Approval revalidates the candidate and compare-and-swaps the accepted revision.
