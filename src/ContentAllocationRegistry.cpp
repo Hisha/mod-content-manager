@@ -1,5 +1,6 @@
 #include "ContentAllocationRegistry.h"
 #include "ContentBuildHash.h"
+#include "ContentItemOccupancy.h"
 #include "DatabaseEnv.h"
 #include "Field.h"
 #include "QueryResult.h"
@@ -42,16 +43,17 @@ bool ContentAllocationRegistry::OccupiedWorldItems(std::set<std::uint32_t>& entr
     std::string& error) const
 {
     entries.clear();
-    struct Source { char const* table; char const* column; };
+    struct Source { char const* table; char const* column; ContentItemColumnType type; };
     // item_template is the authoritative server item definition. The other
     // tables may contain manual references not yet backed by item_template;
     // keep those IDs unavailable to the allocator as well.
     static Source const sources[] = {
-        {"item_template", "entry"}, {"npc_vendor", "item"},
-        {"playercreateinfo_item", "itemid"},
-        {"creature_equip_template", "ItemID1"},
-        {"creature_equip_template", "ItemID2"},
-        {"creature_equip_template", "ItemID3"}
+        {"item_template", "entry", ContentItemColumnType::UnsignedItemId},
+        {"npc_vendor", "item", ContentItemColumnType::SignedVendorItemOrReference},
+        {"playercreateinfo_item", "itemid", ContentItemColumnType::UnsignedItemId},
+        {"creature_equip_template", "ItemID1", ContentItemColumnType::UnsignedItemId},
+        {"creature_equip_template", "ItemID2", ContentItemColumnType::UnsignedItemId},
+        {"creature_equip_template", "ItemID3", ContentItemColumnType::UnsignedItemId}
     };
     for (auto const& source : sources)
     {
@@ -65,7 +67,7 @@ bool ContentAllocationRegistry::OccupiedWorldItems(std::set<std::uint32_t>& entr
             entries.clear();
             return false;
         }
-        do { auto id = query->Fetch()[0].Get<uint32>(); if (id) entries.insert(id); }
+        do { AddContentItemOccupancy(entries, query->Fetch()[0], source.type); }
         while (query->NextRow());
     }
     // A character can still possess an item after its world template is removed.
@@ -76,7 +78,7 @@ bool ContentAllocationRegistry::OccupiedWorldItems(std::set<std::uint32_t>& entr
         entries.clear();
         return false;
     }
-    do { auto id = instances->Fetch()[0].Get<uint32>(); if (id) entries.insert(id); }
+    do { AddContentItemOccupancy(entries, instances->Fetch()[0], ContentItemColumnType::UnsignedItemId); }
     while (instances->NextRow());
     return true;
 }

@@ -3,10 +3,10 @@
 ContentManager.Enable = 1
 
 # Directory where portable .epf packages are dropped.
-ContentManager.PatchHoldDirectory = "./patchhold"
+ContentManager.PatchHoldDirectory = "/home/smithkt/azerothcore-wotlk/patchhold"
 
 # Working directory used while unpacking/building content.
-ContentManager.WorkDirectory = "./patchwork"
+ContentManager.WorkDirectory = "/home/smithkt/azerothcore-wotlk/patchwork"
 
 # Final generated realm patches.
 ContentManager.OutputDirectory = "/home/smithkt/azerothcore-wotlk/patches"
@@ -20,7 +20,7 @@ ContentManager.OutputDirectory = "/home/smithkt/azerothcore-wotlk/patches"
 #        Default: "../modules"
 #
 
-ContentManager.ModuleDirectory = "../modules"
+ContentManager.ModuleDirectory = "/home/smithkt/azerothcore-wotlk/modules"
 
 # Optional read-only directory holding an administrator-selected build-12340
 # DBC baseline. Empty by default; raw Schema 1 EPFs do not use it.
