@@ -22,6 +22,14 @@ ContentManager.OutputDirectory = "/home/smithkt/azerothcore-wotlk/patches"
 
 ContentManager.ModuleDirectory = "../modules"
 
+# Optional read-only directory holding an administrator-selected build-12340
+# DBC baseline. Empty by default; raw Schema 1 EPFs do not use it.
+ContentManager.BaselineDbcDirectory = "/home/smithkt/azerothcore-wotlk/env/data/dbc"
+
+# DBC inspection currently supports only WoW 3.3.5a build 12340.
+# Raw Schema 1 EPF operations are independent of this setting.
+ContentManager.ClientBuild = 12340
+
 # Filesystem destination for versioned MPQs published by explicit activation.
 # Relative paths resolve from the worldserver working directory.
 # Must not overlap OutputDirectory. Created on activation if needed.

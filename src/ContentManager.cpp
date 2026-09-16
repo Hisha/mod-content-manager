@@ -66,6 +66,11 @@ void ContentManager::LoadConfig()
 		sConfigMgr->GetOption<std::string>(
 	    	"ContentManager.ModuleDirectory",
 	    	"./modules");
+
+    _baselineDbcDirectory = sConfigMgr->GetOption<std::string>(
+        "ContentManager.BaselineDbcDirectory", "");
+    _clientBuild = sConfigMgr->GetOption<std::uint32_t>(
+        "ContentManager.ClientBuild", 12340);
 	
     _patchHoldDirectory =
         sConfigMgr->GetOption<std::string>(
@@ -124,6 +129,16 @@ std::string const& ContentManager::GetPublishDirectory() const
 std::string const& ContentManager::GetModuleDirectory() const
 {
     return _moduleDirectory;
+}
+
+std::string const& ContentManager::GetBaselineDbcDirectory() const
+{
+    return _baselineDbcDirectory;
+}
+
+std::uint32_t ContentManager::GetClientBuild() const
+{
+    return _clientBuild;
 }
 
 std::vector<ContentPackageCandidate> ContentManager::ScanPatchHold() const

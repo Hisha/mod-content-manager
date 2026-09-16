@@ -11,9 +11,14 @@
 #include "ContentPackageRegistry.h"
 #include "MpqBuilder.h"
 #include "RBAC.h"
+#include "ContentBuildHash.h"
+#include "ContentBuildPaths.h"
+#include "DbcDescriptor.h"
+#include "DbcReader.h"
 
 #include <algorithm>
 #include <set>
+#include <stdexcept>
 
 using namespace Acore::ChatCommands;
 
@@ -105,10 +110,15 @@ public:
             { "list", HandleBuildListCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes },
             { "", HandleBuildCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes },
         };
+        static ChatCommandTable dbcCommandTable =
+        {
+            { "inspect", HandleDbcInspectCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes }
+        };
         static ChatCommandTable contentCommandTable =
         {
             { "activate", HandleActivateCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes },
             { "build", buildCommandTable },
+            { "dbc", dbcCommandTable },
             { "install", HandleInstallCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes },
             { "uninstall", HandleUninstallCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes },
             {
@@ -163,6 +173,63 @@ public:
             sContentManager.GetOutputDirectory());
         handler->PSendSysMessage("Publish Directory: {}", sContentManager.GetPublishDirectory());
 
+        handler->PSendSysMessage("DBC baseline: {}", sContentManager.GetBaselineDbcDirectory().empty()
+            ? "unconfigured" : sContentManager.GetBaselineDbcDirectory());
+        handler->PSendSysMessage("DBC client build: {}", sContentManager.GetClientBuild());
+
+        return true;
+    }
+
+    static bool HandleDbcInspectCommand(ChatHandler* handler, std::string table)
+    {
+        if (table.empty())
+        {
+            handler->SendSysMessage("Usage: .content dbc inspect <table>");
+            return true;
+        }
+        if (!IsKnownDbcTable(table))
+        {
+            handler->PSendSysMessage("Unsupported DBC table '{}'. Registered table: Item.", table);
+            return true;
+        }
+        auto build = sContentManager.GetClientBuild();
+        auto descriptor = FindDbcDescriptor(build, table);
+        if (!descriptor)
+        {
+            handler->PSendSysMessage("Unsupported DBC client build {}. This inspector supports build 12340 only.", build);
+            return true;
+        }
+        auto const& configured = sContentManager.GetBaselineDbcDirectory();
+        if (configured.empty())
+        {
+            handler->SendSysMessage("DBC baseline is unconfigured. Set ContentManager.BaselineDbcDirectory for inspection.");
+            return true;
+        }
+        try
+        {
+            namespace fs = std::filesystem;
+            auto parsed = DbcReader::ReadBaseline(configured, *descriptor);
+            if (!parsed.valid)
+                throw std::runtime_error(parsed.error);
+            fs::path directory = fs::canonical(configured);
+            fs::path source = directory / descriptor->serverFile;
+            std::string sha256, hashError;
+            if (!ContentBuildHash::Calculate(source, sha256, hashError))
+                throw std::runtime_error("SHA-256 failed: " + hashError);
+            handler->PSendSysMessage("DBC inspection PASS: {} (descriptor v{})", table, descriptor->version);
+            handler->PSendSysMessage("Client build: {}", build);
+            handler->PSendSysMessage("Baseline directory: {}", directory.string());
+            handler->PSendSysMessage("Source: {}", source.string());
+            handler->PSendSysMessage("SHA-256: {}", sha256);
+            handler->PSendSysMessage("Records: {}; fields: {}; record bytes: {}; string bytes: {}",
+                parsed.document.recordCount, parsed.document.fieldCount,
+                parsed.document.recordSize, parsed.document.stringBlockSize);
+            handler->SendSysMessage("Layout validation passed. Baseline provenance is reported, not approved or pinned by this phase.");
+        }
+        catch (std::exception const& e)
+        {
+            handler->PSendSysMessage("DBC inspection failed for '{}': {}", table, e.what());
+        }
         return true;
     }
 
@@ -507,6 +574,4 @@ void AddSC_content_manager_commands()
 {
     new content_manager_commandscript();
 }
-
-
 

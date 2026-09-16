@@ -2,6 +2,7 @@
 #define CONTENT_MANAGER_H
 
 #include <filesystem>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -34,6 +35,8 @@ public:
     std::string const& GetOutputDirectory() const;
     std::string const& GetPublishDirectory() const;
 	std::string const& GetModuleDirectory() const;
+    std::string const& GetBaselineDbcDirectory() const;
+    std::uint32_t GetClientBuild() const;
 
 	std::vector<ContentPackageCandidate> ScanAvailablePackages() const;
     std::vector<ContentPackageCandidate> ScanPatchHold() const;
@@ -48,6 +51,8 @@ private:
     std::string _outputDirectory;
     std::string _publishDirectory;
 	std::string _moduleDirectory;
+    std::string _baselineDbcDirectory;
+    std::uint32_t _clientBuild = 12340;
 };
 
 #define sContentManager ContentManager::Instance()

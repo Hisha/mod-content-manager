@@ -263,6 +263,39 @@ On a development worldserver, also verify that a forced publication failure leav
 the current ACTIVE row unchanged, that an already ACTIVE build repairs its published
 copy, and that activating a SUPERSEDED build preserves other published versions.
 
+## DBC inspection (Phase 1)
+
+DBC composition work has begun, but this phase only inspects and validates a
+baseline. EPFs cannot provide DBC rows, and no DBC merging or allocation occurs.
+Existing Schema 1 and raw-file builds do not require a DBC baseline.
+
+`ContentManager.BaselineDbcDirectory` is optional and defaults to empty. Set it
+to a read-only directory containing `Item.dbc` to enable inspection.
+`ContentManager.ClientBuild` defaults to `12340`; only build 12340 has a
+registered descriptor. Neither setting changes ordinary raw-file builds.
+
+Use `.content dbc inspect Item` in game or from the console. The command checks
+the WDBC layout and reports the configured directory, source file, SHA-256,
+record and string sizes, client build, descriptor version, and pass/fail status.
+It reads the baseline and never writes into that directory. A missing baseline,
+unsupported build, or unsupported table gets a diagnostic.
+
+The first descriptor is `Item.dbc` for client build 12340, version 1: eight
+ordered 32-bit fields (`ID`, `ClassID`, `SubclassID`, signed
+`SoundOverrideSubclassID`, signed `Material`, `DisplayInfoID`, `InventoryType`,
+`SheatheType`). This is the complete 32-byte client record, including fields
+the server may skip. The layout is based on AzerothCore WotLK's `ItemEntry` in
+`src/server/shared/DataStores/DBCStructure.h` and `Itemfmt` in
+`src/server/shared/DataStores/DBCfmt.h`. An actual administrator-provided
+build-12340 baseline remains to be measured; no official hash is assumed.
+
+The standalone parser test is `tests/dbc_reader_tests.cpp`. Build it with a
+C++17 compiler using `src/DbcDescriptor.cpp`, `src/DbcReader.cpp`, and the
+repository's `src` include directory. It tests malformed input and exact
+unchanged serialization of a synthetic Item fixture. A real baseline can be
+checked by placing its `Item.dbc` in a temporary test directory and comparing
+the parsed and serialized bytes. Never overwrite the source baseline.
+
 ## Development test MPQ
 
 `.content stage <package-key>` validates and extracts one EPF into
