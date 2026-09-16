@@ -7,12 +7,23 @@
 #include "third_party/miniz/miniz.h"
 
 #include <memory>
+#include <set>
+#include <limits>
 #include <utility>
 
 using json = nlohmann::json;
 
 namespace
 {
+    bool ValidSymbol(std::string const& value)
+    {
+        if (value.empty() || value.size() > 64 || !(value[0] >= 'a' && value[0] <= 'z')) return false;
+        for (char c : value)
+            if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-'))
+                return false;
+        return true;
+    }
+
     bool IsSafeRelativePath(std::string const& value)
     {
         try { ContentBuildPaths::Target(value); return true; }
@@ -170,7 +181,7 @@ ContentPackageValidationResult ContentPackage::Validate() const
     // Validate basic metadata
     // ---------------------------------------------------------
 
-    if (result.manifest.schema != 1)
+    if (result.manifest.schema != 1 && result.manifest.schema != 2)
     {
         result.error =
             "Unsupported manifest schema " +
@@ -217,20 +228,20 @@ ContentPackageValidationResult ContentPackage::Validate() const
     // Content array
     // ---------------------------------------------------------
 
-    if (!manifest.contains("content") ||
-        !manifest["content"].is_array())
+    if ((result.manifest.schema == 1 && !manifest.contains("content")) ||
+        (manifest.contains("content") && !manifest["content"].is_array()))
     {
         result.error = "Missing or invalid 'content'";
         return result;
     }
 
-    if (manifest["content"].empty())
+    if (result.manifest.schema == 1 && manifest["content"].empty())
     {
         result.error = "'content' cannot be empty";
         return result;
     }
 
-    for (auto const& item : manifest["content"])
+    for (auto const& item : (manifest.contains("content") ? manifest["content"] : json::array()))
     {
         if (!item.is_object())
         {
@@ -344,6 +355,74 @@ ContentPackageValidationResult ContentPackage::Validate() const
             std::move(entry));
     }
 
+    if (result.manifest.schema == 2)
+    {
+        if (manifest.contains("dbcRows") && !manifest["dbcRows"].is_array())
+        {
+            result.error = "Schema 2 dbcRows must be an array";
+            return result;
+        }
+        std::set<std::string> symbols;
+        for (auto const& row : (manifest.contains("dbcRows") ? manifest["dbcRows"] : json::array()))
+        {
+            if (!row.is_object())
+            { result.error = "DBC row must be an object"; return result; }
+            static std::set<std::string> const rowKeys = {"op", "table", "symbol", "fields"};
+            for (auto it = row.begin(); it != row.end(); ++it)
+                if (!rowKeys.count(it.key()))
+                { result.error = "Unsupported or allocator-owned DBC row key: " + it.key(); return result; }
+            if (!row.is_object() || !row.contains("op") || !row["op"].is_string()
+                || row["op"] != "add")
+            { result.error = "Schema 2 supports only dbcRows op=add"; return result; }
+            if (!row.contains("table") || !row["table"].is_string() || row["table"] != "Item")
+            { result.error = "Schema 2 supports only dbcRows table=Item"; return result; }
+            if (!row.contains("symbol") || !row["symbol"].is_string()
+                || !ValidSymbol(row["symbol"].get<std::string>()))
+            { result.error = "Invalid Item symbol (use lowercase ASCII letter, then letters/digits/._-)"; return result; }
+            ContentItemRow item;
+            item.symbol = row["symbol"].get<std::string>();
+            if (!symbols.insert(item.symbol).second)
+            { result.error = "Duplicate Schema 2 symbol: " + item.symbol; return result; }
+            if (!row.contains("fields") || !row["fields"].is_object())
+            { result.error = "Item add requires fields object"; return result; }
+            auto const& fields = row["fields"];
+            static std::set<std::string> const allowed = {"ClassID", "SubclassID", "SoundOverrideSubclassID",
+                "Material", "DisplayInfoID", "InventoryType", "SheatheType"};
+            for (auto it = fields.begin(); it != fields.end(); ++it)
+                if (!allowed.count(it.key()))
+                { result.error = "Unsupported or allocator-owned Item field: " + it.key(); return result; }
+            auto unsignedField = [&](char const* name, std::uint32_t& out) -> bool {
+                if (!fields.contains(name) || !fields[name].is_number_unsigned()) return false;
+                auto value = fields[name].get<std::uint64_t>();
+                if (value > std::numeric_limits<std::uint32_t>::max()) return false;
+                out = static_cast<std::uint32_t>(value); return true;
+            };
+            auto signedField = [&](char const* name, std::int32_t& out) -> bool {
+                if (!fields.contains(name) || !fields[name].is_number_integer()) return false;
+                auto value = fields[name].get<std::int64_t>();
+                if (value < std::numeric_limits<std::int32_t>::min() || value > std::numeric_limits<std::int32_t>::max()) return false;
+                out = static_cast<std::int32_t>(value); return true;
+            };
+            if (!unsignedField("ClassID", item.classID) || !unsignedField("SubclassID", item.subclassID)
+                || !signedField("SoundOverrideSubclassID", item.soundOverrideSubclassID)
+                || !signedField("Material", item.material)
+                || !unsignedField("InventoryType", item.inventoryType)
+                || !unsignedField("SheatheType", item.sheatheType))
+            { result.error = "Item fields missing or out of 32-bit range"; return result; }
+            if (!fields.contains("DisplayInfoID") || !fields["DisplayInfoID"].is_object()
+                || fields["DisplayInfoID"].size() != 1
+                || !fields["DisplayInfoID"].contains("copyFromItem")
+                || !fields["DisplayInfoID"]["copyFromItem"].is_number_unsigned())
+            { result.error = "DisplayInfoID must use {copyFromItem: stock Item ID}"; return result; }
+            auto copy = fields["DisplayInfoID"]["copyFromItem"].get<std::uint64_t>();
+            if (!copy || copy > std::numeric_limits<std::uint32_t>::max())
+            { result.error = "Invalid DisplayInfoID copyFromItem ID"; return result; }
+            item.displayCopyFromItem = static_cast<std::uint32_t>(copy);
+            result.manifest.itemRows.push_back(std::move(item));
+        }
+        if (result.manifest.content.empty() && result.manifest.itemRows.empty())
+        { result.error = "Schema 2 needs content or dbcRows"; return result; }
+    }
     result.valid = true;
     return result;
 }
@@ -395,7 +474,8 @@ ContentPackageStageResult ContentPackage::StageInto(std::filesystem::path const&
         Require(validation.valid, "Package validation failed: " + validation.error);
         auto const& actual = validation.manifest;
         bool same = actual.schema == expected.schema && actual.packageKey == expected.packageKey
-            && actual.version == expected.version && actual.content.size() == expected.content.size();
+            && actual.version == expected.version && actual.content.size() == expected.content.size()
+            && actual.itemRows == expected.itemRows;
         if (same)
             for (std::size_t i = 0; i < actual.content.size(); ++i)
                 same = same && actual.content[i].type == expected.content[i].type

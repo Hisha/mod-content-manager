@@ -71,6 +71,7 @@ void ContentManager::LoadConfig()
         "ContentManager.BaselineDbcDirectory", "");
     _clientBuild = sConfigMgr->GetOption<std::uint32_t>(
         "ContentManager.ClientBuild", 12340);
+    _itemBaselineSha256 = sConfigMgr->GetOption<std::string>("ContentManager.ItemBaselineSha256", "");
 	
     _patchHoldDirectory =
         sConfigMgr->GetOption<std::string>(
@@ -140,6 +141,8 @@ std::uint32_t ContentManager::GetClientBuild() const
 {
     return _clientBuild;
 }
+
+std::string const& ContentManager::GetItemBaselineSha256() const { return _itemBaselineSha256; }
 
 std::vector<ContentPackageCandidate> ContentManager::ScanPatchHold() const
 {

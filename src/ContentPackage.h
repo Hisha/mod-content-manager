@@ -13,6 +13,25 @@ struct ContentPackageEntry
     std::string target;
 };
 
+struct ContentItemRow
+{
+    std::string symbol;
+    std::uint32_t classID = 0;
+    std::uint32_t subclassID = 0;
+    std::int32_t soundOverrideSubclassID = -1;
+    std::int32_t material = -1;
+    std::uint32_t displayCopyFromItem = 0;
+    std::uint32_t inventoryType = 0;
+    std::uint32_t sheatheType = 0;
+    bool operator==(ContentItemRow const& other) const
+    {
+        return symbol == other.symbol && classID == other.classID && subclassID == other.subclassID
+            && soundOverrideSubclassID == other.soundOverrideSubclassID && material == other.material
+            && displayCopyFromItem == other.displayCopyFromItem && inventoryType == other.inventoryType
+            && sheatheType == other.sheatheType;
+    }
+};
+
 struct ContentPackageManifest
 {
     uint32_t schema = 0;
@@ -22,6 +41,7 @@ struct ContentPackageManifest
     std::string description;
 
     std::vector<ContentPackageEntry> content;
+    std::vector<ContentItemRow> itemRows;
 };
 
 struct ContentPackageStageResult

@@ -15,6 +15,7 @@
 #include "ContentBuildPaths.h"
 #include "DbcDescriptor.h"
 #include "DbcReader.h"
+#include "ContentAllocationRegistry.h"
 
 #include <algorithm>
 #include <set>
@@ -117,6 +118,7 @@ public:
         static ChatCommandTable contentCommandTable =
         {
             { "activate", HandleActivateCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes },
+            { "allocations", HandleAllocationsCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes },
             { "build", buildCommandTable },
             { "dbc", dbcCommandTable },
             { "install", HandleInstallCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes },
@@ -177,6 +179,23 @@ public:
             ? "unconfigured" : sContentManager.GetBaselineDbcDirectory());
         handler->PSendSysMessage("DBC client build: {}", sContentManager.GetClientBuild());
 
+        return true;
+    }
+
+    static bool HandleAllocationsCommand(ChatHandler* handler)
+    {
+        std::vector<ItemAllocation> rows;
+        std::string error;
+        if (!ContentAllocationRegistry().Read(realm.Name, rows, error))
+        {
+            handler->PSendSysMessage("Allocation lookup failed: {}", error);
+            return true;
+        }
+        handler->PSendSysMessage("Retained item.id allocations for realm {}: {}", realm.Name, rows.size());
+        for (auto const& row : rows)
+            handler->PSendSysMessage("{} / {} / item.id = {} [{}], builds {}..{}, baseline {}",
+                row.packageKey, row.symbol, row.value, row.state, row.firstBuild, row.lastBuild,
+                row.baselineSha256);
         return true;
     }
 
@@ -269,6 +288,7 @@ public:
             handler->PSendSysMessage("  Source: {}", candidate.path.string());
             handler->PSendSysMessage("  Schema: {}", manifest.schema);
             handler->PSendSysMessage("  Content: {} item(s)", manifest.content.size());
+            handler->PSendSysMessage("  DBC rows: {}", manifest.itemRows.size());
             for (auto const& entry : manifest.content)
                 handler->PSendSysMessage("    {} -> {}", entry.type, entry.target);
         }
@@ -503,6 +523,12 @@ public:
 	        if (validation.manifest.packageKey != packageKey)
 	            continue;
 
+            if (!validation.manifest.itemRows.empty())
+            {
+                handler->SendSysMessage("Schema 2 DBC rows require an installed cumulative .content build for allocation and composition.");
+                return true;
+            }
+
 	        handler->PSendSysMessage(
 	            "Staging package '{}'...",
 	            validation.manifest.name);
@@ -574,4 +600,3 @@ void AddSC_content_manager_commands()
 {
     new content_manager_commandscript();
 }
-

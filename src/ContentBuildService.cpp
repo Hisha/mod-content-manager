@@ -7,8 +7,15 @@
 #include "ContentPackage.h"
 #include "ContentPackageRegistry.h"
 #include "MpqBuilder.h"
+#include "ContentAllocationRegistry.h"
+#include "ContentResourceAllocator.h"
+#include "ItemDbcComposer.h"
+#include "DbcDescriptor.h"
+#include "DbcReader.h"
 
 #include <limits>
+#include <fstream>
+#include <set>
 #include <map>
 #include <mutex>
 #include <random>
@@ -104,6 +111,19 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
             }
             selected.push_back(std::move(source));
         }
+        // Semantic composition owns the canonical Item.dbc MPQ target once requested.
+        std::vector<ResourceAllocationRequest> itemRequests;
+        for (auto const& source : selected)
+            for (auto const& row : source.validation.manifest.itemRows)
+                itemRequests.push_back({source.validation.manifest.packageKey, row.symbol});
+        bool composingItem = !itemRequests.empty();
+        if (composingItem)
+        {
+            auto raw = owners.find(Fold("DBFilesClient/Item.dbc"));
+            Require(raw == owners.end(), "Raw Item.dbc from package '" + (raw == owners.end() ? std::string() : raw->second)
+                + "' conflicts with composed Item.dbc from package '" + itemRequests.front().packageKey + "'");
+            owners.emplace(Fold("DBFilesClient/Item.dbc"), itemRequests.front().packageKey + " (composer)");
+        }
         // A file also cannot occupy a directory needed by another target.
         for (auto const& entry : owners)
         {
@@ -121,6 +141,55 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
         std::string error;
         if (!builds.NextNumber(result.buildNumber, error))
             throw std::runtime_error(error);
+        std::vector<ItemAllocation> allocationPlan;
+        std::vector<std::uint8_t> composedItemBytes;
+        std::string baselineHash;
+        std::uint32_t expectedItemRecords = 0;
+        if (composingItem)
+        {
+            Require(manager.GetClientBuild() == 12340, "Item composition supports only client build 12340");
+            Require(ContentBuildHash::Valid(manager.GetItemBaselineSha256()),
+                "Set ContentManager.ItemBaselineSha256 to an administrator-verified Item.dbc hash");
+            auto descriptor = FindDbcDescriptor(12340, "Item");
+            Require(descriptor, "Item descriptor for build 12340 is missing");
+            auto baseline = DbcReader::ReadBaseline(manager.GetBaselineDbcDirectory(), *descriptor);
+            Require(baseline.valid, "Item baseline validation failed: " + baseline.error);
+            fs::path baselinePath = fs::canonical(manager.GetBaselineDbcDirectory()) / descriptor->serverFile;
+            Require(ContentBuildHash::Calculate(baselinePath, baselineHash, error), "Item baseline SHA-256 failed: " + error);
+            Require(baselineHash == manager.GetItemBaselineSha256(),
+                "Item baseline SHA-256 differs from ContentManager.ItemBaselineSha256; composition refused");
+            std::set<std::uint32_t> baselineIDs;
+            for (std::size_t i = 0; i < baseline.document.recordCount; ++i)
+                Require(baselineIDs.insert(baseline.document.words[i * 8]).second, "Duplicate baseline Item ID");
+            ContentAllocationRegistry registry;
+            std::vector<ItemAllocation> retained;
+            Require(registry.Read(realmName, retained, error), error);
+            std::set<std::uint32_t> worldIDs;
+            Require(registry.OccupiedWorldItems(worldIDs, error), error);
+            worldIDs.insert(baselineIDs.begin(), baselineIDs.end());
+            auto policy = ContentResourceAllocator::ItemIdPolicy(baselineIDs);
+            allocationPlan = ContentResourceAllocator::Plan(realmName, policy, itemRequests,
+                retained, worldIDs, result.buildNumber, baselineHash);
+            std::vector<PlannedItemRow> rows;
+            for (auto const& source : selected)
+                for (auto const& row : source.validation.manifest.itemRows)
+                {
+                    auto found = std::find_if(allocationPlan.begin(), allocationPlan.end(), [&](auto const& a) {
+                        return a.packageKey == source.validation.manifest.packageKey && a.symbol == row.symbol;
+                    });
+                    Require(found != allocationPlan.end(), "Missing Item ID allocation plan");
+                    rows.push_back({found->value, row});
+                    report("Planned item.id: " + found->packageKey + "/" + found->symbol + " = " + std::to_string(found->value));
+                }
+            composedItemBytes = ItemDbcComposer::Compose(baseline.document, rows);
+            expectedItemRecords = baseline.document.recordCount + static_cast<std::uint32_t>(rows.size());
+            report("Item baseline SHA-256: " + baselineHash);
+            report("Item records: " + std::to_string(baseline.document.recordCount) + " -> "
+                + std::to_string(baseline.document.recordCount + rows.size()));
+            std::string recheckHash;
+            Require(ContentBuildHash::Calculate(baselinePath, recheckHash, error) && recheckHash == baselineHash,
+                "Item baseline changed during composition");
+        }
         Require(!manager.GetOutputDirectory().empty() && !manager.GetWorkDirectory().empty(), "Build directories must not be empty");
         auto filename = FilenameRealm(realmName) + "-Content-" + Number(result.buildNumber) + ".mpq";
         result.outputPath = fs::absolute(fs::path(manager.GetOutputDirectory()) / filename);
@@ -151,7 +220,28 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
             result.fileCount += staged.stagedFiles.size();
             report("  " + std::to_string(staged.stagedFiles.size()) + " file(s)");
         }
-        Require(result.fileCount == owners.size(), "Staged file count does not match the declared cumulative set");
+        Require(result.fileCount + (composingItem ? 1 : 0) == owners.size(),
+            "Staged file count does not match the declared cumulative set");
+        if (composingItem)
+        {
+            auto target = result.workspace / "DBFilesClient" / "Item.dbc";
+            RejectLinks(target);
+            fs::create_directories(target.parent_path());
+            Require(!fs::exists(fs::symlink_status(target)), "Composed Item target already exists in workspace");
+            { std::ofstream output(target, std::ios::binary | std::ios::trunc);
+              Require(output.is_open(), "Cannot create composed Item.dbc");
+              output.write(reinterpret_cast<char const*>(composedItemBytes.data()),
+                  static_cast<std::streamsize>(composedItemBytes.size()));
+              Require(output.good(), "Cannot write composed Item.dbc"); }
+            auto reparsed = DbcReader::Read(target, *FindDbcDescriptor(12340, "Item"));
+            Require(reparsed.valid, "Generated Item.dbc failed read-back: " + reparsed.error);
+            Require(reparsed.document.recordCount == expectedItemRecords && reparsed.document.fieldCount == 8
+                && reparsed.document.recordSize == 32, "Composed Item.dbc dimensions mismatch");
+            std::string composedHash;
+            Require(ContentBuildHash::Calculate(target, composedHash, error), "Composed Item SHA-256 failed: " + error);
+            report("Composed Item.dbc SHA-256: " + composedHash);
+            ++result.fileCount;
+        }
         report("Cumulative files: " + std::to_string(result.fileCount));
         auto mpq = MpqBuilder().Build(result.workspace, result.outputPath);
         Require(mpq.success, "MPQ build failed: " + mpq.error);
@@ -165,9 +255,13 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
         if (!ContentBuildHash::Calculate(result.outputPath, hash, error))
             throw std::runtime_error("MPQ SHA256 failed: " + error);
         report("SHA256: " + hash);
-        if (!builds.Record({result.buildNumber, realmName, filename,
-            static_cast<std::uint32_t>(result.packageCount), static_cast<std::uint32_t>(result.fileCount), "STAGED", hash}, error))
-            throw std::runtime_error("MPQ was created, but recording the build could not be verified: " + error);
+        ContentBuildRecord record{result.buildNumber, realmName, filename,
+            static_cast<std::uint32_t>(result.packageCount), static_cast<std::uint32_t>(result.fileCount), "STAGED", hash};
+        bool committed = composingItem
+            ? ContentAllocationRegistry().CommitComposed(record, allocationPlan, error)
+            : builds.Record(record, error);
+        if (!committed)
+            throw std::runtime_error("MPQ was created, but recording the build/allocation could not be verified: " + error);
         result.recorded = true;
         report("Build state: STAGED");
         report("Build recorded successfully.");

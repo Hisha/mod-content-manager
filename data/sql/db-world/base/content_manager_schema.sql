@@ -30,3 +30,20 @@ CREATE TABLE IF NOT EXISTS `content_manager_build_lock` (
     PRIMARY KEY (`id`)
 ) ENGINE=InnoDB;
 INSERT IGNORE INTO `content_manager_build_lock` (`id`) VALUES (1);
+
+-- Retained logical Item IDs. No allocation is deleted on uninstall or build removal.
+CREATE TABLE IF NOT EXISTS `content_manager_allocation` (
+    `realm_name` VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+    `package_key` VARCHAR(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+    `symbol` VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+    `resource_kind` VARCHAR(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+    `allocated_value` INT UNSIGNED NOT NULL,
+    `state` VARCHAR(16) NOT NULL DEFAULT 'reserved',
+    `first_build` INT UNSIGNED NOT NULL,
+    `last_build` INT UNSIGNED NOT NULL,
+    `baseline_sha256` CHAR(64) NOT NULL,
+    `descriptor_version` INT UNSIGNED NOT NULL,
+    `policy_version` INT UNSIGNED NOT NULL,
+    PRIMARY KEY (`realm_name`, `package_key`, `symbol`, `resource_kind`),
+    UNIQUE KEY `uq_allocation_value` (`realm_name`, `resource_kind`, `allocated_value`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;

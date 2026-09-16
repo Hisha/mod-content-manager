@@ -265,8 +265,8 @@ copy, and that activating a SUPERSEDED build preserves other published versions.
 
 ## DBC inspection (Phase 1)
 
-DBC composition work has begun, but this phase only inspects and validates a
-baseline. EPFs cannot provide DBC rows, and no DBC merging or allocation occurs.
+Phase 1 introduced read-only baseline inspection and WDBC parsing. Schema 2
+Item composition and allocation are described below.
 Existing Schema 1 and raw-file builds do not require a DBC baseline.
 
 `ContentManager.BaselineDbcDirectory` is optional and defaults to empty. Set it
@@ -286,8 +286,8 @@ ordered 32-bit fields (`ID`, `ClassID`, `SubclassID`, signed
 `SheatheType`). This is the complete 32-byte client record, including fields
 the server may skip. The layout is based on AzerothCore WotLK's `ItemEntry` in
 `src/server/shared/DataStores/DBCStructure.h` and `Itemfmt` in
-`src/server/shared/DataStores/DBCfmt.h`. An actual administrator-provided
-build-12340 baseline remains to be measured; no official hash is assumed.
+`src/server/shared/DataStores/DBCfmt.h`. The Eitrigg build-12340 baseline was
+measured later, as recorded in the Phase 2 section below.
 
 The standalone parser test is `tests/dbc_reader_tests.cpp`. Build it with a
 C++17 compiler using `src/DbcDescriptor.cpp`, `src/DbcReader.cpp`, and the
@@ -306,3 +306,54 @@ It neither creates a cumulative build record nor changes the active build.
 Successful staging cleanup checks that the returned staging directory is strictly
 beneath the work directory and rejects symlink paths. Failure preserves useful
 troubleshooting data. Existing MPQ files are never overwritten.
+
+## Schema 2 Item composition (Phase 2)
+
+Schema 1 remains the raw-file EPF format. Schema 2 accepts the same metadata and
+raw `content` array, plus `dbcRows`. This phase accepts only `{"op":"add",
+"table":"Item","symbol":"...","fields":{...}}`. At least one raw file or
+DBC row is required. `ID` is allocator-owned and is rejected in EPFs.
+
+Item fields are the seven non-ID binary fields in descriptor order. Each must
+be present. `DisplayInfoID` uses `{"copyFromItem":6948}`: the build reads that
+stock baseline Item row and copies its existing display. On the verified
+Eitrigg Item.dbc, item 6948 has DisplayInfoID 6418. This avoids inventing a
+client display record; composition fails if that stock row/display is absent.
+The Item.dbc record has no name string, so the EPF name is metadata only.
+
+`ContentManager.BaselineDbcDirectory` remains read only. Semantic Item builds
+require build 12340 and `ContentManager.ItemBaselineSha256` pinned to the
+measured baseline. No administrator-selected ID or ID range is needed.
+Content Manager scans baseline Item IDs, `item_template.entry`,
+`npc_vendor.item`, `playercreateinfo_item.itemid`, creature equipment Item IDs,
+character `item_instance.itemEntry`, and every retained item.id lease. It starts immediately above the highest
+baseline Item ID and takes the first unoccupied value. Requests are sorted by
+package, symbol, and resource kind, so filesystem discovery order cannot
+change the plan. Existing leases win and are never recycled on package removal.
+The item.id policy limits the dense AzerothCore DBC index to 64 MiB, giving
+an upper ID of 8,388,607. This is a versioned operational safety bound,
+not a tiny administrator-managed pool; exhaustion fails clearly.
+If any occupancy query or baseline check fails, the build fails. It records
+leases with the STAGED build after the MPQ is generated; unique DB keys protect
+both identity and allocated value. No candidate shown during planning is
+persistent. `.content allocations` lists committed leases.
+
+For the measured Eitrigg baseline, the SHA-256 is
+`d455bc30b59bc368b2a972a913864dd092d50695140b9513582100dc56ed777d`,
+with 46,096 records, 8 fields, 32 record bytes, and 1 string byte. The
+baseline copy supplied for development matches this hash. Configure this value
+only after independently verifying the real server path. The composed DBC is
+written into the private build workspace as `DBFilesClient/Item.dbc`, reopened
+for validation, and included once in the generated MPQ. Raw files claiming
+that same target conflict with a semantic Item row and fail with both owners.
+Ordinary Schema 1/raw-only builds do not use the DBC configuration.
+
+The mod-hunts Schema 2 EPF declares `mod-hunts/seal/item.id`. The existing
+`hunt_stats.huntmaster_seals` ledger, reward and vendor logic, HuntsUI,
+CurrencyTypes, and ItemExtendedCost are unchanged. The new row is an inert
+future client identity. No `item_template` row is created in this phase.
+The old `mod-hunts.foundation` package key must be uninstalled before selecting
+`mod-hunts`, if it was installed previously.
+
+
+
