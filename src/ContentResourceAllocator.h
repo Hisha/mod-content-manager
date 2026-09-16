@@ -26,6 +26,9 @@ struct ResourceAllocationPolicy
 class ContentResourceAllocator
 {
 public:
+    // Positive signed-32-bit identities; policy v1 limits NEW IDs to 65535 to
+    // bound index growth. This is an operational ceiling, not a protocol limit.
+    static ResourceAllocationPolicy CurrencyCategoryIdPolicy() { return {"currency-category.id", 1, 65535}; }
     static ResourceAllocationPolicy CurrencyKnownBitPolicy() { return {"currency.known-bit", 1, 64}; }
     static ResourceAllocationPolicy ItemIdPolicy(std::set<std::uint32_t> const& baselineIDs);
     static std::vector<ItemAllocation> Plan(std::string const& realm,
@@ -33,6 +36,7 @@ public:
         std::vector<ResourceAllocationRequest> const& requests,
         std::vector<ItemAllocation> const& retained,
         std::set<std::uint32_t> const& occupiedExternal,
-        std::uint32_t build, std::string const& baselineSha256);
+        std::uint32_t build, std::string const& baselineSha256,
+        std::set<std::string> const& acceptedHistory = {});
 };
 #endif

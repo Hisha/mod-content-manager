@@ -86,7 +86,7 @@ bool ContentAllocationRegistry::OccupiedWorldItems(std::set<std::uint32_t>& entr
 }
 
 bool ContentAllocationRegistry::CommitComposed(ContentBuildRecord const& build,
-    std::vector<ItemAllocation> const& plan, ContentServerBuildRecord const& server, std::string& error) const
+    std::vector<ItemAllocation> const& plan, ContentServerBuildRecord const& server, std::string& error, std::vector<ContentBaseline> const& baselines) const
 {
     std::lock_guard<std::mutex> lock(allocationWrites);
     if (plan.empty() || build.state != "STAGED" || !ContentBuildHash::Valid(build.sha256)
@@ -99,7 +99,7 @@ bool ContentAllocationRegistry::CommitComposed(ContentBuildRecord const& build,
     std::set<std::uint32_t> occupied;
     for (auto const& row : plan)
     {
-        if (row.realm != build.realmName || (row.resourceKind != "item.id" && row.resourceKind != "currency.known-bit") || row.policyVersion != 1 || !row.value
+        if (row.realm != build.realmName || (row.resourceKind != "item.id" && row.resourceKind != "currency.known-bit" && row.resourceKind != "currency-category.id") || row.policyVersion != 1 || !row.value
             || !ContentBuildHash::Valid(row.baselineSha256))
         { error = "Invalid allocation plan"; return false; }
         for (auto const& prior : before)
@@ -123,8 +123,18 @@ bool ContentAllocationRegistry::CommitComposed(ContentBuildRecord const& build,
                 || (row.resourceKind == "item.id" && ids.count(row.value)))
             { error = "Planned currency bit or derived CurrencyTypes ID became occupied or invalid"; return false; }
     }
+    if (std::any_of(plan.begin(), plan.end(), [](auto const& a) { return a.resourceKind == "currency-category.id"; }))
+    {
+        std::set<std::uint32_t> categories;
+        if (!ContentCurrencyServer::CategoryOccupancy(build.realmName, before, categories, error)) return false;
+        for (auto const& row : plan)
+            if (row.resourceKind == "currency-category.id" && (row.value > 65535 || categories.count(row.value)))
+            { error = "Planned category became externally referenced or invalid"; return false; }
+    }
     auto tx = WorldDatabase.BeginTransaction();
     tx->Append("INSERT INTO content_manager_build_lock (id) VALUES (1) ON DUPLICATE KEY UPDATE id=1");
+    for (auto const& baseline : baselines)
+        tx->Append("INSERT INTO content_manager_build_lock (id) SELECT 1 WHERE NOT (" + ContentBaselineRegistry::Condition(baseline) + ")");
     for (auto const& row : plan)
     {
         bool existing = false;

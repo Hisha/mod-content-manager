@@ -23,6 +23,7 @@ int main(int argc,char** argv)
     ItemAllocation item{"Eitrigg","mod-hunts","seal",row.id,"reserved",1,8,hash};
     auto bit=item;bit.symbol="seal-currency";bit.value=4;bit.resourceKind="currency.known-bit";
     std::vector<ItemAllocation> leases={item,bit};
+    std::vector<ResolvedCurrencyCategory> categories;
     auto stage=[&](unsigned build,std::vector<ResolvedServerItem> const& rows){
         std::string name="Eitrigg-Content-"+std::to_string(build)+".mpq",mpqHash,bundleHash,parityHash;
         auto save=[&](std::string const& suffix,std::string const& data,std::string& digest){
@@ -31,7 +32,7 @@ int main(int argc,char** argv)
         };
         save("","SQL test fixture; not a playable MPQ",mpqHash);
         save(".server.json",ContentServerBundle::ServerJson("Eitrigg",rows),bundleHash);
-        save(".parity.json",ContentServerBundle::ParityJson("Eitrigg",build,leases,rows,hash,hash,mpqHash,bundleHash,hash),parityHash);
+        save(".parity.json",ContentServerBundle::ParityJson("Eitrigg",build,leases,rows,hash,hash,mpqHash,bundleHash,hash,categories.empty()?"":hash,categories),parityHash);
         SQL("INSERT INTO content_manager_build(build_number,realm_name,filename,package_count,file_count,state,sha256) VALUES ("
             +std::to_string(build)+",'Eitrigg',"+text(name)+",1,2,'STAGED',"+text(mpqHash)+")");
         SQL("INSERT INTO content_manager_server_build(build_number,bundle_filename,bundle_sha256,parity_filename,parity_sha256) VALUES ("
@@ -69,6 +70,30 @@ int main(int argc,char** argv)
     SQL("UPDATE currencytypes_dbc SET BitIndex=4 WHERE ID=56807");
     stage(9,{row});
     assert(ContentServerDeployment::Apply(9,"Eitrigg",output,summary,error));
+    // The accepted Phase 4 row changes category by UPDATE only. Triggers make delete/recreate fail the test.
+    SQL("CREATE TRIGGER reject_currency_delete BEFORE DELETE ON currencytypes_dbc FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='delete forbidden'");
+    SQL("CREATE TRIGGER reject_currency_insert BEFORE INSERT ON currencytypes_dbc FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='insert forbidden'");
+    auto category=item;category.symbol="hunts";category.value=5;category.resourceKind="currency-category.id";
+    leases.push_back(category);categories.push_back({"mod-hunts","hunts",5,{{"enUS","Hunts"}}});
+    SQL("INSERT INTO content_manager_allocation VALUES ('Eitrigg','mod-hunts','hunts','currency-category.id',5,'reserved',10,10,"+text(hash)+",1,1)");
+    row.packageVersion="4.1.0";row.currency.categorySymbol="hunts";row.currency.categoryId=5;
+    stage(10,{row});
+    WorldDatabase.beforeCommit=[&]{SQL("UPDATE currencytypes_dbc SET CategoryID=23 WHERE ID=56807");};
+    assert(!ContentServerDeployment::Apply(10,"Eitrigg",output,summary,error));
+    auto owner=WorldDatabase.Query("SELECT category_id,applied_build FROM content_manager_currency_owner WHERE entry=56807");
+    assert(owner->Fetch()[0].Get<unsigned>()==22 && owner->Fetch()[1].Get<unsigned>()==9);
+    SQL("UPDATE currencytypes_dbc SET CategoryID=22 WHERE ID=56807");
+    assert(ContentServerDeployment::Apply(10,"Eitrigg",output,summary,error));
+    assert(ContentServerDeployment::Apply(10,"Eitrigg",output,summary,error));
+    auto upgraded=WorldDatabase.Query("SELECT c.ID,c.ItemID,c.CategoryID,c.BitIndex,o.category_id FROM currencytypes_dbc c JOIN content_manager_currency_owner o ON o.entry=c.ID");
+    assert(upgraded->Fetch()[0].Get<unsigned>()==56807 && upgraded->Fetch()[1].Get<unsigned>()==56807
+        && upgraded->Fetch()[2].Get<unsigned>()==5 && upgraded->Fetch()[3].Get<unsigned>()==4 && upgraded->Fetch()[4].Get<unsigned>()==5);
+    std::set<std::uint32_t> occupiedCategories;
+    assert(ContentCurrencyServer::CategoryOccupancy("Eitrigg",leases,occupiedCategories,error) && occupiedCategories.empty());
+    // Losing ownership must never grant permission to overwrite the existing row.
+    SQL("DELETE FROM content_manager_currency_owner WHERE entry=56807");
+    stage(11,{row});assert(!ContentServerDeployment::Apply(11,"Eitrigg",output,summary,error));
+    std::cout<<"PASS category upgrade: guarded owned UPDATE, no delete/insert, concurrent category drift rollback, unchanged item/bit IDs, idempotence, unowned protection\n";
     auto q=WorldDatabase.Query("SELECT @@collation_connection,@@collation_database");
     std::cout<<"PASS production Apply: Phase 3 upgrade, unowned collision, transactional drift rollback, idempotence, occupancy exclusion, owned drift, rebuild apply. Collations "
         <<q->Fetch()[0].Get<std::string>()<<" / "<<q->Fetch()[1].Get<std::string>()<<'\n';

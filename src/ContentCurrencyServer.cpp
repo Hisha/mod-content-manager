@@ -121,11 +121,16 @@ bool ContentCurrencyServer::Check(ResolvedServerItem const& row, std::string con
 }
 
 std::vector<std::string> ContentCurrencyServer::ApplySql(ResolvedServerItem const& row, std::string const& realm,
-    bool exists, std::uint32_t build, std::string const& hash)
+    bool exists, std::uint32_t build, std::string const& hash, std::uint32_t previousCategory)
 {
     if (exists)
-        return {"UPDATE content_manager_currency_owner SET applied_build=" + N(build) + ",artifact_sha256="
-            + T(hash) + " WHERE entry=" + N(row.id)};
+    {
+        auto previous = row;
+        if (previousCategory) previous.currency.categoryId = previousCategory;
+        return {"UPDATE currencytypes_dbc c JOIN content_manager_currency_owner o ON o.entry=c.ID "
+            "SET c.CategoryID=" + N(row.currency.categoryId) + ",o.category_id=" + N(row.currency.categoryId)
+            + ",o.applied_build=" + N(build) + ",o.artifact_sha256=" + T(hash) + " WHERE " + Match(previous, realm)};
+    }
     return {"INSERT INTO currencytypes_dbc (ID,ItemID,CategoryID,BitIndex) VALUES (" + N(row.id) + ","
         + N(row.id) + "," + N(row.currency.categoryId) + "," + N(row.currency.bitIndex) + ")",
         "INSERT INTO content_manager_currency_owner (entry,realm_name,package_key,item_symbol,symbol,category_id,"
@@ -142,5 +147,44 @@ bool ContentCurrencyServer::Verify(ResolvedServerItem const& row, std::string co
         + " AND applied_build=" + N(build) + " AND artifact_sha256=" + T(hash) + ")");
     if (!result || !result->Fetch()[0].Get<std::uint64_t>())
     { error = "Currency post-apply provenance check failed"; return false; }
+    return true;
+}
+
+// Only an exactly owned, undrifted row may change its category. All other identity/bit checks stay exact.
+bool ContentCurrencyServer::Prepare(ResolvedServerItem const& row, std::string const& realm, bool& exists,
+    ResolvedServerItem& previous, std::string& error)
+{
+    previous = row;
+    auto q = WorldDatabase.Query("SELECT o.category_id FROM (SELECT 1) seed LEFT JOIN content_manager_currency_owner o ON o.entry=" + N(row.id));
+    if (!q) { error = "Cannot inspect currency ownership snapshot"; return false; }
+    if (!q->Fetch()[0].IsNull()) previous.currency.categoryId = q->Fetch()[0].Get<std::uint32_t>();
+    return Check(previous, realm, exists, error);
+}
+
+std::string ContentCurrencyServer::CategoryCondition(std::string const& realm, std::string const& package, std::uint32_t category)
+{
+    return "NOT EXISTS(SELECT 1 FROM currencytypes_dbc c LEFT JOIN content_manager_currency_owner o ON o.entry=c.ID "
+        "WHERE c.CategoryID=" + N(category) + " AND (o.entry IS NULL OR o.realm_name<>" + T(realm)
+        + " OR o.package_key<>" + T(package) + " OR c.ID<>c.ItemID OR o.category_id<>c.CategoryID OR o.bit_index<>c.BitIndex))";
+}
+
+bool ContentCurrencyServer::CategoryOccupancy(std::string const& realm, std::vector<ItemAllocation> const& leases,
+    std::set<std::uint32_t>& categories, std::string& error)
+{
+    std::set<std::uint32_t> bits, ids;
+    if (!Occupancy(realm, leases, bits, ids, error)) return false;
+    categories.clear();
+    auto q = WorldDatabase.Query("SELECT c.CategoryID,o.realm_name,o.package_key FROM currencytypes_dbc c LEFT JOIN "
+        "content_manager_currency_owner o ON o.entry=c.ID UNION ALL SELECT NULL,NULL,NULL");
+    if (!q) { error = "Cannot inspect category references in server CurrencyTypes"; return false; }
+    do
+    {
+        auto f = q->Fetch(); if (f[0].IsNull()) continue;
+        auto id = f[0].Get<std::uint32_t>();
+        bool owned = !f[1].IsNull() && f[1].Get<std::string>() == realm && std::any_of(leases.begin(), leases.end(), [&](auto const& a) {
+            return a.realm == realm && a.packageKey == f[2].Get<std::string>() && a.resourceKind == "currency-category.id" && a.value == id;
+        });
+        if (!owned) categories.insert(id);
+    } while (q->NextRow());
     return true;
 }

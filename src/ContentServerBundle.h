@@ -3,6 +3,7 @@
 
 #include "ContentPackage.h"
 #include "CurrencyDbcComposer.h"
+#include "CurrencyCategoryDbcComposer.h"
 #include "ContentAllocationRegistry.h"
 #include <cstdint>
 #include <string>
@@ -28,7 +29,9 @@ public:
         std::vector<ItemAllocation> const& allocations,
         std::vector<ResolvedServerItem> const& rows, std::string const& baselineSha256,
         std::string const& itemDbcSha256, std::string const& clientMpqSha256,
-        std::string const& serverSha256, std::string const& currencyDbcSha256 = "");
+        std::string const& serverSha256, std::string const& currencyDbcSha256 = "",
+        std::string const& categoryDbcSha256 = "", std::vector<ResolvedCurrencyCategory> categories = {},
+        std::vector<ContentBaseline> baselines = {});
     static bool ParseServer(std::string const& text, std::string const& realm,
         std::vector<ResolvedServerItem>& rows, std::string& error);
     static bool VerifyParity(std::string const& text, std::string const& realm,

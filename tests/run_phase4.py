@@ -20,6 +20,10 @@ tests = {
     'currency': ['CurrencyDbcComposer', 'ContentResourceAllocator', 'ContentServerBundle',
                  'ServerTableDescriptor', 'DbcReader', 'DbcDescriptor'],
 }
+for name in ['server_bundle', 'schema2', 'currency']:
+    for unit in ['CurrencyCategoryDbcComposer', 'CurrencyDbcComposer', 'DbcReader', 'DbcDescriptor']:
+        if unit not in tests[name]: tests[name].append(unit)
+tests['category'] = ['CurrencyCategoryDbcComposer', 'CurrencyDbcComposer', 'DbcReader', 'DbcDescriptor', 'ContentResourceAllocator']
 with tempfile.TemporaryDirectory(prefix='content-phase4-tests-') as directory:
     for name, units in tests.items():
         binary = Path(directory) / name

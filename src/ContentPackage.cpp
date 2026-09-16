@@ -1,4 +1,5 @@
 #include "ContentPackage.h"
+#include "CurrencyCategoryDbcComposer.h"
 #include "ContentBuildPaths.h"
 #include "ServerTableDescriptor.h"
 
@@ -190,7 +191,7 @@ ContentPackageValidationResult ContentPackage::Validate() const
 
         return result;
     }
-    if (result.manifest.schema == 1 && (manifest.contains("serverRows") || manifest.contains("currencies")))
+    if (result.manifest.schema == 1 && (manifest.contains("serverRows") || manifest.contains("currencies") || manifest.contains("currencyCategories")))
     { result.error = "serverRows require Schema 2"; return result; }
 
     if (result.manifest.packageKey.empty())
@@ -492,6 +493,28 @@ ContentPackageValidationResult ContentPackage::Validate() const
             item.bagFamily = fields["BagFamily"].get<std::int32_t>();
             result.manifest.serverItemRows.push_back(std::move(item));
         }
+        if (manifest.contains("currencyCategories"))
+        {
+            if (!manifest["currencyCategories"].is_array())
+            { result.error = "currencyCategories must be an array"; return result; }
+            for (auto const& category : manifest["currencyCategories"])
+            {
+                if (!category.is_object() || category.size() != 2 || !category.contains("symbol")
+                    || !category["symbol"].is_string() || !category.contains("name") || !category["name"].is_object())
+                { result.error = "Currency category requires only symbol and localized name; ID is allocator-owned"; return result; }
+                ContentCurrencyCategory row;
+                row.symbol = category["symbol"].get<std::string>();
+                if (!ValidSymbol(row.symbol) || !symbols.insert(row.symbol).second)
+                { result.error = "Invalid/duplicate currency category symbol"; return result; }
+                try
+                {
+                    row.names = category["name"].get<std::map<std::string, std::string>>();
+                    CurrencyCategoryDbcComposer::ValidateNames(row.names);
+                }
+                catch (std::exception const& e) { result.error = e.what(); return result; }
+                result.manifest.currencyCategories.push_back(row);
+            }
+        }
         if (manifest.contains("currencies"))
         {
             if (!manifest["currencies"].is_array())
@@ -502,11 +525,29 @@ ContentPackageValidationResult ContentPackage::Validate() const
                 if (!currency.is_object() || currency.size() != 3
                     || !currency.contains("symbol") || !currency["symbol"].is_string()
                     || !currency.contains("item") || !currency["item"].is_string()
-                    || !currency.contains("categoryCopyFromItem") || !currency["categoryCopyFromItem"].is_number_unsigned())
-                { result.error = "Currency requires symbol, item and categoryCopyFromItem; numeric identities are allocator-owned"; return result; }
+                    || (currency.contains("categoryCopyFromItem") == currency.contains("category")))
+                { result.error = "Currency requires symbol, item and exactly one of categoryCopyFromItem or category"; return result; }
                 ContentCurrencyRow row{currency["symbol"].get<std::string>(), currency["item"].get<std::string>(), 0};
-                auto donor = currency["categoryCopyFromItem"].get<std::uint64_t>();
-                if (!ValidSymbol(row.symbol) || !symbols.insert(row.symbol).second || !donor || donor > 0x7fffffffULL
+                std::uint64_t donor = 0;
+                if (currency.contains("categoryCopyFromItem"))
+                {
+                    if (!currency["categoryCopyFromItem"].is_number_unsigned())
+                    { result.error = "categoryCopyFromItem requires a stock ItemID"; return result; }
+                    donor = currency["categoryCopyFromItem"].get<std::uint64_t>();
+                    if (!donor || donor > 0x7fffffffULL)
+                    { result.error = "Invalid category donor ItemID"; return result; }
+                }
+                else
+                {
+                    auto const& ref = currency["category"];
+                    if (!ref.is_object() || ref.size() != 1 || !ref.contains("symbol") || !ref["symbol"].is_string())
+                    { result.error = "category requires a package-local symbol reference"; return result; }
+                    row.categorySymbol = ref["symbol"].get<std::string>();
+                    if (std::none_of(result.manifest.currencyCategories.begin(), result.manifest.currencyCategories.end(),
+                        [&](auto const& c) { return c.symbol == row.categorySymbol; }))
+                    { result.error = "Missing package-local currency category symbol"; return result; }
+                }
+                if (!ValidSymbol(row.symbol) || !symbols.insert(row.symbol).second
                     || !currencyItems.insert(row.itemSymbol).second)
                 { result.error = "Invalid/duplicate currency symbol, item or category donor"; return result; }
                 auto server = std::find_if(result.manifest.serverItemRows.begin(), result.manifest.serverItemRows.end(),
@@ -517,6 +558,10 @@ ContentPackageValidationResult ContentPackage::Validate() const
                 result.manifest.currencyRows.push_back(row);
             }
         }
+        for (auto const& category : result.manifest.currencyCategories)
+            if (std::none_of(result.manifest.currencyRows.begin(), result.manifest.currencyRows.end(),
+                [&](auto const& currency) { return currency.categorySymbol == category.symbol; }))
+            { result.error = "Currency category must be referenced by a package-local currency"; return result; }
         for (auto const& server : result.manifest.serverItemRows)
             if (server.bagFamily != 0 && (server.bagFamily != 8192 || std::none_of(
                 result.manifest.currencyRows.begin(), result.manifest.currencyRows.end(),
@@ -578,7 +623,7 @@ ContentPackageStageResult ContentPackage::StageInto(std::filesystem::path const&
         bool same = actual.schema == expected.schema && actual.packageKey == expected.packageKey
             && actual.version == expected.version && actual.content.size() == expected.content.size()
             && actual.itemRows == expected.itemRows && actual.serverItemRows == expected.serverItemRows
-            && actual.currencyRows == expected.currencyRows;
+            && actual.currencyRows == expected.currencyRows && actual.currencyCategories == expected.currencyCategories;
         if (same)
             for (std::size_t i = 0; i < actual.content.size(); ++i)
                 same = same && actual.content[i].type == expected.content[i].type

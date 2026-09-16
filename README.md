@@ -389,3 +389,7 @@ leases, cumulative CurrencyTypes.dbc composition and explicit typed server overl
 deployment. See [Phase 4 implementation and acceptance guide](docs/PHASE4.md) for
 syntax, baseline verification, SQL migration, exact commands and limitations.
 The Phase 3-only BagFamily=0 restriction is extended to declared tokens (8192).
+
+## Phase 4 Hunts category and automatic baseline provenance
+
+The current extension registers validated DBC baselines automatically, requires exact matches thereafter, and supports explicit `.content dbc review` / `.content dbc approve` replacement. Existing Item/CurrencyTypes SHA settings are optional stricter overrides. No category hash setting is needed. Schema 2 category symbols use independent `currency-category.id` leases. See [current installation and acceptance guide](docs/PHASE4_CATEGORY_BASELINES.md); its baseline instructions supersede the mandatory-pin instructions in the earlier phase history above. The first post-install acceptance command is `.content dbc inspect CurrencyCategory`.

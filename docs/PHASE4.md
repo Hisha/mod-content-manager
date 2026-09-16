@@ -1,3 +1,5 @@
+> Historical initial Phase 4 guide. For the current category extension and generic baseline registry, follow [PHASE4_CATEGORY_BASELINES.md](PHASE4_CATEGORY_BASELINES.md). Mandatory SHA configuration steps below are superseded.
+
 # Phase 4: native Wrath currency infrastructure
 
 This change adds a logical currency declaration, constrained known-bit allocation, cumulative CurrencyTypes composition, and explicit server deployment through AzerothCore's typed `currencytypes_dbc` overlay. Hunt rewards and purchases still use `hunt_stats.huntmaster_seals`. No mod-hunts gameplay code, UI, Portalkeeper code, or baseline DBC is changed.

@@ -110,7 +110,8 @@ std::vector<ItemAllocation> ManifestAllocations(json const& parity,
         auto baseline = resource.at("baselineSha256").get<std::string>();
         auto policy = resource.at("allocationPolicyVersion").get<std::uint32_t>();
         auto kind = resource.at("resourceKind").get<std::string>();
-        if (!value || (kind != "item.id" && kind != "currency.known-bit")
+        if (!value || (kind != "item.id" && kind != "currency.known-bit" && kind != "currency-category.id")
+            || (kind == "currency-category.id" && value > 65535)
             || (kind == "currency.known-bit" && value > 64) || !ContentBuildHash::Valid(baseline)
             || !identities.emplace(package, symbol, kind).second)
             throw std::runtime_error("invalid parity allocation");
@@ -224,17 +225,42 @@ bool ContentServerDeployment::Apply(std::uint32_t build, std::string const& real
         Require(ContentBuildHash::Valid(baseline), "Parity baseline fingerprint is invalid");
         if (!ContentServerBundle::VerifyParity(parity, realm, build, baseline,
             record->sha256, status.bundleSha256, rows, allocations, error)) return false;
+        std::vector<std::string> provenanceGuards;
+        if (parityObject.contains("baselines"))
+            for (auto const& snapshot : parityObject.at("baselines"))
+            {
+                ContentBaseline b; b.table = snapshot.at("table").get<std::string>();
+                b.clientBuild = snapshot.at("clientBuild").get<std::uint32_t>();
+                b.descriptorVersion = snapshot.at("descriptorVersion").get<std::uint32_t>();
+                b.hash = snapshot.at("sha256").get<std::string>();
+                provenanceGuards.push_back(ContentBaselineRegistry::HistoryCondition(b));
+                auto descriptor = FindDbcDescriptor(b.clientBuild, b.table);
+                Require(descriptor, "Historical baseline descriptor unavailable");
+                for (auto const& lease : allocations)
+                    for (auto const& field : descriptor->fields)
+                        if (field.allocationNamespace && lease.resourceKind == field.allocationNamespace)
+                        {
+                            auto origin = b; origin.hash = lease.baselineSha256;
+                            provenanceGuards.push_back(ContentBaselineRegistry::HistoryCondition(origin));
+                        }
+            }
+        for (auto const& condition : provenanceGuards)
+        {
+            auto check = WorldDatabase.Query("SELECT (" + condition + ")");
+            Require(check && check->Fetch()[0].Get<std::uint64_t>() == 1, "Build/lease baseline acceptance history is missing");
+        }
         for (auto const& row : rows)
         {
             auto found = std::find_if(allocations.begin(), allocations.end(), [&](auto const& lease) {
                 return lease.resourceKind == "item.id" && lease.packageKey == row.packageKey && lease.symbol == row.symbol && lease.value == row.id;
             });
-            Require(found != allocations.end() && found->baselineSha256 == baseline,
+            Require(found != allocations.end() && (found->baselineSha256 == baseline || parityObject.contains("baselines")),
                 "Server item does not match retained allocation or baseline: " + row.packageKey + "/" + row.symbol);
         }
         if (!ValidateItemSchema(error)) return false;
         bool hasCurrency = std::any_of(rows.begin(), rows.end(), [](auto const& row) { return row.currency.itemId != 0; });
         std::vector<bool> currencyExists(rows.size(), false);
+        auto previousCurrencies = rows;
         if (hasCurrency)
         {
             std::set<std::uint32_t> bits, ids;
@@ -243,7 +269,7 @@ bool ContentServerDeployment::Apply(std::uint32_t build, std::string const& real
                 if (rows[i].currency.itemId)
                 {
                     bool present = false;
-                    Require(ContentCurrencyServer::Check(rows[i], realm, present, error), error);
+                    Require(ContentCurrencyServer::Prepare(rows[i], realm, present, previousCurrencies[i], error), error);
                     currencyExists[i] = present;
                 }
         }
@@ -298,11 +324,14 @@ bool ContentServerDeployment::Apply(std::uint32_t build, std::string const& real
                 + " AND s.parity_sha256=" + ContentServerBundle::SqlIdentityText(status.paritySha256) + ")";
         };
         guard(registryCondition("STAGED"));
+        for (auto const& condition : provenanceGuards) guard(condition);
         for (std::size_t i = 0; i < rows.size(); ++i)
         {
             auto const& row = rows[i];
             if (row.currency.itemId)
-                guard(ContentCurrencyServer::Condition(row, realm, currencyExists[i]));
+                guard(ContentCurrencyServer::Condition(previousCurrencies[i], realm, currencyExists[i]));
+            if (!row.currency.categorySymbol.empty())
+                guard(ContentCurrencyServer::CategoryCondition(realm, row.packageKey, row.currency.categoryId));
             if (!before[i].owner)
                 guard("NOT EXISTS(SELECT 1 FROM item_template WHERE entry=" + std::to_string(row.id)
                     + ") AND NOT EXISTS(SELECT 1 FROM content_manager_item_owner WHERE entry=" + std::to_string(row.id) + ")");
@@ -325,7 +354,7 @@ bool ContentServerDeployment::Apply(std::uint32_t build, std::string const& real
                 + std::to_string(allocation.policyVersion) + ")");
         for (std::size_t i = 0; i < rows.size(); ++i)
             if (rows[i].currency.itemId)
-                for (auto const& sql : ContentCurrencyServer::ApplySql(rows[i], realm, currencyExists[i], build, status.bundleSha256))
+                for (auto const& sql : ContentCurrencyServer::ApplySql(rows[i], realm, currencyExists[i], build, status.bundleSha256, previousCurrencies[i].currency.categoryId))
                     tx->Append(sql);
         auto identityText = ContentServerBundle::SqlIdentityText;
         for (std::size_t i = 0; i < rows.size(); ++i)
@@ -366,7 +395,7 @@ bool ContentServerDeployment::Apply(std::uint32_t build, std::string const& real
                 + identityText(row.packageKey) + " AND a.symbol="
                 + identityText(row.symbol)
                 + " AND a.resource_kind=" + identityText("item.id") + " AND a.allocated_value=" + std::to_string(row.id)
-                + " AND a.baseline_sha256=" + identityText(baseline) + ")";
+                + ")";
             condition += " AND EXISTS(SELECT 1 FROM content_manager_item_owner o JOIN item_template t "
                 "ON t.entry=o.entry WHERE o.entry=" + std::to_string(row.id)
                 + " AND o.realm_name=" + identityText(realm)

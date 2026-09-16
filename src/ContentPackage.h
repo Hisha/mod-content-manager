@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <string>
 #include <vector>
+#include <map>
 
 struct ContentPackageEntry
 {
@@ -49,15 +50,24 @@ struct ContentServerItemRow
     }
 };
 
+struct ContentCurrencyCategory
+{
+    std::string symbol;
+    std::map<std::string, std::string> names;
+    bool operator==(ContentCurrencyCategory const& other) const
+    { return symbol == other.symbol && names == other.names; }
+};
+
 struct ContentCurrencyRow
 {
     std::string symbol;
     std::string itemSymbol;
     std::uint32_t categoryCopyFromItem = 0;
+    std::string categorySymbol;
     bool operator==(ContentCurrencyRow const& other) const
     {
         return symbol == other.symbol && itemSymbol == other.itemSymbol
-            && categoryCopyFromItem == other.categoryCopyFromItem;
+            && categoryCopyFromItem == other.categoryCopyFromItem && categorySymbol == other.categorySymbol;
     }
 };
 
@@ -73,6 +83,7 @@ struct ContentPackageManifest
     std::vector<ContentItemRow> itemRows;
     std::vector<ContentServerItemRow> serverItemRows;
     std::vector<ContentCurrencyRow> currencyRows;
+    std::vector<ContentCurrencyCategory> currencyCategories;
 };
 
 struct ContentPackageStageResult

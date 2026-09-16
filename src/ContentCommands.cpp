@@ -16,7 +16,9 @@
 #include "DbcDescriptor.h"
 #include "DbcReader.h"
 #include "CurrencyDbcComposer.h"
+#include "CurrencyCategoryDbcComposer.h"
 #include "ContentAllocationRegistry.h"
+#include "ContentBaselineRegistry.h"
 #include "ContentServerDeployment.h"
 
 #include <algorithm>
@@ -115,7 +117,9 @@ public:
         };
         static ChatCommandTable dbcCommandTable =
         {
-            { "inspect", HandleDbcInspectCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes }
+            { "inspect", HandleDbcInspectCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes },
+            { "review", HandleDbcReviewCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes },
+            { "approve", HandleDbcApproveCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes }
         };
         static ChatCommandTable serverCommandTable =
         {
@@ -282,7 +286,7 @@ public:
         }
         if (!IsKnownDbcTable(table))
         {
-            handler->PSendSysMessage("Unsupported DBC table '{}'. Registered tables: Item, CurrencyTypes.", table);
+            handler->PSendSysMessage("Unsupported DBC table '{}'. Registered tables: Item, CurrencyTypes, CurrencyCategory.", table);
             return true;
         }
         auto build = sContentManager.GetClientBuild();
@@ -301,18 +305,14 @@ public:
         try
         {
             namespace fs = std::filesystem;
-            auto parsed = DbcReader::ReadBaseline(configured, *descriptor);
-            if (!parsed.valid)
-                throw std::runtime_error(parsed.error);
-            fs::path directory = fs::canonical(configured);
-            fs::path source = directory / descriptor->serverFile;
-            std::string sha256, hashError;
-            if (!ContentBuildHash::Calculate(source, sha256, hashError))
-                throw std::runtime_error("SHA-256 failed: " + hashError);
-            if (sha256 != ContentBuildHash::Bytes(DbcReader::Serialize(parsed.document)))
-                throw std::runtime_error("DBC baseline changed between read and hashing");
+            auto inspected = ContentBaselineRegistry::Inspect(configured, *descriptor);
+            DbcReadResult parsed{true, {}, inspected.document};
+            fs::path source = inspected.source, directory = source.parent_path();
+            auto sha256 = inspected.hash;
             auto currencyOccupancy = table == "CurrencyTypes"
                 ? CurrencyDbcComposer::Inspect(parsed.document) : CurrencyOccupancy{};
+            auto categoryIds = table == "CurrencyCategory"
+                ? CurrencyCategoryDbcComposer::Inspect(parsed.document) : std::set<std::uint32_t>{};
             handler->PSendSysMessage("DBC inspection PASS: {} (descriptor v{})", table, descriptor->version);
             handler->PSendSysMessage("Client build: {}", build);
             handler->PSendSysMessage("Baseline directory: {}", directory.string());
@@ -329,13 +329,82 @@ public:
                 for (auto bit : currencyOccupancy.bits) bits += (bits.empty() ? "" : ",") + std::to_string(bit);
                 handler->PSendSysMessage("Baseline occupied known-bit indexes: {}", bits);
             }
-            handler->SendSysMessage("Layout validation passed. Baseline provenance is reported, not approved or pinned by this phase.");
+            if (table == "CurrencyCategory")
+            {
+                handler->SendSysMessage("Fields: ID int32, Flags int32, 16 localized string offsets uint32, NameFlags uint32 (19 fields / 76 bytes).");
+                std::string ids;
+                for (auto id : categoryIds) ids += (ids.empty() ? "" : ",") + std::to_string(id);
+                handler->PSendSysMessage("Physically occupied CurrencyCategory IDs: {}", ids);
+                for (std::size_t i = 0; i < parsed.document.recordCount; ++i)
+                    handler->PSendSysMessage("Category {}: enUS='{}', Flags={}, NameFlags={}",
+                        parsed.document.words[i * 19], CurrencyCategoryDbcComposer::Name(parsed.document, i, 0),
+                        parsed.document.words[i * 19 + 1], parsed.document.words[i * 19 + 18]);
+                handler->SendSysMessage("No hash is required for inspection. Build also reserves baseline CurrencyTypes CategoryID references, including dangling references.");
+            }
+            std::string registryStatus, registryError;
+            if (ContentBaselineRegistry::Status(inspected, registryStatus, registryError))
+                handler->PSendSysMessage("Baseline registry: {}", registryStatus);
+            else handler->PSendSysMessage("Baseline registry unavailable: {}", registryError);
+            handler->SendSysMessage("Inspection is read-only. Use review/approve for an intentional replacement; first build registers an unregistered validated baseline.");
         }
         catch (std::exception const& e)
         {
             handler->PSendSysMessage("DBC inspection failed for '{}': {}", table, e.what());
         }
         return true;
+    }
+
+    static std::string BaselinePin(std::string const& table)
+    {
+        return table == "Item" ? sContentManager.GetItemBaselineSha256()
+            : table == "CurrencyTypes" ? sContentManager.GetCurrencyTypesBaselineSha256() : "";
+    }
+
+    static bool BaselineAdmin(ChatHandler* handler, std::string const& table, std::uint64_t review)
+    {
+        if (handler->GetSession() && handler->GetSession()->GetSecurity() < SEC_ADMINISTRATOR)
+        { handler->SendSysMessage("Baseline review/approval requires administrator access."); return true; }
+        try
+        {
+            auto descriptor = FindDbcDescriptor(sContentManager.GetClientBuild(), table);
+            if (!descriptor) throw std::runtime_error("Unsupported table/client build");
+            auto b = ContentBaselineRegistry::Inspect(sContentManager.GetBaselineDbcDirectory(), *descriptor);
+            std::string error;
+            std::string actor = handler->GetSession()
+                ? "account:" + std::to_string(handler->GetSession()->GetAccountId()) : "console";
+            if (review)
+            {
+                if (!ContentBaselineRegistry::Approve(b, BaselinePin(table), review, actor, error))
+                    throw std::runtime_error(error);
+                handler->PSendSysMessage("Baseline replacement approved: {} SHA-256 {}. Existing leases/artifacts are preserved; rebuild performs occupancy validation.", table, b.hash);
+            }
+            else
+            {
+                std::uint64_t number = 0;
+                if (!ContentBaselineRegistry::Review(b, actor, number, error)) throw std::runtime_error(error);
+                std::string status;
+                if (!ContentBaselineRegistry::Status(b, status, error)) throw std::runtime_error(error);
+                handler->PSendSysMessage("Accepted baseline: {}", status);
+                handler->PSendSysMessage("Review {}: {} build {} descriptor v{}, source {}, SHA-256 {}; records {}, fields {}, record bytes {}, string bytes {}",
+                    number, table, b.clientBuild, b.descriptorVersion, b.source, b.hash,
+                    b.document.recordCount, b.document.fieldCount, b.document.recordSize, b.document.stringBlockSize);
+                handler->PSendSysMessage("Approve these inspected bytes only with .content dbc approve {} {}. No baseline has changed.", table, number);
+            }
+        }
+        catch (std::exception const& e) { handler->PSendSysMessage("Baseline operation refused: {}", e.what()); }
+        return true;
+    }
+
+    static bool HandleDbcReviewCommand(ChatHandler* handler, std::string table)
+    { return BaselineAdmin(handler, table, 0); }
+
+    static bool HandleDbcApproveCommand(ChatHandler* handler, std::string table, std::string token)
+    {
+        std::uint64_t review = 0;
+        auto parsed = std::from_chars(token.data(), token.data() + token.size(), review);
+        if (!review || parsed.ec != std::errc() || parsed.ptr != token.data() + token.size())
+        { handler->SendSysMessage("Usage: .content dbc approve <table> <review-number>"); return true; }
+        return BaselineAdmin(handler, table, review);
     }
 
     static bool HandleScanCommand(ChatHandler* handler)

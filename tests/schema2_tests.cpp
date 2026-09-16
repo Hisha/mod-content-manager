@@ -78,6 +78,28 @@ int main(int argc, char** argv)
     Save(path,invalid);assert(!ContentPackage(path).Validate().valid);
     invalid=currency;invalid["serverRows"][0]["fields"]["BagFamily"]=0;
     Save(path,invalid);assert(!ContentPackage(path).Validate().valid);
+    auto category = currency;
+    category["currencies"][0].erase("categoryCopyFromItem");
+    category["currencies"][0]["category"] = {{"symbol","hunts"}};
+    category["currencyCategories"] = json::array({{{"symbol","hunts"},{"name",{{"enUS","Hunts"}}}}});
+    Save(path,category); assert(ContentPackage(path).Validate().valid);
+    for (auto name : {"enUS", "frFR", "ruRU"})
+    { auto localized=category;localized["currencyCategories"][0]["name"][name]="Hunts";
+      Save(path,localized);assert(ContentPackage(path).Validate().valid); }
+    invalid=category;invalid["currencies"][0]["categoryCopyFromItem"]=40752;
+    Save(path,invalid);assert(!ContentPackage(path).Validate().valid);
+    invalid=category;invalid["currencies"][0].erase("category");
+    Save(path,invalid);assert(!ContentPackage(path).Validate().valid);
+    invalid=category;invalid["currencyCategories"][0]["ID"]=5;
+    Save(path,invalid);assert(!ContentPackage(path).Validate().valid);
+    invalid=category;invalid["currencyCategories"][0]["name"].erase("enUS");
+    Save(path,invalid);assert(!ContentPackage(path).Validate().valid);
+    invalid=category;invalid["currencyCategories"][0]["name"]["xxXX"]="Hunts";
+    Save(path,invalid);assert(!ContentPackage(path).Validate().valid);
+    invalid=category;invalid["currencies"][0]["category"]["symbol"]="missing";
+    Save(path,invalid);assert(!ContentPackage(path).Validate().valid);
+    invalid=category;invalid["currencyCategories"][0]["name"]["enUS"]="";
+    Save(path,invalid);assert(!ContentPackage(path).Validate().valid);
     auto bad = manifest; bad["dbcRows"][0]["table"] = "CurrencyTypes";
     Save(path, bad); assert(!ContentPackage(path).Validate().valid);
     bad = manifest; bad["dbcRows"][0]["op"] = "modify";

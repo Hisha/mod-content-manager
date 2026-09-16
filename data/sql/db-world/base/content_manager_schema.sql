@@ -88,3 +88,59 @@ CREATE TABLE IF NOT EXISTS `content_manager_currency_owner` (
   PRIMARY KEY (`entry`),
   UNIQUE KEY `currency_bit` (`bit_index`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+-- Generic baseline provenance. Does not alter existing builds, ownership, or allocation leases.
+CREATE TABLE IF NOT EXISTS content_manager_baseline (
+  client_build INT UNSIGNED NOT NULL,
+  table_name VARCHAR(64) COLLATE utf8mb4_bin NOT NULL,
+  descriptor_version INT UNSIGNED NOT NULL,
+  sha256 CHAR(64) COLLATE utf8mb4_bin NOT NULL,
+  source_path TEXT NOT NULL,
+  record_count INT UNSIGNED NOT NULL,
+  field_count INT UNSIGNED NOT NULL,
+  record_size INT UNSIGNED NOT NULL,
+  string_bytes INT UNSIGNED NOT NULL,
+  revision BIGINT UNSIGNED NOT NULL,
+  accepted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (client_build,table_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE IF NOT EXISTS content_manager_baseline_history (
+  client_build INT UNSIGNED NOT NULL,
+  table_name VARCHAR(64) COLLATE utf8mb4_bin NOT NULL,
+  descriptor_version INT UNSIGNED NOT NULL,
+  sha256 CHAR(64) COLLATE utf8mb4_bin NOT NULL,
+  source_path TEXT NOT NULL,
+  record_count INT UNSIGNED NOT NULL,
+  field_count INT UNSIGNED NOT NULL,
+  record_size INT UNSIGNED NOT NULL,
+  string_bytes INT UNSIGNED NOT NULL,
+  revision BIGINT UNSIGNED NOT NULL,
+  actor VARCHAR(255) NOT NULL,
+  acceptance_method VARCHAR(64) NOT NULL,
+  accepted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (client_build,table_name,revision)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE IF NOT EXISTS content_manager_baseline_review (
+  client_build INT UNSIGNED NOT NULL,
+  table_name VARCHAR(64) COLLATE utf8mb4_bin NOT NULL,
+  descriptor_version INT UNSIGNED NOT NULL,
+  sha256 CHAR(64) COLLATE utf8mb4_bin NOT NULL,
+  source_path TEXT NOT NULL,
+  record_count INT UNSIGNED NOT NULL,
+  field_count INT UNSIGNED NOT NULL,
+  record_size INT UNSIGNED NOT NULL,
+  string_bytes INT UNSIGNED NOT NULL,
+  review_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  request_token CHAR(36) COLLATE utf8mb4_bin NOT NULL,
+  expected_revision BIGINT UNSIGNED NOT NULL,
+  expected_sha256 CHAR(64) COLLATE utf8mb4_bin NOT NULL,
+  expected_descriptor_version INT UNSIGNED NOT NULL,
+  reviewed_by VARCHAR(255) NOT NULL,
+  reviewed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  approved_by VARCHAR(255) NULL,
+  approved_at TIMESTAMP NULL DEFAULT NULL,
+  PRIMARY KEY (review_id),
+  UNIQUE KEY (request_token)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;

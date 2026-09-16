@@ -25,7 +25,7 @@ ResourceAllocationPolicy ContentResourceAllocator::ItemIdPolicy(std::set<std::ui
 std::vector<ItemAllocation> ContentResourceAllocator::Plan(std::string const& realm,
     ResourceAllocationPolicy const& policy, std::vector<ResourceAllocationRequest> const& requests,
     std::vector<ItemAllocation> const& retained, std::set<std::uint32_t> const& occupiedExternal,
-    std::uint32_t build, std::string const& hash)
+    std::uint32_t build, std::string const& hash, std::set<std::string> const& acceptedHistory)
 {
     if (policy.resourceKind.empty() || !policy.version || !policy.firstCandidate
         || policy.lastCandidate < policy.firstCandidate)
@@ -64,7 +64,7 @@ std::vector<ItemAllocation> ContentResourceAllocator::Plan(std::string const& re
         if (existing != byIdentity.end())
         {
             auto lease = existing->second;
-            if (lease.baselineSha256 != hash)
+            if (lease.baselineSha256 != hash && !acceptedHistory.count(lease.baselineSha256))
                 throw std::runtime_error("Retained allocation was pinned to a different baseline; review migration before reuse");
             if (lease.policyVersion != policy.version)
                 throw std::runtime_error("Retained allocation uses another resource policy version; review migration before reuse");

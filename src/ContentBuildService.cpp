@@ -13,6 +13,8 @@
 #include "ContentResourceAllocator.h"
 #include "ItemDbcComposer.h"
 #include "CurrencyDbcComposer.h"
+#include "CurrencyCategoryDbcComposer.h"
+#include "ContentBaselineRegistry.h"
 #include "ContentCurrencyServer.h"
 #include "DbcDescriptor.h"
 #include "DbcReader.h"
@@ -125,6 +127,17 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
         for (auto const& source : selected)
             for (auto const& row : source.validation.manifest.currencyRows)
                 currencyRequests.push_back({source.validation.manifest.packageKey, row.symbol, "currency.known-bit"});
+        std::vector<ResourceAllocationRequest> categoryRequests;
+        for (auto const& source : selected)
+            for (auto const& row : source.validation.manifest.currencyCategories)
+                categoryRequests.push_back({source.validation.manifest.packageKey, row.symbol, "currency-category.id"});
+        bool composingCategory = !categoryRequests.empty();
+        if (composingCategory)
+        {
+            auto key = Fold("DBFilesClient/CurrencyCategory.dbc");
+            Require(!owners.count(key), "Raw CurrencyCategory.dbc conflicts with semantic composition");
+            owners.emplace(key, "CurrencyCategory composer");
+        }
         bool composingCurrency = !currencyRequests.empty();
         if (composingCurrency)
         {
@@ -167,19 +180,27 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
         DbcReadResult currencyBaseline;
         std::set<std::uint32_t> currencyExternalBits, currencyExternalIds;
         std::uint32_t expectedItemRecords = 0;
+        std::vector<ContentBaseline> baselines;
+        std::map<std::string, std::set<std::string>> acceptedHistory;
+        auto loadBaseline = [&](std::string const& table, std::string const& pin) {
+            auto descriptor = FindDbcDescriptor(manager.GetClientBuild(), table);
+            Require(descriptor, "No compiled descriptor for " + table + " and configured ClientBuild");
+            auto b = ContentBaselineRegistry::Inspect(manager.GetBaselineDbcDirectory(), *descriptor);
+            Require(ContentBaselineRegistry::Accept(b, pin, error), error);
+            Require(ContentBaselineRegistry::History(b, acceptedHistory[table], error), error);
+            baselines.push_back(b);
+            report("Accepted baseline: " + table + " descriptor v" + std::to_string(b.descriptorVersion) + " SHA-256 " + b.hash);
+            return b;
+        };
+        std::vector<ResolvedCurrencyCategory> categories;
+        std::vector<std::uint8_t> composedCategoryBytes;
+        std::string categoryHash;
         if (composingCurrency)
         {
             Require(manager.GetClientBuild() == 12340, "CurrencyTypes supports build 12340 only");
-            Require(ContentBuildHash::Valid(manager.GetCurrencyTypesBaselineSha256()),
-                "Inspect CurrencyTypes and pin ContentManager.CurrencyTypesBaselineSha256 before building");
-            auto descriptor = FindDbcDescriptor(12340, "CurrencyTypes");
-            currencyBaseline = DbcReader::ReadBaseline(manager.GetBaselineDbcDirectory(), *descriptor);
-            Require(currencyBaseline.valid, currencyBaseline.error);
-            auto path = fs::canonical(manager.GetBaselineDbcDirectory()) / descriptor->serverFile;
-            Require(ContentBuildHash::Calculate(path, currencyBaselineHash, error), error);
-            Require(currencyBaselineHash == ContentBuildHash::Bytes(DbcReader::Serialize(currencyBaseline.document)),
-                "CurrencyTypes baseline changed between read and hashing");
-            Require(currencyBaselineHash == manager.GetCurrencyTypesBaselineSha256(), "CurrencyTypes baseline hash mismatch");
+            auto accepted = loadBaseline("CurrencyTypes", manager.GetCurrencyTypesBaselineSha256());
+            currencyBaseline = {true, {}, accepted.document};
+            currencyBaselineHash = accepted.hash;
             auto occupancy = CurrencyDbcComposer::Inspect(currencyBaseline.document);
             std::vector<ItemAllocation> retained;
             Require(ContentAllocationRegistry().Read(realmName, retained, error), error);
@@ -191,18 +212,10 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
         if (composingItem)
         {
             Require(manager.GetClientBuild() == 12340, "Item composition supports only client build 12340");
-            Require(ContentBuildHash::Valid(manager.GetItemBaselineSha256()),
-                "Set ContentManager.ItemBaselineSha256 to an administrator-verified Item.dbc hash");
-            auto descriptor = FindDbcDescriptor(12340, "Item");
-            Require(descriptor, "Item descriptor for build 12340 is missing");
-            auto baseline = DbcReader::ReadBaseline(manager.GetBaselineDbcDirectory(), *descriptor);
-            Require(baseline.valid, "Item baseline validation failed: " + baseline.error);
-            fs::path baselinePath = fs::canonical(manager.GetBaselineDbcDirectory()) / descriptor->serverFile;
-            Require(ContentBuildHash::Calculate(baselinePath, baselineHash, error), "Item baseline SHA-256 failed: " + error);
-            Require(baselineHash == ContentBuildHash::Bytes(DbcReader::Serialize(baseline.document)),
-                "Item baseline changed between read and hashing");
-            Require(baselineHash == manager.GetItemBaselineSha256(),
-                "Item baseline SHA-256 differs from ContentManager.ItemBaselineSha256; composition refused");
+            auto accepted = loadBaseline("Item", manager.GetItemBaselineSha256());
+            DbcReadResult baseline{true, {}, accepted.document};
+            baselineHash = accepted.hash;
+            fs::path baselinePath = accepted.source;
             std::set<std::uint32_t> baselineIDs;
             for (std::size_t i = 0; i < baseline.document.recordCount; ++i)
                 Require(baselineIDs.insert(baseline.document.words[i * 8]).second, "Duplicate baseline Item ID");
@@ -217,7 +230,7 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
             worldIDs.insert(currencyExternalIds.begin(), currencyExternalIds.end());
             auto policy = ContentResourceAllocator::ItemIdPolicy(baselineIDs);
             allocationPlan = ContentResourceAllocator::Plan(realmName, policy, itemRequests,
-                retained, worldIDs, result.buildNumber, baselineHash);
+                retained, worldIDs, result.buildNumber, baselineHash, acceptedHistory["Item"]);
             for (auto const& source : selected)
                 for (auto const& server : source.validation.manifest.serverItemRows)
                 {
@@ -253,13 +266,38 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
             Require(ContentBuildHash::Calculate(baselinePath, recheckHash, error) && recheckHash == baselineHash,
                 "Item baseline changed during composition");
         }
+        if (composingCategory)
+        {
+            auto baseline = loadBaseline("CurrencyCategory", "");
+            auto occupied = CurrencyCategoryDbcComposer::Occupancy(baseline.document, currencyBaseline.document);
+            std::vector<ItemAllocation> retained;
+            Require(ContentAllocationRegistry().Read(realmName, retained, error), error);
+            std::set<std::uint32_t> external;
+            Require(ContentCurrencyServer::CategoryOccupancy(realmName, retained, external, error), error);
+            occupied.insert(external.begin(), external.end());
+            auto plan = ContentResourceAllocator::Plan(realmName, ContentResourceAllocator::CurrencyCategoryIdPolicy(),
+                categoryRequests, retained, occupied, result.buildNumber, baseline.hash, acceptedHistory["CurrencyCategory"]);
+            for (auto const& source : selected)
+                for (auto const& declaration : source.validation.manifest.currencyCategories)
+                {
+                    auto const& package = source.validation.manifest.packageKey;
+                    auto lease = std::find_if(plan.begin(), plan.end(), [&](auto const& a) {
+                        return a.packageKey == package && a.symbol == declaration.symbol;
+                    });
+                    Require(lease != plan.end(), "Category allocation missing");
+                    categories.push_back({package, declaration.symbol, lease->value, declaration.names});
+                    report("Planned currency-category.id: " + package + "/" + declaration.symbol + " = " + std::to_string(lease->value));
+                }
+            composedCategoryBytes = CurrencyCategoryDbcComposer::Compose(baseline.document, categories);
+            allocationPlan.insert(allocationPlan.end(), plan.begin(), plan.end());
+        }
         if (composingCurrency)
         {
             std::vector<ItemAllocation> retained;
             Require(ContentAllocationRegistry().Read(realmName, retained, error), error);
             auto currencyPlan = ContentResourceAllocator::Plan(realmName,
                 ContentResourceAllocator::CurrencyKnownBitPolicy(), currencyRequests, retained,
-                currencyExternalBits, result.buildNumber, currencyBaselineHash);
+                currencyExternalBits, result.buildNumber, currencyBaselineHash, acceptedHistory["CurrencyTypes"]);
             std::vector<ResolvedCurrency> rows;
             for (auto const& source : selected)
                 for (auto const& declaration : source.validation.manifest.currencyRows)
@@ -272,8 +310,18 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
                         return a.packageKey == package && a.symbol == declaration.symbol;
                     });
                     Require(item != resolvedServerRows.end() && bit != currencyPlan.end(), "Currency plan reference missing");
-                    item->currency = {declaration.symbol, item->id,
-                        CurrencyDbcComposer::Category(currencyBaseline.document, declaration.categoryCopyFromItem), bit->value};
+                    std::uint32_t category = 0;
+                    if (declaration.categorySymbol.empty())
+                        category = CurrencyDbcComposer::Category(currencyBaseline.document, declaration.categoryCopyFromItem);
+                    else
+                    {
+                        auto found = std::find_if(categories.begin(), categories.end(), [&](auto const& c) {
+                            return c.packageKey == package && c.symbol == declaration.categorySymbol;
+                        });
+                        Require(found != categories.end(), "Resolved category reference missing");
+                        category = found->id;
+                    }
+                    item->currency = {declaration.symbol, item->id, category, bit->value, declaration.categorySymbol};
                     rows.push_back(item->currency);
                     report("Planned currency.known-bit: " + package + "/" + declaration.symbol + " = " + std::to_string(bit->value));
                     report("Currency parity: CurrencyTypes.ID/ItemID = currencytypes_dbc.ID/ItemID = item_template.entry = "
@@ -323,7 +371,7 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
             result.fileCount += staged.stagedFiles.size();
             report("  " + std::to_string(staged.stagedFiles.size()) + " file(s)");
         }
-        Require(result.fileCount + (composingItem ? 1 : 0) + (composingCurrency ? 1 : 0) == owners.size(),
+        Require(result.fileCount + (composingItem ? 1 : 0) + (composingCurrency ? 1 : 0) + (composingCategory ? 1 : 0) == owners.size(),
             "Staged file count does not match the declared cumulative set");
         if (composingItem)
         {
@@ -381,6 +429,48 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
             report("Composed CurrencyTypes.dbc SHA-256: " + currencyHash);
             ++result.fileCount;
         }
+        if (composingCategory)
+        {
+            auto target = result.workspace / "DBFilesClient" / "CurrencyCategory.dbc";
+            RejectLinks(target);
+            fs::create_directories(target.parent_path());
+            Require(!fs::exists(fs::symlink_status(target)), "CurrencyCategory target already exists");
+            {
+                std::ofstream out(target, std::ios::binary);
+                Require(out.is_open(), "Cannot create CurrencyCategory.dbc");
+                out.write(reinterpret_cast<char const*>(composedCategoryBytes.data()), composedCategoryBytes.size());
+                Require(out.good(), "Cannot write CurrencyCategory.dbc");
+            }
+            auto parsed = DbcReader::Read(target, *FindDbcDescriptor(manager.GetClientBuild(), "CurrencyCategory"));
+            Require(parsed.valid && DbcReader::Serialize(parsed.document) == composedCategoryBytes, "Category disk readback failed");
+            Require(ContentBuildHash::Calculate(target, categoryHash, error), error);
+            for (auto const& row : resolvedServerRows)
+                if (!row.currency.categorySymbol.empty())
+                {
+                    auto definition = std::find_if(categories.begin(), categories.end(), [&](auto const& c) {
+                        return c.packageKey == row.packageKey && c.symbol == row.currency.categorySymbol && c.id == row.currency.categoryId;
+                    });
+                    Require(definition != categories.end(), "Client/server category relationship parity failed");
+                    bool found = false;
+                    for (std::size_t i = 0; i < parsed.document.recordCount; ++i)
+                        if (parsed.document.words[i * 19] == definition->id)
+                        {
+                            Require(CurrencyCategoryDbcComposer::Name(parsed.document, i, 0) == definition->names.at("enUS"),
+                                "Generated category name parity failed");
+                            found = true;
+                        }
+                    Require(found, "Client category row missing");
+                }
+            ++result.fileCount;
+            report("Composed CurrencyCategory.dbc SHA-256: " + categoryHash);
+        }
+        // Recheck every accepted snapshot immediately before artifact assembly. The commit also guards registry identities.
+        for (auto const& baseline : baselines)
+        {
+            auto current = ContentBaselineRegistry::Inspect(manager.GetBaselineDbcDirectory(),
+                *FindDbcDescriptor(baseline.clientBuild, baseline.table));
+            Require(current.hash == baseline.hash, "Baseline changed during build: " + baseline.table);
+        }
         report("Cumulative files: " + std::to_string(result.fileCount));
         auto mpq = MpqBuilder().Build(result.workspace, result.outputPath);
         Require(mpq.success, "MPQ build failed: " + mpq.error);
@@ -409,7 +499,7 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
             Require(ContentBuildHash::Calculate(serverPath, serverRecord.bundleSha256, error),
                 "Server bundle SHA-256 failed: " + error);
             writeSidecar(parityPath, ContentServerBundle::ParityJson(realmName, result.buildNumber,
-                allocationPlan, resolvedServerRows, baselineHash, composedHash, hash, serverRecord.bundleSha256, currencyHash));
+                allocationPlan, resolvedServerRows, baselineHash, composedHash, hash, serverRecord.bundleSha256, currencyHash, categoryHash, categories, baselines));
             serverRecord.parityFilename = parityPath.filename().string();
             Require(ContentBuildHash::Calculate(parityPath, serverRecord.paritySha256, error),
                 "Parity manifest SHA-256 failed: " + error);
@@ -420,7 +510,7 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
         ContentBuildRecord record{result.buildNumber, realmName, filename,
             static_cast<std::uint32_t>(result.packageCount), static_cast<std::uint32_t>(result.fileCount), "STAGED", hash};
         bool committed = composingItem
-            ? ContentAllocationRegistry().CommitComposed(record, allocationPlan, serverRecord, error)
+            ? ContentAllocationRegistry().CommitComposed(record, allocationPlan, serverRecord, error, baselines)
             : builds.Record(record, serverRecord, error);
         if (!committed)
             throw std::runtime_error("MPQ was created, but recording the build/allocation could not be verified: " + error);

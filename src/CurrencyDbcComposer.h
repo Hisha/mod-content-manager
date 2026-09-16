@@ -10,6 +10,7 @@ struct ResolvedCurrency
     std::uint32_t itemId = 0;
     std::uint32_t categoryId = 0;
     std::uint32_t bitIndex = 0;
+    std::string categorySymbol; // Empty for legacy categoryCopyFromItem.
     // CurrencyTypes.ID is derived from the allocated ItemID, never EPF-authored.
     // This also keeps the SQL overlay's ID order equal to its ItemID lookup order.
 };

@@ -50,7 +50,7 @@ bool LessRow(ResolvedServerItem const& a, ResolvedServerItem const& b)
 
 json ResourceObject(ItemAllocation const& allocation, std::vector<ResolvedServerItem> const& rows)
 {
-    if (allocation.resourceKind == "currency.known-bit")
+    if (allocation.resourceKind == "currency.known-bit" || allocation.resourceKind == "currency-category.id")
         return {{"package", allocation.packageKey}, {"symbol", allocation.symbol},
             {"resourceKind", allocation.resourceKind}, {"value", allocation.value},
             {"baselineSha256", allocation.baselineSha256}, {"allocationPolicyVersion", allocation.policyVersion},
@@ -101,10 +101,12 @@ std::string ContentServerBundle::ServerJson(std::string const& realm, std::vecto
             {"fields", RowObject(row)}});
         if (row.currency.itemId)
         {
-            artifact["format"] = 2;
+            artifact["format"] = std::max(artifact["format"].get<int>(), row.currency.categorySymbol.empty() ? 2 : 3);
             artifact["rows"].back()["currency"] = {{"symbol", row.currency.symbol},
                 {"ID", row.currency.itemId}, {"ItemID", row.currency.itemId},
                 {"CategoryID", row.currency.categoryId}, {"BitIndex", row.currency.bitIndex}};
+            if (!row.currency.categorySymbol.empty())
+                artifact["rows"].back()["currency"]["categorySymbol"] = row.currency.categorySymbol;
         }
     }
     return artifact.dump(2) + "\n";
@@ -113,7 +115,8 @@ std::string ContentServerBundle::ServerJson(std::string const& realm, std::vecto
 std::string ContentServerBundle::ParityJson(std::string const& realm, std::uint32_t build,
     std::vector<ItemAllocation> const& allocations, std::vector<ResolvedServerItem> const& rows,
     std::string const& baselineSha256, std::string const& itemDbcSha256,
-    std::string const& clientMpqSha256, std::string const& serverSha256, std::string const& currencyDbcSha256)
+    std::string const& clientMpqSha256, std::string const& serverSha256, std::string const& currencyDbcSha256,
+    std::string const& categoryDbcSha256, std::vector<ResolvedCurrencyCategory> categories, std::vector<ContentBaseline> baselines)
 {
     auto sorted = allocations;
     std::sort(sorted.begin(), sorted.end(), [](auto const& a, auto const& b) {
@@ -140,6 +143,31 @@ std::string ContentServerBundle::ParityJson(std::string const& realm, std::uint3
                     {"itemTemplateEntry", row.id}, {"BagFamily", row.server.bagFamily},
                     {"serverTable", "currencytypes_dbc"}, {"serverDescriptorVersion", 1}});
     }
+    if (!categoryDbcSha256.empty())
+    {
+        artifact["format"] = 3;
+        artifact["categoryDbcSha256"] = categoryDbcSha256;
+        artifact["categoryFallback"] = "authored-locale-else-enUS;reserved-slots-empty;v1";
+        artifact["categories"] = json::array();
+        std::sort(categories.begin(), categories.end(), [](auto const& a, auto const& b) {
+            return std::tie(a.packageKey,a.symbol) < std::tie(b.packageKey,b.symbol);
+        });
+        for (auto const& c : categories)
+            artifact["categories"].push_back({{"package",c.packageKey},{"symbol",c.symbol},{"ID",c.id},{"name",c.names}});
+        for (auto& currency : artifact["currencies"])
+            for (auto const& row : rows)
+                if (currency["package"] == row.packageKey && currency["symbol"] == row.currency.symbol
+                    && !row.currency.categorySymbol.empty()) currency["categorySymbol"] = row.currency.categorySymbol;
+    }
+    if (!baselines.empty())
+    {
+        artifact["format"] = 3;
+        artifact["baselines"] = json::array();
+        std::sort(baselines.begin(), baselines.end(), [](auto const& a, auto const& b) { return a.table < b.table; });
+        for (auto const& b : baselines)
+            artifact["baselines"].push_back({{"table",b.table},{"clientBuild",b.clientBuild},
+                {"descriptorVersion",b.descriptorVersion},{"sha256",b.hash}});
+    }
     return artifact.dump(2) + "\n";
 }
 
@@ -150,7 +178,7 @@ bool ContentServerBundle::ParseServer(std::string const& text, std::string const
     try
     {
         auto artifact = json::parse(text);
-        if (!artifact.is_object() || artifact.size() != 5 || (artifact.at("format") != 1 && artifact.at("format") != 2)
+        if (!artifact.is_object() || artifact.size() != 5 || (artifact.at("format") != 1 && artifact.at("format") != 2 && artifact.at("format") != 3)
             || artifact.at("realm") != realm || artifact.at("table") != "item_template"
             || artifact.at("descriptorVersion") != 1 || !artifact.at("rows").is_array())
             throw std::runtime_error("server bundle header or descriptor mismatch");
@@ -205,7 +233,7 @@ bool ContentServerBundle::ParseServer(std::string const& text, std::string const
             if (source.contains("currency"))
             {
                 auto const& currency = source.at("currency");
-                if (!currency.is_object() || currency.size() != 5 || currency.at("ID") != row.id
+                if (!currency.is_object() || (currency.size() != 5 && currency.size() != 6) || currency.at("ID") != row.id
                     || currency.at("ItemID") != row.id || row.id > 0x7fffffffU
                     || !currency.at("CategoryID").is_number_unsigned()
                     || currency.at("CategoryID").get<std::uint64_t>() > 0x7fffffffULL
@@ -214,6 +242,12 @@ bool ContentServerBundle::ParseServer(std::string const& text, std::string const
                     throw std::runtime_error("Invalid currency server row");
                 row.currency = {currency.at("symbol").get<std::string>(), row.id,
                     currency.at("CategoryID").get<std::uint32_t>(), currency.at("BitIndex").get<std::uint32_t>()};
+                if (currency.contains("categorySymbol"))
+                {
+                    row.currency.categorySymbol = currency.at("categorySymbol").get<std::string>();
+                    if (row.currency.categorySymbol.empty() || row.currency.categoryId > 65535)
+                        throw std::runtime_error("Invalid category symbol/allocated ID");
+                }
                 if (row.currency.symbol.empty() || !row.currency.categoryId || !row.currency.bitIndex
                     || row.server.bagFamily != 8192)
                     throw std::runtime_error("Currency server row lacks token semantics");
@@ -267,8 +301,63 @@ bool ContentServerBundle::VerifyParity(std::string const& text, std::string cons
                     || !currencyBits.insert(row.currency.bitIndex).second)
                     throw std::runtime_error("Currency parity allocation missing or duplicate");
             }
+        auto categorySha = actual.value("categoryDbcSha256", std::string());
+        std::vector<ResolvedCurrencyCategory> categories;
+        std::set<std::pair<std::string,std::string>> categoryIdentities;
+        std::set<std::uint32_t> categoryIds;
+        if (!categorySha.empty())
+        {
+            if (!ContentBuildHash::Valid(categorySha) || !actual.at("categories").is_array())
+                throw std::runtime_error("Invalid category artifact provenance");
+            for (auto const& source : actual.at("categories"))
+            {
+                ResolvedCurrencyCategory c{source.at("package").get<std::string>(),source.at("symbol").get<std::string>(),
+                    source.at("ID").get<std::uint32_t>(), source.at("name").get<std::map<std::string,std::string>>()};
+                CurrencyCategoryDbcComposer::ValidateNames(c.names);
+                if (!c.id || c.id > 65535 || !categoryIdentities.emplace(c.packageKey,c.symbol).second || !categoryIds.insert(c.id).second)
+                    throw std::runtime_error("Duplicate/invalid category identity");
+                auto lease = std::find_if(allocations.begin(),allocations.end(),[&](auto const& a) {
+                    return a.resourceKind == "currency-category.id" && a.packageKey == c.packageKey && a.symbol == c.symbol && a.value == c.id;
+                });
+                if (lease == allocations.end() || !ContentBuildHash::Valid(lease->baselineSha256))
+                    throw std::runtime_error("Category lease missing");
+                if (std::none_of(rows.begin(),rows.end(),[&](auto const& row) {
+                    return row.packageKey == c.packageKey && row.currency.categorySymbol == c.symbol && row.currency.categoryId == c.id;
+                })) throw std::runtime_error("Unreferenced category in parity manifest");
+                categories.push_back(c);
+            }
+            if (categories.empty()) throw std::runtime_error("Empty category artifact");
+        }
+        for (auto const& row : rows)
+            if (!row.currency.categorySymbol.empty() && std::none_of(categories.begin(),categories.end(),[&](auto const& c) {
+                return c.packageKey == row.packageKey && c.symbol == row.currency.categorySymbol && c.id == row.currency.categoryId;
+            })) throw std::runtime_error("Currency category relationship missing or mismatched");
+        for (auto const& a : allocations)
+            if (a.resourceKind == "currency-category.id" && !categoryIdentities.count({a.packageKey,a.symbol}))
+                throw std::runtime_error("Orphan category lease in manifest");
+        std::vector<ContentBaseline> baselines;
+        if (actual.contains("baselines"))
+        {
+            std::set<std::string> tables;
+            for (auto const& source : actual.at("baselines"))
+            {
+                ContentBaseline b; b.table = source.at("table").get<std::string>();
+                b.clientBuild = source.at("clientBuild").get<std::uint32_t>();
+                b.descriptorVersion = source.at("descriptorVersion").get<std::uint32_t>();
+                b.hash = source.at("sha256").get<std::string>();
+                auto d = FindDbcDescriptor(b.clientBuild,b.table);
+                if (!d || d->version != b.descriptorVersion || !ContentBuildHash::Valid(b.hash) || !tables.insert(b.table).second)
+                    throw std::runtime_error("Invalid baseline snapshot");
+                if (b.table == "Item" && b.hash != baselineSha256) throw std::runtime_error("Item baseline snapshot mismatch");
+                baselines.push_back(b);
+            }
+            std::set<std::string> expected{"Item"};
+            if (currencyRows) expected.insert("CurrencyTypes");
+            if (!categories.empty()) expected.insert("CurrencyCategory");
+            if (tables != expected) throw std::runtime_error("Baseline snapshot set mismatch");
+        }
         if (!ContentBuildHash::Valid(itemSha) || actual != json::parse(ParityJson(realm, build,
-            allocations, rows, baselineSha256, itemSha, clientMpqSha256, serverSha256, currencySha)))
+            allocations, rows, baselineSha256, itemSha, clientMpqSha256, serverSha256, currencySha, categorySha, categories, baselines)))
             throw std::runtime_error("manifest values differ from build, allocation, or server bundle");
         return true;
     }
