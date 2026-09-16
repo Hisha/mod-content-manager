@@ -42,4 +42,4 @@ ContentManager.PublishDirectory = "/mnt/ai_data/linkable"
 
 # Phase 4: inspect CurrencyTypes before pinning its real server baseline hash.
 # Empty permits inspection but refuses semantic currency builds.
-ContentManager.CurrencyTypesBaselineSha256 = ""
+ContentManager.CurrencyTypesBaselineSha256 = "61ed134510b11f4c010e505d3167240924e4c1058393cbe51f1844d"
