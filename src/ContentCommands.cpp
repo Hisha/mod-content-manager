@@ -16,6 +16,7 @@
 #include "DbcDescriptor.h"
 #include "DbcReader.h"
 #include "ContentAllocationRegistry.h"
+#include "ContentServerDeployment.h"
 
 #include <algorithm>
 #include <set>
@@ -115,12 +116,18 @@ public:
         {
             { "inspect", HandleDbcInspectCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes }
         };
+        static ChatCommandTable serverCommandTable =
+        {
+            { "apply", HandleServerApplyCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes },
+            { "status", HandleServerStatusCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes }
+        };
         static ChatCommandTable contentCommandTable =
         {
             { "activate", HandleActivateCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes },
             { "allocations", HandleAllocationsCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes },
             { "build", buildCommandTable },
             { "dbc", dbcCommandTable },
+            { "server", serverCommandTable },
             { "install", HandleInstallCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes },
             { "uninstall", HandleUninstallCommand, rbac::RBAC_PERM_COMMAND_SERVER_INFO, Console::Yes },
             {
@@ -196,6 +203,67 @@ public:
             handler->PSendSysMessage("{} / {} / item.id = {} [{}], builds {}..{}, baseline {}",
                 row.packageKey, row.symbol, row.value, row.state, row.firstBuild, row.lastBuild,
                 row.baselineSha256);
+        return true;
+    }
+
+    static bool ParseBuildNumber(std::string const& text, std::uint32_t& value)
+    {
+        if (text.empty()) return false;
+        auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
+        return parsed.ec == std::errc() && parsed.ptr == text.data() + text.size() && value > 0;
+    }
+
+    static bool HandleServerStatusCommand(ChatHandler* handler, std::string argument)
+    {
+        std::uint32_t number = 0;
+        if (!argument.empty() && !ParseBuildNumber(argument, number))
+        { handler->SendSysMessage("Usage: .content server status [build-number]"); return true; }
+        std::vector<ContentBuildRecord> builds;
+        std::string error;
+        if (!ContentBuildRegistry().GetBuilds(builds, error))
+        { handler->PSendSysMessage("Server status failed: {}", error); return true; }
+        if (!number)
+            for (auto const& build : builds)
+                if (build.realmName == realm.Name)
+                {
+                    bool exists = false;
+                    ContentServerStatus candidate;
+                    if (!ContentServerDeployment::ReadStatus(build.buildNumber, exists, candidate, error))
+                    { handler->PSendSysMessage("Server status failed: {}", error); return true; }
+                    if (exists) { number = build.buildNumber; break; }
+                }
+        auto build = std::find_if(builds.begin(), builds.end(), [&](auto const& row) {
+            return row.buildNumber == number && row.realmName == realm.Name;
+        });
+        if (build == builds.end())
+        { handler->SendSysMessage("No realm build found."); return true; }
+        ContentServerStatus status;
+        std::vector<ResolvedServerItem> rows;
+        if (!ContentServerDeployment::Inspect(number, realm.Name, sContentManager.GetOutputDirectory(),
+            status, rows, error))
+        { handler->PSendSysMessage("Server status unavailable: {}", error); return true; }
+        handler->PSendSysMessage("Build: {}  server: {}  client: {}", ContentBuildService::Number(number),
+            status.state, build->state);
+        handler->PSendSysMessage("Server item_template rows: {}", rows.size());
+        for (auto const& row : rows)
+            handler->PSendSysMessage("{} / {} / item.id = {}; item_template.entry = {}",
+                row.packageKey, row.symbol, row.id, row.id);
+        handler->PSendSysMessage("Server bundle SHA-256: {}", status.bundleSha256);
+        handler->PSendSysMessage("Parity manifest SHA-256: {}", status.paritySha256);
+        return true;
+    }
+
+    static bool HandleServerApplyCommand(ChatHandler* handler, std::string argument)
+    {
+        std::uint32_t number = 0;
+        if (!ParseBuildNumber(argument, number))
+        { handler->SendSysMessage("Usage: .content server apply <build-number>"); return true; }
+        std::string summary, error;
+        if (!ContentServerDeployment::Apply(number, realm.Name,
+            sContentManager.GetOutputDirectory(), summary, error))
+            handler->PSendSysMessage("Server apply refused: {}", error);
+        else
+            handler->SendSysMessage(summary);
         return true;
     }
 
@@ -289,6 +357,7 @@ public:
             handler->PSendSysMessage("  Schema: {}", manifest.schema);
             handler->PSendSysMessage("  Content: {} item(s)", manifest.content.size());
             handler->PSendSysMessage("  DBC rows: {}", manifest.itemRows.size());
+            handler->PSendSysMessage("  Server item_template rows: {}", manifest.serverItemRows.size());
             for (auto const& entry : manifest.content)
                 handler->PSendSysMessage("    {} -> {}", entry.type, entry.target);
         }

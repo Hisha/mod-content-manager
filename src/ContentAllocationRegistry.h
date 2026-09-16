@@ -20,12 +20,20 @@ struct ItemAllocation
     std::uint32_t policyVersion = 1;
 };
 
+struct ContentServerBuildRecord
+{
+    std::string bundleFilename;
+    std::string bundleSha256;
+    std::string parityFilename;
+    std::string paritySha256;
+};
+
 class ContentAllocationRegistry
 {
 public:
     bool Read(std::string const& realm, std::vector<ItemAllocation>& rows, std::string& error) const;
     bool OccupiedWorldItems(std::set<std::uint32_t>& entries, std::string& error) const;
     bool CommitComposed(ContentBuildRecord const& build, std::vector<ItemAllocation> const& plan,
-        std::string& error) const;
+        ContentServerBuildRecord const& server, std::string& error) const;
 };
 #endif

@@ -1,4 +1,5 @@
 #include "ContentBuildRegistry.h"
+#include "ContentAllocationRegistry.h"
 
 #include "DatabaseEnv.h"
 #include "Transaction.h"
@@ -37,7 +38,7 @@ bool ContentBuildRegistry::NextNumber(std::uint32_t& number, std::string& error)
         error = DatabaseError;
         return false;
     }
-    auto maximum = query->Fetch()[0].Get<uint64>();
+    auto maximum = query->Fetch()[0].Get<std::uint64_t>();
     if (maximum >= std::numeric_limits<std::uint32_t>::max())
     {
         error = "Build number range exhausted";
@@ -47,21 +48,32 @@ bool ContentBuildRegistry::NextNumber(std::uint32_t& number, std::string& error)
     return true;
 }
 
-bool ContentBuildRegistry::Record(ContentBuildRecord const& record, std::string& error) const
+bool ContentBuildRegistry::Record(ContentBuildRecord const& record,
+    ContentServerBuildRecord const& server, std::string& error) const
 {
     if (!record.buildNumber || record.realmName.empty() || record.realmName.size() > 255
         || record.filename.empty() || record.filename.size() > 255 || !record.packageCount || !record.fileCount
-        || record.state != "STAGED" || !ContentBuildHash::Valid(record.sha256))
+        || record.state != "STAGED" || !ContentBuildHash::Valid(record.sha256)
+        || server.bundleFilename != record.filename + ".server.json"
+        || server.parityFilename != record.filename + ".parity.json"
+        || !ContentBuildHash::Valid(server.bundleSha256) || !ContentBuildHash::Valid(server.paritySha256))
     {
         error = "Invalid completed build metadata";
         return false;
     }
-    WorldDatabase.DirectExecute("INSERT INTO content_manager_build "
+    auto tx = WorldDatabase.BeginTransaction();
+    tx->Append("INSERT INTO content_manager_build_lock (id) VALUES (1) ON DUPLICATE KEY UPDATE id=1");
+    tx->Append("INSERT INTO content_manager_build "
         "(build_number, realm_name, filename, package_count, file_count, state, sha256) VALUES ("
         + std::to_string(record.buildNumber) + "," + SqlText(record.realmName) + ","
         + SqlText(record.filename) + "," + std::to_string(record.packageCount) + ","
         + std::to_string(record.fileCount) + ",'STAGED'," + SqlText(record.sha256) + ")");
-    // AzerothCore's synchronous DirectExecute has no return value; verify the row.
+    tx->Append("INSERT INTO content_manager_server_build (build_number,bundle_filename,bundle_sha256,"
+        "parity_filename,parity_sha256,server_state) VALUES (" + std::to_string(record.buildNumber)
+        + "," + SqlText(server.bundleFilename) + "," + SqlText(server.bundleSha256)
+        + "," + SqlText(server.parityFilename) + "," + SqlText(server.paritySha256) + ",'STAGED')");
+    WorldDatabase.DirectCommitTransaction(tx);
+    // AzerothCore's synchronous transaction API has no success result; verify both rows.
     auto query = WorldDatabase.Query("SELECT realm_name, filename, package_count, file_count, state, sha256 "
         "FROM content_manager_build WHERE build_number = " + std::to_string(record.buildNumber));
     if (!query)
@@ -77,6 +89,14 @@ bool ContentBuildRegistry::Record(ContentBuildRecord const& record, std::string&
         error = "Build number already belongs to different metadata; completed MPQ was preserved";
         return false;
     }
+    auto sidecars = WorldDatabase.Query("SELECT bundle_filename,bundle_sha256,parity_filename,parity_sha256,"
+        "server_state FROM content_manager_server_build WHERE build_number=" + std::to_string(record.buildNumber));
+    if (!sidecars || sidecars->Fetch()[0].Get<std::string>() != server.bundleFilename
+        || sidecars->Fetch()[1].Get<std::string>() != server.bundleSha256
+        || sidecars->Fetch()[2].Get<std::string>() != server.parityFilename
+        || sidecars->Fetch()[3].Get<std::string>() != server.paritySha256
+        || sidecars->Fetch()[4].Get<std::string>() != "STAGED")
+    { error = "Server sidecar metadata could not be verified; inspect SQL logs"; return false; }
     return true;
 }
 

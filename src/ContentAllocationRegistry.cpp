@@ -1,6 +1,7 @@
 #include "ContentAllocationRegistry.h"
 #include "ContentBuildHash.h"
 #include "ContentItemOccupancy.h"
+#include "ContentServerOwnership.h"
 #include "DatabaseEnv.h"
 #include "Field.h"
 #include "QueryResult.h"
@@ -84,10 +85,13 @@ bool ContentAllocationRegistry::OccupiedWorldItems(std::set<std::uint32_t>& entr
 }
 
 bool ContentAllocationRegistry::CommitComposed(ContentBuildRecord const& build,
-    std::vector<ItemAllocation> const& plan, std::string& error) const
+    std::vector<ItemAllocation> const& plan, ContentServerBuildRecord const& server, std::string& error) const
 {
     std::lock_guard<std::mutex> lock(allocationWrites);
-    if (plan.empty() || build.state != "STAGED" || !ContentBuildHash::Valid(build.sha256))
+    if (plan.empty() || build.state != "STAGED" || !ContentBuildHash::Valid(build.sha256)
+        || server.bundleFilename != build.filename + ".server.json"
+        || server.parityFilename != build.filename + ".parity.json"
+        || !ContentBuildHash::Valid(server.bundleSha256) || !ContentBuildHash::Valid(server.paritySha256))
     { error = "Invalid composed build metadata"; return false; }
     std::vector<ItemAllocation> before;
     if (!Read(build.realmName, before, error)) return false;
@@ -105,6 +109,7 @@ bool ContentAllocationRegistry::CommitComposed(ContentBuildRecord const& build,
             { error = "Allocation registry changed since planning; rebuild required"; return false; }
     }
     if (!OccupiedWorldItems(occupied, error)) return false;
+    if (!ContentServerOwnership::ExcludeOwned(build.realmName, before, occupied, error)) return false;
     for (auto const& row : plan)
         if (occupied.count(row.value))
         { error = "Planned Item ID became occupied in item_template: " + std::to_string(row.value); return false; }
@@ -133,12 +138,24 @@ bool ContentAllocationRegistry::CommitComposed(ContentBuildRecord const& build,
         + std::to_string(build.buildNumber) + "," + SqlText(build.realmName) + "," + SqlText(build.filename)
         + "," + std::to_string(build.packageCount) + "," + std::to_string(build.fileCount)
         + ",'STAGED'," + SqlText(build.sha256) + ")");
+    tx->Append("INSERT INTO content_manager_server_build (build_number,bundle_filename,bundle_sha256,"
+        "parity_filename,parity_sha256,server_state) VALUES (" + std::to_string(build.buildNumber)
+        + "," + SqlText(server.bundleFilename) + "," + SqlText(server.bundleSha256)
+        + "," + SqlText(server.parityFilename) + "," + SqlText(server.paritySha256) + ",'STAGED')");
     WorldDatabase.DirectCommitTransaction(tx);
     auto check = WorldDatabase.Query("SELECT filename,sha256 FROM content_manager_build WHERE build_number="
         + std::to_string(build.buildNumber));
     if (!check || check->Fetch()[0].Get<std::string>() != build.filename
         || check->Fetch()[1].Get<std::string>() != build.sha256)
     { error = "Composed build transaction could not be verified; inspect SQL logs"; return false; }
+    auto serverCheck = WorldDatabase.Query("SELECT bundle_filename,bundle_sha256,parity_filename,parity_sha256,"
+        "server_state FROM content_manager_server_build WHERE build_number=" + std::to_string(build.buildNumber));
+    if (!serverCheck || serverCheck->Fetch()[0].Get<std::string>() != server.bundleFilename
+        || serverCheck->Fetch()[1].Get<std::string>() != server.bundleSha256
+        || serverCheck->Fetch()[2].Get<std::string>() != server.parityFilename
+        || serverCheck->Fetch()[3].Get<std::string>() != server.paritySha256
+        || serverCheck->Fetch()[4].Get<std::string>() != "STAGED")
+    { error = "Server artifact registry could not be verified; inspect SQL logs"; return false; }
     std::vector<ItemAllocation> after;
     if (!Read(build.realmName, after, error)) return false;
     for (auto const& row : plan)

@@ -1,0 +1,331 @@
+#include "ContentServerDeployment.h"
+#include "ContentAllocationRegistry.h"
+#include "ContentBuildHash.h"
+#include "ContentBuildPaths.h"
+#include "ContentBuildRegistry.h"
+#include "ContentServerBundle.h"
+#include "ContentServerOwnership.h"
+#include "ServerTableDescriptor.h"
+#include "DatabaseEnv.h"
+#include "Field.h"
+#include "QueryResult.h"
+#include "Transaction.h"
+#include "third_party/json/json.hpp"
+#include <openssl/evp.h>
+#include <algorithm>
+#include <fstream>
+#include <mutex>
+#include <optional>
+#include <set>
+#include <stdexcept>
+
+using json = nlohmann::json;
+
+namespace
+{
+std::mutex deploymentMutex;
+
+std::filesystem::path SidecarPath(std::filesystem::path const& outputDirectory,
+    std::string const& filename)
+{
+    using namespace ContentBuildPaths;
+    Require(!outputDirectory.empty(), "OutputDirectory is not configured");
+    auto safe = Target(filename);
+    Require(safe == filename && filename.find('/') == std::string::npos,
+        "Unsafe sidecar filename in build registry");
+    auto path = fs::absolute(outputDirectory / filename);
+    RejectLinks(path);
+    return path;
+}
+
+std::string ReadFile(std::filesystem::path const& path)
+{
+    using namespace ContentBuildPaths;
+    RejectLinks(path);
+    Require(fs::is_regular_file(path) && fs::file_size(path) > 0 && fs::file_size(path) <= 10 * 1024 * 1024,
+        "Server sidecar is missing, empty, or too large: " + path.string());
+    std::ifstream input(path, std::ios::binary);
+    Require(input.is_open(), "Cannot open server sidecar: " + path.string());
+    std::string text((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    Require(!input.bad(), "Cannot read server sidecar: " + path.string());
+    return text;
+}
+
+std::string HashText(std::string const& value)
+{
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int size = 0;
+    if (EVP_Digest(value.data(), value.size(), digest, &size, EVP_sha256(), nullptr) != 1 || size != 32)
+        throw std::runtime_error("Cannot hash server sidecar contents");
+    static char const digits[] = "0123456789abcdef";
+    std::string hash;
+    for (unsigned i = 0; i < size; ++i) { hash += digits[digest[i] >> 4]; hash += digits[digest[i] & 15]; }
+    return hash;
+}
+
+bool ValidateItemSchema(std::string& error)
+{
+    auto const* descriptor = FindServerTableDescriptor("item_template");
+    if (!descriptor || descriptor->version != 1) { error = "item_template descriptor v1 is unavailable"; return false; }
+    std::string sql = "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() "
+        "AND TABLE_NAME='item_template' AND (";
+    bool first = true;
+    std::string included;
+    for (auto const& column : descriptor->columns)
+    {
+        if (!first) { sql += " OR "; included += ","; }
+        first = false;
+        sql += "(COLUMN_NAME=" + ContentServerBundle::SqlText(column.name)
+            + " AND COLUMN_TYPE=" + ContentServerBundle::SqlText(column.columnType)
+            + " AND IS_NULLABLE='" + (column.nullable ? std::string("YES") : std::string("NO")) + "')";
+        included += ContentServerBundle::SqlText(column.name);
+    }
+    sql += ")";
+    auto result = WorldDatabase.Query(sql);
+    if (!result || result->Fetch()[0].Get<std::uint64_t>() != descriptor->columns.size())
+    { error = "Deployed item_template columns differ from descriptor v1; server apply refused"; return false; }
+    auto missingDefaults = WorldDatabase.Query("SELECT COUNT(*) FROM information_schema.COLUMNS "
+        "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='item_template' AND IS_NULLABLE='NO' "
+        "AND COLUMN_DEFAULT IS NULL AND EXTRA NOT LIKE '%auto_increment%' AND COLUMN_NAME NOT IN ("
+        + included + ")");
+    if (!missingDefaults || missingDefaults->Fetch()[0].Get<std::uint64_t>() != 0)
+    { error = "item_template has an omitted required column without a default; server apply refused"; return false; }
+    return true;
+}
+
+std::vector<ItemAllocation> ManifestAllocations(json const& parity,
+    std::vector<ItemAllocation> const& current)
+{
+    std::vector<ItemAllocation> result;
+    std::set<std::pair<std::string, std::string>> identities;
+    if (!parity.at("resources").is_array()) throw std::runtime_error("parity resources are not an array");
+    for (auto const& resource : parity.at("resources"))
+    {
+        auto package = resource.at("package").get<std::string>();
+        auto symbol = resource.at("symbol").get<std::string>();
+        auto value = resource.at("value").get<std::uint32_t>();
+        auto baseline = resource.at("baselineSha256").get<std::string>();
+        auto policy = resource.at("allocationPolicyVersion").get<std::uint32_t>();
+        if (!value || resource.at("resourceKind") != "item.id" || !ContentBuildHash::Valid(baseline)
+            || !identities.emplace(package, symbol).second)
+            throw std::runtime_error("invalid parity allocation");
+        auto found = std::find_if(current.begin(), current.end(), [&](auto const& lease) {
+            return lease.packageKey == package && lease.symbol == symbol && lease.resourceKind == "item.id";
+        });
+        if (found == current.end() || found->value != value || found->baselineSha256 != baseline
+            || found->policyVersion != policy)
+            throw std::runtime_error("retained allocation no longer matches parity manifest: " + package + "/" + symbol);
+        result.push_back(*found);
+    }
+    if (result.empty()) throw std::runtime_error("parity manifest has no allocated resources");
+    return result;
+}
+}
+
+bool ContentServerDeployment::ReadStatus(std::uint32_t build, bool& exists,
+    ContentServerStatus& status, std::string& error)
+{
+    exists = false;
+    auto result = WorldDatabase.Query("SELECT s.build_number,s.server_state,s.bundle_filename,s.bundle_sha256,"
+        "s.parity_filename,s.parity_sha256 FROM (SELECT 1) seed LEFT JOIN content_manager_server_build s "
+        "ON s.build_number=" + std::to_string(build));
+    if (!result) { error = "Cannot read server build registry; apply Phase 3 world SQL and check SQL logs"; return false; }
+    auto f = result->Fetch();
+    if (f[0].IsNull()) return true;
+    status = {f[0].Get<uint32>(), f[1].Get<std::string>(), f[2].Get<std::string>(),
+        f[3].Get<std::string>(), f[4].Get<std::string>(), f[5].Get<std::string>()};
+    exists = true;
+    return true;
+}
+
+bool ContentServerDeployment::Inspect(std::uint32_t build, std::string const& realm,
+    std::filesystem::path const& outputDirectory, ContentServerStatus& status,
+    std::vector<ResolvedServerItem>& rows, std::string& error)
+{
+    try
+    {
+        std::optional<ContentBuildRecord> record;
+        if (!ContentBuildRegistry().GetBuild(build, record, error)) return false;
+        if (!record || record->realmName != realm)
+        { error = "Build does not exist for this realm"; return false; }
+        bool exists = false;
+        if (!ReadStatus(build, exists, status, error)) return false;
+        if (!exists) { error = "Build has no Phase 3 server artifact"; return false; }
+        auto path = SidecarPath(outputDirectory, status.bundleFilename);
+        auto contents = ReadFile(path);
+        if (HashText(contents) != status.bundleSha256)
+        { error = "Server bundle hash mismatch"; return false; }
+        if (!ContentServerBundle::ParseServer(contents, realm, rows, error)) return false;
+        if (status.state == "APPLIED")
+            for (auto const& row : rows)
+            {
+                bool owned = false, itemExists = false;
+                ContentItemOwner owner;
+                std::string current;
+                if (!ContentServerOwnership::ReadOwner(row.id, owned, owner, error)
+                    || !ContentServerOwnership::ReadCurrentRow(row.id, itemExists, current, error))
+                    return false;
+                if (ContentServerOwnership::Classify(itemExists, owned, owner, realm,
+                    row.packageKey, row.symbol, current) != ContentItemOwnershipAction::Converge)
+                { error = "APPLIED server row has ownership or item_template drift: " + std::to_string(row.id); return false; }
+            }
+        return true;
+    }
+    catch (std::exception const& exception) { error = exception.what(); return false; }
+}
+
+bool ContentServerDeployment::Apply(std::uint32_t build, std::string const& realm,
+    std::filesystem::path const& outputDirectory, std::string& summary, std::string& error)
+{
+    std::lock_guard<std::mutex> lock(deploymentMutex);
+    try
+    {
+        using ContentBuildPaths::Require;
+        std::optional<ContentBuildRecord> record;
+        if (!ContentBuildRegistry().GetBuild(build, record, error)) return false;
+        Require(record && record->realmName == realm && record->state == "STAGED",
+            "Server apply requires a recorded STAGED build for this realm");
+        bool exists = false;
+        ContentServerStatus status;
+        if (!ReadStatus(build, exists, status, error)) return false;
+        Require(exists, "Build has no server bundle record");
+        Require(status.state == "STAGED" || status.state == "APPLIED", "Unknown server deployment state");
+        Require(status.bundleFilename == record->filename + ".server.json"
+            && status.parityFilename == record->filename + ".parity.json"
+            && ContentBuildHash::Valid(status.bundleSha256)
+            && ContentBuildHash::Valid(status.paritySha256), "Server sidecar registry is inconsistent");
+        auto clientPath = SidecarPath(outputDirectory, record->filename);
+        auto bundlePath = SidecarPath(outputDirectory, status.bundleFilename);
+        auto parityPath = SidecarPath(outputDirectory, status.parityFilename);
+        std::string actual;
+        Require(ContentBuildHash::Calculate(clientPath, actual, error), error);
+        Require(actual == record->sha256, "Client MPQ hash differs from recorded build");
+        auto bundle = ReadFile(bundlePath);
+        auto parity = ReadFile(parityPath);
+        Require(HashText(bundle) == status.bundleSha256,
+            "Server bundle hash differs from recorded build");
+        Require(HashText(parity) == status.paritySha256,
+            "Parity manifest hash differs from recorded build");
+        std::vector<ResolvedServerItem> rows;
+        if (!ContentServerBundle::ParseServer(bundle, realm, rows, error)) return false;
+        Require(!rows.empty(), "Server bundle has no item_template rows to apply");
+        auto parityObject = json::parse(parity);
+        std::vector<ItemAllocation> retained;
+        if (!ContentAllocationRegistry().Read(realm, retained, error)) return false;
+        auto allocations = ManifestAllocations(parityObject, retained);
+        auto baseline = parityObject.at("baselineSha256").get<std::string>();
+        Require(ContentBuildHash::Valid(baseline), "Parity baseline fingerprint is invalid");
+        if (!ContentServerBundle::VerifyParity(parity, realm, build, baseline,
+            record->sha256, status.bundleSha256, rows, allocations, error)) return false;
+        for (auto const& row : rows)
+        {
+            auto found = std::find_if(allocations.begin(), allocations.end(), [&](auto const& lease) {
+                return lease.packageKey == row.packageKey && lease.symbol == row.symbol && lease.value == row.id;
+            });
+            Require(found != allocations.end() && found->baselineSha256 == baseline,
+                "Server item does not match retained allocation or baseline: " + row.packageKey + "/" + row.symbol);
+        }
+        if (!ValidateItemSchema(error)) return false;
+        struct Existing { bool item = false; bool owner = false; ContentItemOwner provenance; };
+        std::vector<Existing> before;
+        for (auto const& row : rows)
+        {
+            Existing state;
+            Require(ContentServerOwnership::ReadOwner(row.id, state.owner, state.provenance, error), error);
+            bool itemExists = false;
+            std::string currentRow;
+            Require(ContentServerOwnership::ReadCurrentRow(row.id, itemExists, currentRow, error), error);
+            state.item = itemExists;
+            Require(ContentServerOwnership::Classify(itemExists, state.owner, state.provenance,
+                realm, row.packageKey, row.symbol, currentRow) != ContentItemOwnershipAction::Conflict,
+                "Retained allocation has an unowned or drifted item_template collision: "
+                    + std::to_string(row.id));
+            before.push_back(std::move(state));
+        }
+        if (status.state == "APPLIED")
+        {
+            for (std::size_t i = 0; i < rows.size(); ++i)
+                Require(before[i].owner && before[i].provenance.rowJson == ContentServerBundle::RowJson(rows[i]),
+                    "APPLIED state has item_template drift; inspect ownership before retrying");
+            summary = "Server content already APPLIED and verified. Restart worldserver for item-template visibility.";
+            return true;
+        }
+        auto tx = WorldDatabase.BeginTransaction();
+        tx->Append("INSERT INTO content_manager_build_lock (id) VALUES (1) ON DUPLICATE KEY UPDATE id=1");
+        for (std::size_t i = 0; i < rows.size(); ++i)
+        {
+            auto const& row = rows[i];
+            auto const rowJson = ContentServerBundle::RowJson(row);
+            auto identity = "o.entry=" + std::to_string(row.id) + " AND o.realm_name="
+                + ContentServerBundle::SqlText(realm) + " AND o.package_key="
+                + ContentServerBundle::SqlText(row.packageKey) + " AND o.symbol="
+                + ContentServerBundle::SqlText(row.symbol) + " AND o.resource_kind='item.id'";
+            if (!before[i].owner)
+            {
+                tx->Append("INSERT INTO content_manager_item_owner (entry,realm_name,package_key,symbol,"
+                    "resource_kind,applied_build,artifact_sha256,row_json) VALUES ("
+                    + std::to_string(row.id) + "," + ContentServerBundle::SqlText(realm) + ","
+                    + ContentServerBundle::SqlText(row.packageKey) + ","
+                    + ContentServerBundle::SqlText(row.symbol) + ",'item.id',"
+                    + std::to_string(build) + "," + ContentServerBundle::SqlText(status.bundleSha256)
+                    + "," + ContentServerBundle::SqlText(rowJson) + ")");
+                tx->Append(ContentServerBundle::InsertSql(row));
+            }
+            else
+            {
+                tx->Append(ContentServerBundle::UpdateSql(row, before[i].provenance.rowJson));
+                tx->Append("UPDATE content_manager_item_owner o JOIN item_template t ON t.entry=o.entry "
+                    "SET o.applied_build=" + std::to_string(build) + ",o.artifact_sha256="
+                    + ContentServerBundle::SqlText(status.bundleSha256) + ",o.row_json="
+                    + ContentServerBundle::SqlText(rowJson) + " WHERE " + identity
+                    + " AND o.row_json=" + ContentServerBundle::SqlText(before[i].provenance.rowJson)
+                    + " AND " + ContentServerBundle::MatchSql(row, "t"));
+            }
+        }
+        std::string condition;
+        for (auto const& row : rows)
+        {
+            condition += " AND EXISTS(SELECT 1 FROM content_manager_allocation a WHERE a.realm_name="
+                + ContentServerBundle::SqlText(realm) + " AND a.package_key="
+                + ContentServerBundle::SqlText(row.packageKey) + " AND a.symbol="
+                + ContentServerBundle::SqlText(row.symbol)
+                + " AND a.resource_kind='item.id' AND a.allocated_value=" + std::to_string(row.id)
+                + " AND a.baseline_sha256=" + ContentServerBundle::SqlText(baseline) + ")";
+            condition += " AND EXISTS(SELECT 1 FROM content_manager_item_owner o JOIN item_template t "
+                "ON t.entry=o.entry WHERE o.entry=" + std::to_string(row.id)
+                + " AND o.realm_name=" + ContentServerBundle::SqlText(realm)
+                + " AND o.package_key=" + ContentServerBundle::SqlText(row.packageKey)
+                + " AND o.symbol=" + ContentServerBundle::SqlText(row.symbol)
+                + " AND o.resource_kind='item.id' AND o.row_json="
+                + ContentServerBundle::SqlText(ContentServerBundle::RowJson(row))
+                + " AND o.artifact_sha256=" + ContentServerBundle::SqlText(status.bundleSha256)
+                + " AND " + ContentServerBundle::MatchSql(row, "t") + ")";
+        }
+        tx->Append("UPDATE content_manager_server_build SET server_state='APPLIED',applied_at=NOW() "
+            "WHERE build_number=" + std::to_string(build) + " AND server_state='STAGED' AND bundle_sha256="
+            + ContentServerBundle::SqlText(status.bundleSha256) + " AND parity_sha256="
+            + ContentServerBundle::SqlText(status.paritySha256) + condition);
+        WorldDatabase.DirectCommitTransaction(tx);
+        ContentServerStatus after;
+        Require(ReadStatus(build, exists, after, error) && exists && after.state == "APPLIED",
+            "Server apply transaction did not verify; inspect SQL logs and server status");
+        for (auto const& row : rows)
+        {
+            ContentItemOwner owner;
+            bool owned = false, itemExists = false;
+            std::string currentRow;
+            Require(ContentServerOwnership::ReadOwner(row.id, owned, owner, error)
+                && ContentServerOwnership::ReadCurrentRow(row.id, itemExists, currentRow, error)
+                && owned && itemExists && owner.realm == realm && owner.packageKey == row.packageKey
+                && owner.symbol == row.symbol && owner.resourceKind == "item.id" && owner.appliedBuild == build
+                && owner.artifactSha256 == status.bundleSha256
+                && owner.rowJson == ContentServerBundle::RowJson(row) && currentRow == owner.rowJson,
+                "Post-apply item_template/ownership verification failed");
+        }
+        summary = "Server content APPLIED for build " + std::to_string(build)
+            + ". Restart worldserver before using the new item template; client patch remains unactivated.";
+        return true;
+    }
+    catch (std::exception const& exception)
+    { error = exception.what(); return false; }
+}

@@ -19,6 +19,7 @@ struct ContentBuildRecord
     std::string state = "STAGED";
     std::string sha256;
 };
+struct ContentServerBuildRecord;
 
 class ContentBuildRegistry
 {
@@ -31,6 +32,7 @@ public:
         bool& alreadyActive, std::string& error) const;
     bool NextNumber(std::uint32_t& number, std::string& error) const;
     // Called only after the private output MPQ is closed and hashed successfully.
-    bool Record(ContentBuildRecord const& record, std::string& error) const;
+    bool Record(ContentBuildRecord const& record, ContentServerBuildRecord const& server,
+        std::string& error) const;
 };
 #endif

@@ -8,6 +8,8 @@
 #include "ContentPackageRegistry.h"
 #include "MpqBuilder.h"
 #include "ContentAllocationRegistry.h"
+#include "ContentServerBundle.h"
+#include "ContentServerOwnership.h"
 #include "ContentResourceAllocator.h"
 #include "ItemDbcComposer.h"
 #include "DbcDescriptor.h"
@@ -20,6 +22,7 @@
 #include <mutex>
 #include <random>
 #include <vector>
+#include <algorithm>
 
 namespace
 {
@@ -143,7 +146,9 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
             throw std::runtime_error(error);
         std::vector<ItemAllocation> allocationPlan;
         std::vector<std::uint8_t> composedItemBytes;
+        std::vector<ResolvedServerItem> resolvedServerRows;
         std::string baselineHash;
+        std::string composedHash;
         std::uint32_t expectedItemRecords = 0;
         if (composingItem)
         {
@@ -166,10 +171,26 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
             Require(registry.Read(realmName, retained, error), error);
             std::set<std::uint32_t> worldIDs;
             Require(registry.OccupiedWorldItems(worldIDs, error), error);
+            Require(ContentServerOwnership::ExcludeOwned(realmName, retained, worldIDs, error), error);
             worldIDs.insert(baselineIDs.begin(), baselineIDs.end());
             auto policy = ContentResourceAllocator::ItemIdPolicy(baselineIDs);
             allocationPlan = ContentResourceAllocator::Plan(realmName, policy, itemRequests,
                 retained, worldIDs, result.buildNumber, baselineHash);
+            for (auto const& source : selected)
+                for (auto const& server : source.validation.manifest.serverItemRows)
+                {
+                    auto const& manifest = source.validation.manifest;
+                    auto allocation = std::find_if(allocationPlan.begin(), allocationPlan.end(), [&](auto const& a) {
+                        return a.packageKey == manifest.packageKey && a.symbol == server.symbol;
+                    });
+                    auto client = std::find_if(manifest.itemRows.begin(), manifest.itemRows.end(), [&](auto const& row) {
+                        return row.symbol == server.symbol;
+                    });
+                    Require(allocation != allocationPlan.end() && client != manifest.itemRows.end(),
+                        "Server item symbol lacks package-local Item allocation");
+                    resolvedServerRows.push_back({manifest.packageKey, manifest.version, server.symbol,
+                        allocation->value, 0, *client, server});
+                }
             std::vector<PlannedItemRow> rows;
             for (auto const& source : selected)
                 for (auto const& row : source.validation.manifest.itemRows)
@@ -195,6 +216,11 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
         result.outputPath = fs::absolute(fs::path(manager.GetOutputDirectory()) / filename);
         RejectLinks(result.outputPath);
         Require(!fs::exists(fs::symlink_status(result.outputPath)), "Candidate MPQ already exists; preserved: " + result.outputPath.string());
+        auto serverPath = fs::path(result.outputPath.string() + ".server.json");
+        auto parityPath = fs::path(result.outputPath.string() + ".parity.json");
+        RejectLinks(serverPath); RejectLinks(parityPath);
+        Require(!fs::exists(fs::symlink_status(serverPath)) && !fs::exists(fs::symlink_status(parityPath)),
+            "Candidate server/parity sidecar already exists; preserved");
         RejectLinks(manager.GetWorkDirectory());
         fs::create_directories(manager.GetWorkDirectory());
         auto workRoot = fs::canonical(manager.GetWorkDirectory());
@@ -237,9 +263,26 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
             Require(reparsed.valid, "Generated Item.dbc failed read-back: " + reparsed.error);
             Require(reparsed.document.recordCount == expectedItemRecords && reparsed.document.fieldCount == 8
                 && reparsed.document.recordSize == 32, "Composed Item.dbc dimensions mismatch");
-            std::string composedHash;
             Require(ContentBuildHash::Calculate(target, composedHash, error), "Composed Item SHA-256 failed: " + error);
             report("Composed Item.dbc SHA-256: " + composedHash);
+            for (auto& row : resolvedServerRows)
+            {
+                bool found = false;
+                for (std::size_t index = 0; index < reparsed.document.recordCount; ++index)
+                    if (reparsed.document.words[index * 8] == row.id)
+                    {
+                        row.displayId = reparsed.document.words[index * 8 + 5];
+                        Require(row.displayId && reparsed.document.words[index * 8 + 1] == row.client.classID
+                            && reparsed.document.words[index * 8 + 2] == row.client.subclassID
+                            && reparsed.document.words[index * 8 + 6] == row.client.inventoryType,
+                            "Client/server Item row parity failed");
+                        found = true;
+                        break;
+                    }
+                Require(found, "Resolved server item missing from composed Item.dbc");
+                report("Parity PASS: " + row.packageKey + "/" + row.symbol + " Item.dbc.ID = item_template.entry = "
+                    + std::to_string(row.id));
+            }
             ++result.fileCount;
         }
         report("Cumulative files: " + std::to_string(result.fileCount));
@@ -255,11 +298,34 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
         if (!ContentBuildHash::Calculate(result.outputPath, hash, error))
             throw std::runtime_error("MPQ SHA256 failed: " + error);
         report("SHA256: " + hash);
+        ContentServerBuildRecord serverRecord;
+        {
+            auto writeSidecar = [&](fs::path const& path, std::string const& contents) {
+                RejectLinks(path);
+                Require(!fs::exists(fs::symlink_status(path)), "Sidecar already exists: " + path.string());
+                std::ofstream output(path, std::ios::binary | std::ios::trunc);
+                Require(output.is_open(), "Cannot create sidecar: " + path.string());
+                output.write(contents.data(), static_cast<std::streamsize>(contents.size()));
+                Require(output.good(), "Cannot write sidecar: " + path.string());
+            };
+            writeSidecar(serverPath, ContentServerBundle::ServerJson(realmName, resolvedServerRows));
+            serverRecord.bundleFilename = serverPath.filename().string();
+            Require(ContentBuildHash::Calculate(serverPath, serverRecord.bundleSha256, error),
+                "Server bundle SHA-256 failed: " + error);
+            writeSidecar(parityPath, ContentServerBundle::ParityJson(realmName, result.buildNumber,
+                allocationPlan, resolvedServerRows, baselineHash, composedHash, hash, serverRecord.bundleSha256));
+            serverRecord.parityFilename = parityPath.filename().string();
+            Require(ContentBuildHash::Calculate(parityPath, serverRecord.paritySha256, error),
+                "Parity manifest SHA-256 failed: " + error);
+            report("Server rows: item_template: " + std::to_string(resolvedServerRows.size()));
+            report("Server bundle: " + serverPath.string() + " SHA-256 " + serverRecord.bundleSha256);
+            report("Parity manifest: " + parityPath.string() + " SHA-256 " + serverRecord.paritySha256);
+        }
         ContentBuildRecord record{result.buildNumber, realmName, filename,
             static_cast<std::uint32_t>(result.packageCount), static_cast<std::uint32_t>(result.fileCount), "STAGED", hash};
         bool committed = composingItem
-            ? ContentAllocationRegistry().CommitComposed(record, allocationPlan, error)
-            : builds.Record(record, error);
+            ? ContentAllocationRegistry().CommitComposed(record, allocationPlan, serverRecord, error)
+            : builds.Record(record, serverRecord, error);
         if (!committed)
             throw std::runtime_error("MPQ was created, but recording the build/allocation could not be verified: " + error);
         result.recorded = true;

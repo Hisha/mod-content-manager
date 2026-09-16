@@ -33,6 +33,36 @@ int main(int argc, char** argv)
         {"version", "1"}, {"content", json::array()}, {"dbcRows", json::array({row})}};
     Save(path, manifest);
     assert(ContentPackage(path).Validate().valid);
+    json server = {{"table", "item_template"}, {"op", "upsert"}, {"symbol", "seal"},
+        {"fields", {{"name", "Huntmaster's Seal"}, {"description", "A token"},
+            {"Quality", 1}, {"stackable", 200}, {"bonding", 0}, {"BagFamily", 0}}}};
+    auto withServer = manifest;
+    withServer["serverRows"] = json::array({server});
+    Save(path, withServer); assert(ContentPackage(path).Validate().valid);
+    auto invalidServer = withServer;
+    invalidServer["serverRows"][0]["entry"] = 56807;
+    Save(path, invalidServer); assert(!ContentPackage(path).Validate().valid);
+    invalidServer = withServer;
+    invalidServer["serverRows"][0]["fields"]["entry"] = 56807;
+    Save(path, invalidServer); assert(!ContentPackage(path).Validate().valid);
+    invalidServer = withServer;
+    invalidServer["serverRows"][0]["table"] = "creature_template";
+    Save(path, invalidServer); assert(!ContentPackage(path).Validate().valid);
+    invalidServer = withServer;
+    invalidServer["serverRows"][0]["op"] = "replace";
+    Save(path, invalidServer); assert(!ContentPackage(path).Validate().valid);
+    invalidServer = withServer;
+    invalidServer["serverRows"][0]["fields"]["unknown"] = 1;
+    Save(path, invalidServer); assert(!ContentPackage(path).Validate().valid);
+    invalidServer = withServer;
+    invalidServer["serverRows"].push_back(server);
+    Save(path, invalidServer); assert(!ContentPackage(path).Validate().valid);
+    invalidServer = withServer;
+    invalidServer["serverRows"][0]["symbol"] = "other-package-seal";
+    Save(path, invalidServer); assert(!ContentPackage(path).Validate().valid);
+    invalidServer = withServer;
+    invalidServer["serverRows"][0]["fields"]["BagFamily"] = 8192;
+    Save(path, invalidServer); assert(!ContentPackage(path).Validate().valid);
     auto bad = manifest; bad["dbcRows"][0]["table"] = "CurrencyTypes";
     Save(path, bad); assert(!ContentPackage(path).Validate().valid);
     bad = manifest; bad["dbcRows"][0]["op"] = "modify";

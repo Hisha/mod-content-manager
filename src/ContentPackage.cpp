@@ -1,5 +1,6 @@
 #include "ContentPackage.h"
 #include "ContentBuildPaths.h"
+#include "ServerTableDescriptor.h"
 
 #include "Log.h"
 
@@ -7,6 +8,7 @@
 #include "third_party/miniz/miniz.h"
 
 #include <memory>
+#include <algorithm>
 #include <set>
 #include <limits>
 #include <utility>
@@ -189,6 +191,8 @@ ContentPackageValidationResult ContentPackage::Validate() const
 
         return result;
     }
+    if (result.manifest.schema == 1 && manifest.contains("serverRows"))
+    { result.error = "serverRows require Schema 2"; return result; }
 
     if (result.manifest.packageKey.empty())
     {
@@ -420,6 +424,75 @@ ContentPackageValidationResult ContentPackage::Validate() const
             item.displayCopyFromItem = static_cast<std::uint32_t>(copy);
             result.manifest.itemRows.push_back(std::move(item));
         }
+        if (manifest.contains("serverRows") && !manifest["serverRows"].is_array())
+        { result.error = "Schema 2 serverRows must be an array"; return result; }
+        std::set<std::string> serverSymbols;
+        for (auto const& row : (manifest.contains("serverRows") ? manifest["serverRows"] : json::array()))
+        {
+            if (!row.is_object())
+            { result.error = "Server row must be an object"; return result; }
+            static std::set<std::string> const rowKeys = {"table", "op", "symbol", "fields"};
+            for (auto it = row.begin(); it != row.end(); ++it)
+                if (!rowKeys.count(it.key()))
+                { result.error = "Unsupported or allocator-owned server row key: " + it.key(); return result; }
+            if (!row.contains("table") || !row["table"].is_string()
+                || !FindServerTableDescriptor(row["table"].get<std::string>()))
+            { result.error = "Unsupported server table (only item_template)"; return result; }
+            if (!row.contains("op") || !row["op"].is_string() || row["op"] != "upsert")
+            { result.error = "item_template supports only op=upsert"; return result; }
+            if (!row.contains("symbol") || !row["symbol"].is_string()
+                || !ValidSymbol(row["symbol"].get<std::string>()))
+            { result.error = "Invalid server row symbol"; return result; }
+            auto symbol = row["symbol"].get<std::string>();
+            if (!serverSymbols.insert(symbol).second)
+            { result.error = "Duplicate server declaration: " + symbol; return result; }
+            if (!symbols.count(symbol))
+            { result.error = "Server row references missing package-local Item symbol: " + symbol; return result; }
+            auto client = std::find_if(result.manifest.itemRows.begin(), result.manifest.itemRows.end(),
+                [&](auto const& item) { return item.symbol == symbol; });
+            if (client == result.manifest.itemRows.end() || client->classID > 255 || client->subclassID > 255
+                || client->inventoryType > 255 || client->sheatheType > 255
+                || client->soundOverrideSubclassID < -128 || client->soundOverrideSubclassID > 127
+                || client->material < -128 || client->material > 127)
+            { result.error = "Item DBC fields exceed item_template descriptor types"; return result; }
+            if (!row.contains("fields") || !row["fields"].is_object())
+            { result.error = "item_template requires fields object"; return result; }
+            auto const* descriptor = FindServerTableDescriptor("item_template");
+            auto const& fields = row["fields"];
+            for (auto it = fields.begin(); it != fields.end(); ++it)
+            {
+                auto known = std::find_if(descriptor->fields.begin(), descriptor->fields.end(),
+                    [&](auto const& field) { return it.key() == field.name; });
+                if (known == descriptor->fields.end())
+                { result.error = "Unsupported or allocator-owned item_template field: " + it.key(); return result; }
+            }
+            for (auto const& field : descriptor->fields)
+            {
+                if (field.required && !fields.contains(field.name))
+                { result.error = std::string("Missing item_template field: ") + field.name; return result; }
+                auto const& value = fields[field.name];
+                if (field.type == ServerFieldType::String)
+                {
+                    if (!value.is_string() || value.get<std::string>().size() < static_cast<std::size_t>(field.minimum)
+                        || value.get<std::string>().size() > static_cast<std::size_t>(field.maximum)
+                        || value.get<std::string>().find('\0') != std::string::npos)
+                    { result.error = std::string("Invalid item_template string field: ") + field.name; return result; }
+                }
+                else if (!value.is_number_unsigned() || value.get<std::uint64_t>()
+                    > static_cast<std::uint64_t>(field.maximum)
+                    || value.get<std::uint64_t>() < static_cast<std::uint64_t>(field.minimum))
+                { result.error = std::string("Invalid item_template numeric field: ") + field.name; return result; }
+            }
+            ContentServerItemRow item;
+            item.symbol = symbol;
+            item.name = fields["name"].get<std::string>();
+            item.description = fields["description"].get<std::string>();
+            item.quality = fields["Quality"].get<std::uint8_t>();
+            item.stackable = fields["stackable"].get<std::int32_t>();
+            item.bonding = fields["bonding"].get<std::uint8_t>();
+            item.bagFamily = fields["BagFamily"].get<std::int32_t>();
+            result.manifest.serverItemRows.push_back(std::move(item));
+        }
         if (result.manifest.content.empty() && result.manifest.itemRows.empty())
         { result.error = "Schema 2 needs content or dbcRows"; return result; }
     }
@@ -475,7 +548,7 @@ ContentPackageStageResult ContentPackage::StageInto(std::filesystem::path const&
         auto const& actual = validation.manifest;
         bool same = actual.schema == expected.schema && actual.packageKey == expected.packageKey
             && actual.version == expected.version && actual.content.size() == expected.content.size()
-            && actual.itemRows == expected.itemRows;
+            && actual.itemRows == expected.itemRows && actual.serverItemRows == expected.serverItemRows;
         if (same)
             for (std::size_t i = 0; i < actual.content.size(); ++i)
                 same = same && actual.content[i].type == expected.content[i].type

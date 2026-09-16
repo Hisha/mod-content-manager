@@ -357,3 +357,27 @@ The old `mod-hunts.foundation` package key must be uninstalled before selecting
 
 
 
+
+## Phase 3: server Item parity
+
+Schema 2 may include package-local `serverRows` for `item_template`:
+
+```json
+"serverRows": [{
+  "table": "item_template", "op": "upsert", "symbol": "seal",
+  "fields": {
+    "name": "Huntmaster's Seal", "description": "A token issued by the Huntmasters.",
+    "Quality": 1, "stackable": 200, "bonding": 0, "BagFamily": 0
+  }
+}]
+```
+
+The same package must declare a `dbcRows` Item add with that symbol. The EPF cannot specify `entry` or raw SQL. The version 1 server descriptor supports exactly the six fields above, checks their types/ranges, and derives `entry`, class, subclass, sound override, display, inventory type, material, and sheath from the resolved Item plan. `BagFamily` must be zero in this phase. Other `item_template` columns retain the verified Eitrigg defaults. Server apply checks the deployed table column types and rejects new required columns without defaults.
+
+A cumulative `.content build` remains STAGED. Alongside its MPQ it writes immutable `<mpq>.server.json` and `<mpq>.parity.json` sidecars in OutputDirectory. The server bundle contains typed resolved rows and provenance. The parity manifest contains the realm, build, allocation identities, descriptor versions, baseline, composed Item.dbc hash, MPQ hash, and server bundle hash. Both sidecar hashes are recorded atomically with the build and allocation rows. The MPQ itself still contains only client content. Builds never write `item_template`.
+
+Use `.content server status [build-number]` to inspect the server bundle and independent deployment state. Use `.content server apply <build-number>` for explicit deployment of a recorded STAGED build. Apply verifies the MPQ, both sidecars, the parity manifest, current retained allocations, and deployed `item_template` schema before using one InnoDB transaction. An absent row is inserted and marked owned. An existing row must have matching Content Manager provenance and match the last recorded managed-field snapshot; otherwise apply refuses it. Owned rows converge through a guarded update. Apply verifies the row and ownership after the transaction. It never renumbers a retained allocation or deletes an item. No automatic rollback exists; the owner record retains package/symbol, applied build, artifact hash, and managed-field snapshot.
+
+Allocation state remains `reserved`; build state remains `STAGED` until the separate client activation command changes it. Server state is `STAGED` or `APPLIED` in `content_manager_server_build`. A server apply does not activate or publish the client patch. AzerothCore caches item templates at worldserver startup, so restart worldserver after server apply before using `.additem`.
+
+Future runtime modules should receive an optional `ContentManager::Resolve(package, symbol, resourceKind)` API backed by the retained allocation registry and ownership checks. Do not make `mod-hunts` query allocation SQL or take a hard dependency in this phase.

@@ -32,6 +32,23 @@ struct ContentItemRow
     }
 };
 
+struct ContentServerItemRow
+{
+    std::string symbol;
+    std::string name;
+    std::string description;
+    std::uint8_t quality = 0;
+    std::int32_t stackable = 1;
+    std::uint8_t bonding = 0;
+    std::int32_t bagFamily = 0;
+    bool operator==(ContentServerItemRow const& other) const
+    {
+        return symbol == other.symbol && name == other.name && description == other.description
+            && quality == other.quality && stackable == other.stackable
+            && bonding == other.bonding && bagFamily == other.bagFamily;
+    }
+};
+
 struct ContentPackageManifest
 {
     uint32_t schema = 0;
@@ -42,6 +59,7 @@ struct ContentPackageManifest
 
     std::vector<ContentPackageEntry> content;
     std::vector<ContentItemRow> itemRows;
+    std::vector<ContentServerItemRow> serverItemRows;
 };
 
 struct ContentPackageStageResult
