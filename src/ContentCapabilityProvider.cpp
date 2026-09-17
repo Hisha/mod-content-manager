@@ -3,6 +3,8 @@
 #include "ContentBuildRegistry.h"
 #include "ContentServerDeployment.h"
 #include "ContentAllocationRegistry.h"
+#include "DatabaseEnv.h"
+#include "Realm.h"
 #include "ObjectMgr.h"
 #include "Log.h"
 #include "DBCStores.h"
@@ -18,11 +20,23 @@ Result ContentCapabilityProvider::Resolve(std::string const& package,std::string
     if(!ContentBuildRegistry().GetActiveBuild(active,reason))return Result::Invalid;
     if(!active){reason="No native content activation";return Result::Inactive;}
 	
-	LOG_ERROR("module.content-manager",
-		"Content capability realm diagnostic: active='{}' world='{}'",
-		active->realmName, sWorld->GetRealmName());
+	auto const realmId = realm.Id.Realm;
+	auto realmResult = LoginDatabase.Query("SELECT name FROM realmlist WHERE id = {}", realmId);
+
+	if (!realmResult || realmResult->GetFieldCount() != 1 || realmResult->Fetch()[0].IsNull())
+	{
+	    reason = "Cannot resolve current realm identity from auth realmlist";
+	    return Result::Invalid;
+	}
+
+	std::string const currentRealmName = realmResult->Fetch()[0].Get<std::string>();
+
+	if (active->realmName != currentRealmName)
+	{
+	    reason = "Active content belongs to another realm";
+	    return Result::Invalid;
+	}
 	
-    if(active->realmName!=sWorld->GetRealmName()){reason="Active content belongs to another realm";return Result::Invalid;}
     ContentServerStatus status;std::vector<ResolvedServerItem> rows;
     std::vector<ResolvedExtendedCost> costs;std::vector<ResolvedVendorRow> vendors;
     if(!ContentServerDeployment::Inspect(active->buildNumber,active->realmName,sContentManager.GetOutputDirectory(),status,rows,reason,&costs,&vendors))
