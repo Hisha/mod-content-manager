@@ -19,6 +19,7 @@
 #include "CurrencyCategoryDbcComposer.h"
 #include "ContentAllocationRegistry.h"
 #include "ContentBaselineRegistry.h"
+#include "ContentExtendedCostServer.h"
 #include "ContentServerDeployment.h"
 
 #include <algorithm>
@@ -277,6 +278,18 @@ public:
         return true;
     }
 
+    static void ReportIds(ChatHandler* handler, char const* label, std::set<std::uint32_t> const& ids)
+    {
+        handler->PSendSysMessage("{}: {} distinct nonzero identities", label, ids.size());
+        std::string line;
+        for (auto value : ids)
+        {
+            if (line.size() > 350) { handler->PSendSysMessage("{}", line); line.clear(); }
+            line += (line.empty() ? "" : ",") + std::to_string(value);
+        }
+        if (!line.empty()) handler->PSendSysMessage("{}", line);
+    }
+
     static bool HandleDbcInspectCommand(ChatHandler* handler, std::string table)
     {
         if (table.empty())
@@ -286,7 +299,7 @@ public:
         }
         if (!IsKnownDbcTable(table))
         {
-            handler->PSendSysMessage("Unsupported DBC table '{}'. Registered tables: Item, CurrencyTypes, CurrencyCategory.", table);
+            handler->PSendSysMessage("Unsupported DBC table '{}'. Registered tables: Item, CurrencyTypes, CurrencyCategory, ItemExtendedCost.", table);
             return true;
         }
         auto build = sContentManager.GetClientBuild();
@@ -313,6 +326,14 @@ public:
                 ? CurrencyDbcComposer::Inspect(parsed.document) : CurrencyOccupancy{};
             auto categoryIds = table == "CurrencyCategory"
                 ? CurrencyCategoryDbcComposer::Inspect(parsed.document) : std::set<std::uint32_t>{};
+            ExtendedCostReferences costReferences;
+            ExtendedCostOccupancy costOccupancy;
+            if (table == "ItemExtendedCost")
+            {
+                costOccupancy = ItemExtendedCostDbc::Inspect(parsed.document);
+                std::string error;
+                if (!ContentExtendedCostServer::References(costReferences,error)) throw std::runtime_error(error);
+            }
             handler->PSendSysMessage("DBC inspection PASS: {} (descriptor v{})", table, descriptor->version);
             handler->PSendSysMessage("Client build: {}", build);
             handler->PSendSysMessage("Baseline directory: {}", directory.string());
@@ -340,6 +361,22 @@ public:
                         parsed.document.words[i * 19], CurrencyCategoryDbcComposer::Name(parsed.document, i, 0),
                         parsed.document.words[i * 19 + 1], parsed.document.words[i * 19 + 18]);
                 handler->SendSysMessage("No hash is required for inspection. Build also reserves baseline CurrencyTypes CategoryID references, including dangling references.");
+            }
+            if (table == "ItemExtendedCost")
+            {
+                handler->SendSysMessage("WDBC build 12340: 16 int32 words / 64 bytes, no string-offset fields.");
+                for (std::size_t i=0;i<descriptor->fields.size();++i)
+                    handler->PSendSysMessage("Word {} / byte {}: {} (int32)",i,i*4,descriptor->fields[i].name);
+                handler->SendSysMessage("Words 4..8 are item IDs; words 9..13 are paired counts. Rating is word 14; ItemPurchaseGroup is word 15 (preserved, core ignores it).");
+                handler->SendSysMessage("Generated ID domain: 1..65535, limited by the core's uint16 refundable paidExtendedCost persistence.");
+                ReportIds(handler,"Physical baseline extended-cost IDs",costOccupancy.ids);
+                ReportIds(handler,"Baseline required Item IDs",costOccupancy.items);
+                ReportIds(handler,"Baseline ItemPurchaseGroup references",costOccupancy.purchaseGroups);
+                ReportIds(handler,"SQL itemextendedcost_dbc IDs",costReferences.overlay);
+                ReportIds(handler,"SQL overlay required Item IDs",costReferences.items);
+                ReportIds(handler,"npc_vendor.ExtendedCost references",costReferences.vendors);
+                ReportIds(handler,"game_event_npc_vendor.ExtendedCost references",costReferences.events);
+                ReportIds(handler,"item_refund_instance.paidExtendedCost references",costReferences.refunds);
             }
             std::string registryStatus, registryError;
             if (ContentBaselineRegistry::Status(inspected, registryStatus, registryError))
@@ -679,7 +716,7 @@ public:
 	        if (validation.manifest.packageKey != packageKey)
 	            continue;
 
-            if (!validation.manifest.itemRows.empty())
+            if (!validation.manifest.itemRows.empty() || !validation.manifest.extendedCosts.empty())
             {
                 handler->SendSysMessage("Schema 2 DBC rows require an installed cumulative .content build for allocation and composition.");
                 return true;

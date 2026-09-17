@@ -2,6 +2,27 @@
 
 namespace
 {
+DbcDescriptor const extended12340 = {
+    12340, "ItemExtendedCost", 1, "DBFilesClient/ItemExtendedCost.dbc", "ItemExtendedCost.dbc",
+    {
+        {"ID", DbcFieldType::Int32, true, nullptr, "item-extended-cost.id"},
+        {"HonorPoints", DbcFieldType::Int32},
+        {"ArenaPoints", DbcFieldType::Int32},
+        {"ArenaBracket", DbcFieldType::Int32},
+        {"ItemID_1", DbcFieldType::Int32, false, "Item"},
+        {"ItemID_2", DbcFieldType::Int32, false, "Item"},
+        {"ItemID_3", DbcFieldType::Int32, false, "Item"},
+        {"ItemID_4", DbcFieldType::Int32, false, "Item"},
+        {"ItemID_5", DbcFieldType::Int32, false, "Item"},
+        {"ItemCount_1", DbcFieldType::Int32},
+        {"ItemCount_2", DbcFieldType::Int32},
+        {"ItemCount_3", DbcFieldType::Int32},
+        {"ItemCount_4", DbcFieldType::Int32},
+        {"ItemCount_5", DbcFieldType::Int32},
+        {"RequiredArenaRating", DbcFieldType::Int32},
+        {"ItemPurchaseGroup", DbcFieldType::Int32}
+    }
+};
 DbcDescriptor const item12340 = {
     12340, "Item", 1, "DBFilesClient/Item.dbc", "Item.dbc",
     {
@@ -45,6 +66,7 @@ DbcDescriptor const category12340 = {
 DbcDescriptor const* FindDbcDescriptor(std::uint32_t clientBuild, std::string const& tableName)
 {
     if (clientBuild != 12340) return nullptr;
+    if (tableName == "ItemExtendedCost") return &extended12340;
     if (tableName == "Item") return &item12340;
     if (tableName == "CurrencyTypes") return &currency12340;
     if (tableName == "CurrencyCategory") return &category12340;
@@ -53,5 +75,5 @@ DbcDescriptor const* FindDbcDescriptor(std::uint32_t clientBuild, std::string co
 
 bool IsKnownDbcTable(std::string const& tableName)
 {
-    return tableName == "Item" || tableName == "CurrencyTypes" || tableName == "CurrencyCategory";
+    return tableName == "ItemExtendedCost" || tableName == "Item" || tableName == "CurrencyTypes" || tableName == "CurrencyCategory";
 }

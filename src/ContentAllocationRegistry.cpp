@@ -3,6 +3,7 @@
 #include "ContentItemOccupancy.h"
 #include "ContentServerOwnership.h"
 #include "ContentCurrencyServer.h"
+#include "ContentExtendedCostServer.h"
 #include "DatabaseEnv.h"
 #include "Field.h"
 #include "QueryResult.h"
@@ -86,7 +87,7 @@ bool ContentAllocationRegistry::OccupiedWorldItems(std::set<std::uint32_t>& entr
 }
 
 bool ContentAllocationRegistry::CommitComposed(ContentBuildRecord const& build,
-    std::vector<ItemAllocation> const& plan, ContentServerBuildRecord const& server, std::string& error, std::vector<ContentBaseline> const& baselines) const
+    std::vector<ItemAllocation> const& plan, ContentServerBuildRecord const& server, std::string& error, std::vector<ContentBaseline> const& baselines, std::vector<ResolvedExtendedCost> const& costs) const
 {
     std::lock_guard<std::mutex> lock(allocationWrites);
     if (plan.empty() || build.state != "STAGED" || !ContentBuildHash::Valid(build.sha256)
@@ -99,7 +100,7 @@ bool ContentAllocationRegistry::CommitComposed(ContentBuildRecord const& build,
     std::set<std::uint32_t> occupied;
     for (auto const& row : plan)
     {
-        if (row.realm != build.realmName || (row.resourceKind != "item.id" && row.resourceKind != "currency.known-bit" && row.resourceKind != "currency-category.id") || row.policyVersion != 1 || !row.value
+        if (row.realm != build.realmName || (row.resourceKind != "item.id" && row.resourceKind != "currency.known-bit" && row.resourceKind != "currency-category.id" && row.resourceKind != "item-extended-cost.id") || row.policyVersion != 1 || !row.value
             || !ContentBuildHash::Valid(row.baselineSha256))
         { error = "Invalid allocation plan"; return false; }
         for (auto const& prior : before)
@@ -131,8 +132,33 @@ bool ContentAllocationRegistry::CommitComposed(ContentBuildRecord const& build,
             if (row.resourceKind == "currency-category.id" && (row.value > 65535 || categories.count(row.value)))
             { error = "Planned category became externally referenced or invalid"; return false; }
     }
+    if (std::any_of(plan.begin(), plan.end(), [](auto const& a) { return a.resourceKind == "item-extended-cost.id"; }))
+    {
+        std::set<std::uint32_t> ids, items;
+        if (!ContentExtendedCostServer::Occupancy(build.realmName,before,ids,items,error)) return false;
+        if (!ContentServerOwnership::ExcludeOwned(build.realmName,before,items,error)) return false;
+        for (auto const& row : plan)
+            if ((row.resourceKind == "item-extended-cost.id" && (row.value > 65535 || ids.count(row.value)))
+                || (row.resourceKind == "item.id" && items.count(row.value)))
+            { error = "Planned extended-cost ID/item became occupied or invalid"; return false; }
+    }
+    std::vector<std::string> costGuards;
+    auto costLeaseCount = std::count_if(plan.begin(),plan.end(),[](auto const& a){return a.resourceKind == "item-extended-cost.id";});
+    if (static_cast<std::size_t>(costLeaseCount) != costs.size())
+    { error="Extended-cost commit requires all resolved definitions"; return false; }
+    for (auto const& cost : costs)
+    {
+        auto lease=std::find_if(plan.begin(),plan.end(),[&](auto const& a){return a.resourceKind == "item-extended-cost.id"
+            && a.packageKey == cost.packageKey && a.symbol == cost.symbol && a.value == cost.id;});
+        if (lease==plan.end()) { error="Resolved extended cost lacks its planned lease"; return false; }
+        bool exists=false;
+        if (!ContentExtendedCostServer::Check(cost,build.realmName,exists,error)) return false;
+        costGuards.push_back(ContentExtendedCostServer::Condition(cost,build.realmName,exists));
+    }
     auto tx = WorldDatabase.BeginTransaction();
     tx->Append("INSERT INTO content_manager_build_lock (id) VALUES (1) ON DUPLICATE KEY UPDATE id=1");
+    for (auto const& condition : costGuards)
+        tx->Append("INSERT INTO content_manager_build_lock (id) SELECT 1 WHERE NOT (" + condition + ")");
     for (auto const& baseline : baselines)
         tx->Append("INSERT INTO content_manager_build_lock (id) SELECT 1 WHERE NOT (" + ContentBaselineRegistry::Condition(baseline) + ")");
     for (auto const& row : plan)

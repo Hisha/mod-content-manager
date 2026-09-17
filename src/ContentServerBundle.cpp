@@ -48,9 +48,61 @@ bool LessRow(ResolvedServerItem const& a, ResolvedServerItem const& b)
     return std::tie(a.packageKey, a.symbol) < std::tie(b.packageKey, b.symbol);
 }
 
+json CostObjects(std::vector<ResolvedExtendedCost> costs)
+{
+    std::sort(costs.begin(), costs.end(), [](auto const& a, auto const& b) {
+        return std::tie(a.packageKey,a.symbol) < std::tie(b.packageKey,b.symbol);
+    });
+    json result = json::array();
+    std::set<std::pair<std::string,std::string>> symbols;
+    std::set<std::uint32_t> ids;
+    for (auto& c : costs)
+    {
+        ItemExtendedCostDbc::Words(c);
+        if (!symbols.emplace(c.packageKey,c.symbol).second || !ids.insert(c.id).second)
+            throw std::runtime_error("Duplicate extended-cost identity");
+        std::sort(c.requirements.begin(), c.requirements.end(), [](auto const& a, auto const& b) {
+            return std::tie(a.packageKey,a.symbol) < std::tie(b.packageKey,b.symbol);
+        });
+        json requirements = json::array();
+        for (auto const& q : c.requirements)
+            requirements.push_back({{"package",q.packageKey},{"symbol",q.symbol},{"itemId",q.itemId},{"count",q.count}});
+        result.push_back({{"package",c.packageKey},{"packageVersion",c.packageVersion},{"symbol",c.symbol},
+            {"id",c.id},{"requirements",requirements},{"honorPoints",c.honorPoints},{"arenaPoints",c.arenaPoints},
+            {"arenaBracket",c.arenaBracket},{"requiredArenaRating",c.requiredArenaRating}});
+    }
+    return result;
+}
+
+std::vector<ResolvedExtendedCost> ParseCosts(json const& source)
+{
+    if (!source.is_array() || source.empty()) throw std::runtime_error("Empty/invalid extended-cost artifact");
+    std::vector<ResolvedExtendedCost> result;
+    auto number = [](json const& v) {
+        if (!v.is_number_unsigned() || v.get<std::uint64_t>() > 0xffffffffULL)
+            throw std::runtime_error("Invalid extended-cost integer");
+        return v.get<std::uint32_t>();
+    };
+    for (auto const& v : source)
+    {
+        ResolvedExtendedCost c;
+        c.packageKey=v.at("package").get<std::string>(); c.packageVersion=v.at("packageVersion").get<std::string>();
+        c.symbol=v.at("symbol").get<std::string>(); c.id=number(v.at("id"));
+        c.honorPoints=number(v.at("honorPoints")); c.arenaPoints=number(v.at("arenaPoints"));
+        c.arenaBracket=number(v.at("arenaBracket")); c.requiredArenaRating=number(v.at("requiredArenaRating"));
+        if (c.packageVersion.empty() || !v.at("requirements").is_array()) throw std::runtime_error("Invalid cost requirements/version");
+        for (auto const& q : v.at("requirements"))
+            c.requirements.push_back({q.at("package").get<std::string>(),q.at("symbol").get<std::string>(),
+                number(q.at("itemId")),number(q.at("count"))});
+        result.push_back(c);
+    }
+    if (CostObjects(result) != source) throw std::runtime_error("Noncanonical extended-cost definitions");
+    return result;
+}
+
 json ResourceObject(ItemAllocation const& allocation, std::vector<ResolvedServerItem> const& rows)
 {
-    if (allocation.resourceKind == "currency.known-bit" || allocation.resourceKind == "currency-category.id")
+    if (allocation.resourceKind == "currency.known-bit" || allocation.resourceKind == "currency-category.id" || allocation.resourceKind == "item-extended-cost.id")
         return {{"package", allocation.packageKey}, {"symbol", allocation.symbol},
             {"resourceKind", allocation.resourceKind}, {"value", allocation.value},
             {"baselineSha256", allocation.baselineSha256}, {"allocationPolicyVersion", allocation.policyVersion},
@@ -89,7 +141,7 @@ std::string ContentServerBundle::RowJson(ResolvedServerItem const& row)
     return RowObject(row).dump();
 }
 
-std::string ContentServerBundle::ServerJson(std::string const& realm, std::vector<ResolvedServerItem> rows)
+std::string ContentServerBundle::ServerJson(std::string const& realm, std::vector<ResolvedServerItem> rows, std::vector<ResolvedExtendedCost> costs)
 {
     std::sort(rows.begin(), rows.end(), LessRow);
     json artifact = {{"format", 1}, {"realm", realm}, {"table", "item_template"},
@@ -109,6 +161,7 @@ std::string ContentServerBundle::ServerJson(std::string const& realm, std::vecto
                 artifact["rows"].back()["currency"]["categorySymbol"] = row.currency.categorySymbol;
         }
     }
+    if (!costs.empty()) { artifact["format"] = 4; artifact["extendedCosts"] = CostObjects(costs); }
     return artifact.dump(2) + "\n";
 }
 
@@ -116,7 +169,7 @@ std::string ContentServerBundle::ParityJson(std::string const& realm, std::uint3
     std::vector<ItemAllocation> const& allocations, std::vector<ResolvedServerItem> const& rows,
     std::string const& baselineSha256, std::string const& itemDbcSha256,
     std::string const& clientMpqSha256, std::string const& serverSha256, std::string const& currencyDbcSha256,
-    std::string const& categoryDbcSha256, std::vector<ResolvedCurrencyCategory> categories, std::vector<ContentBaseline> baselines)
+    std::string const& categoryDbcSha256, std::vector<ResolvedCurrencyCategory> categories, std::vector<ContentBaseline> baselines, std::string const& extendedCostDbcSha256, std::vector<ResolvedExtendedCost> costs)
 {
     auto sorted = allocations;
     std::sort(sorted.begin(), sorted.end(), [](auto const& a, auto const& b) {
@@ -168,17 +221,24 @@ std::string ContentServerBundle::ParityJson(std::string const& realm, std::uint3
             artifact["baselines"].push_back({{"table",b.table},{"clientBuild",b.clientBuild},
                 {"descriptorVersion",b.descriptorVersion},{"sha256",b.hash}});
     }
+    if (!costs.empty())
+    {
+        artifact["format"] = 4;
+        artifact["extendedCostDbcSha256"] = extendedCostDbcSha256;
+        artifact["extendedCosts"] = CostObjects(costs);
+    }
     return artifact.dump(2) + "\n";
 }
 
 bool ContentServerBundle::ParseServer(std::string const& text, std::string const& realm,
-    std::vector<ResolvedServerItem>& rows, std::string& error)
+    std::vector<ResolvedServerItem>& rows, std::string& error, std::vector<ResolvedExtendedCost>* costs)
 {
+    if (costs) costs->clear();
     rows.clear();
     try
     {
         auto artifact = json::parse(text);
-        if (!artifact.is_object() || artifact.size() != 5 || (artifact.at("format") != 1 && artifact.at("format") != 2 && artifact.at("format") != 3)
+        if (!artifact.is_object() || artifact.size() != (artifact.value("format",0) == 4 ? 6 : 5) || (artifact.at("format") != 1 && artifact.at("format") != 2 && artifact.at("format") != 3 && artifact.at("format") != 4)
             || artifact.at("realm") != realm || artifact.at("table") != "item_template"
             || artifact.at("descriptorVersion") != 1 || !artifact.at("rows").is_array())
             throw std::runtime_error("server bundle header or descriptor mismatch");
@@ -268,8 +328,10 @@ bool ContentServerBundle::ParseServer(std::string const& text, std::string const
                 throw std::runtime_error("server bundle row violates item_template descriptor");
             rows.push_back(std::move(row));
         }
-        if (ServerJson(realm, rows) != text)
+        auto parsedCosts = artifact.at("format") == 4 ? ParseCosts(artifact.at("extendedCosts")) : std::vector<ResolvedExtendedCost>{};
+        if (ServerJson(realm, rows, parsedCosts) != text)
             throw std::runtime_error("server bundle is not in canonical generated form");
+        if (costs) *costs = std::move(parsedCosts);
         return true;
     }
     catch (std::exception const& exception)
@@ -279,12 +341,42 @@ bool ContentServerBundle::ParseServer(std::string const& text, std::string const
 bool ContentServerBundle::VerifyParity(std::string const& text, std::string const& realm,
     std::uint32_t build, std::string const& baselineSha256, std::string const& clientMpqSha256,
     std::string const& serverSha256, std::vector<ResolvedServerItem> const& rows,
-    std::vector<ItemAllocation> const& allocations, std::string& error)
+    std::vector<ItemAllocation> const& allocations, std::string& error, std::vector<ResolvedExtendedCost> const& costs)
 {
     try
     {
         auto actual = json::parse(text);
         auto itemSha = actual.at("itemDbcSha256").get<std::string>();
+        auto costSha = actual.value("extendedCostDbcSha256", std::string());
+        if (!costs.empty() && !actual.contains("baselines"))
+            throw std::runtime_error("Extended costs require accepted baseline snapshots");
+        if (costs.empty() != costSha.empty() || (!costs.empty() && !ContentBuildHash::Valid(costSha)))
+            throw std::runtime_error("Extended-cost hash missing or invalid");
+        std::set<std::pair<std::string,std::string>> costSymbols;
+        for (auto const& c : costs)
+        {
+            ItemExtendedCostDbc::Words(c);
+            costSymbols.emplace(c.packageKey,c.symbol);
+            auto lease = std::find_if(allocations.begin(),allocations.end(),[&](auto const& a) {
+                return a.resourceKind == "item-extended-cost.id" && a.packageKey == c.packageKey && a.symbol == c.symbol && a.value == c.id;
+            });
+            if (lease == allocations.end() || !ContentBuildHash::Valid(lease->baselineSha256))
+                throw std::runtime_error("Extended-cost lease missing");
+            for (auto const& q : c.requirements)
+            {
+                auto item = std::find_if(rows.begin(),rows.end(),[&](auto const& r) {
+                    return r.packageKey == q.packageKey && r.symbol == q.symbol && r.id == q.itemId;
+                });
+                auto allocation = std::find_if(allocations.begin(),allocations.end(),[&](auto const& a) {
+                    return a.resourceKind == "item.id" && a.packageKey == q.packageKey && a.symbol == q.symbol && a.value == q.itemId;
+                });
+                if (item == rows.end() || allocation == allocations.end())
+                    throw std::runtime_error("Extended-cost requirement lacks active item and retained lease");
+            }
+        }
+        for (auto const& a : allocations)
+            if (a.resourceKind == "item-extended-cost.id" && !costSymbols.count({a.packageKey,a.symbol}))
+                throw std::runtime_error("Orphan extended-cost lease");
         auto currencySha = actual.value("currencyDbcSha256", std::string());
         bool currencyRows = std::any_of(rows.begin(), rows.end(), [](auto const& r) { return r.currency.itemId != 0; });
         if (currencyRows != !currencySha.empty() || (currencyRows && !ContentBuildHash::Valid(currencySha)))
@@ -354,10 +446,11 @@ bool ContentServerBundle::VerifyParity(std::string const& text, std::string cons
             std::set<std::string> expected{"Item"};
             if (currencyRows) expected.insert("CurrencyTypes");
             if (!categories.empty()) expected.insert("CurrencyCategory");
+            if (!costs.empty()) expected.insert("ItemExtendedCost");
             if (tables != expected) throw std::runtime_error("Baseline snapshot set mismatch");
         }
         if (!ContentBuildHash::Valid(itemSha) || actual != json::parse(ParityJson(realm, build,
-            allocations, rows, baselineSha256, itemSha, clientMpqSha256, serverSha256, currencySha, categorySha, categories, baselines)))
+            allocations, rows, baselineSha256, itemSha, clientMpqSha256, serverSha256, currencySha, categorySha, categories, baselines, costSha, costs)))
             throw std::runtime_error("manifest values differ from build, allocation, or server bundle");
         return true;
     }

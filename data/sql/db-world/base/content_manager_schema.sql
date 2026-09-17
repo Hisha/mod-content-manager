@@ -144,3 +144,16 @@ CREATE TABLE IF NOT EXISTS content_manager_baseline_review (
   PRIMARY KEY (review_id),
   UNIQUE KEY (request_token)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+-- Ownership for explicitly applied extended-cost definitions. No vendor rows are created.
+CREATE TABLE IF NOT EXISTS content_manager_extended_cost_owner (
+  entry INT UNSIGNED NOT NULL,
+  realm_name VARCHAR(255) COLLATE utf8mb4_bin NOT NULL,
+  package_key VARCHAR(128) COLLATE utf8mb4_bin NOT NULL,
+  symbol VARCHAR(128) COLLATE utf8mb4_bin NOT NULL,
+  row_json TEXT COLLATE utf8mb4_bin NOT NULL,
+  applied_build INT UNSIGNED NOT NULL,
+  artifact_sha256 CHAR(64) COLLATE utf8mb4_bin NOT NULL,
+  PRIMARY KEY (entry),
+  UNIQUE KEY logical_owner (realm_name,package_key,symbol)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;

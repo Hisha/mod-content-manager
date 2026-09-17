@@ -1,6 +1,7 @@
 #ifndef CONTENT_ALLOCATION_REGISTRY_H
 #define CONTENT_ALLOCATION_REGISTRY_H
 #include "ContentBaselineRegistry.h"
+#include "ItemExtendedCostDbc.h"
 #include "ContentBuildRegistry.h"
 #include <cstdint>
 #include <set>
@@ -36,6 +37,7 @@ public:
     bool OccupiedWorldItems(std::set<std::uint32_t>& entries, std::string& error) const;
     bool CommitComposed(ContentBuildRecord const& build, std::vector<ItemAllocation> const& plan,
         ContentServerBuildRecord const& server, std::string& error,
-        std::vector<ContentBaseline> const& baselines = {}) const;
+        std::vector<ContentBaseline> const& baselines = {},
+        std::vector<ResolvedExtendedCost> const& costs = {}) const;
 };
 #endif

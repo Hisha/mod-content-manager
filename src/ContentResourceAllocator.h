@@ -28,6 +28,9 @@ class ContentResourceAllocator
 public:
     // Positive signed-32-bit identities; policy v1 limits NEW IDs to 65535 to
     // bound index growth. This is an operational ceiling, not a protocol limit.
+    // Native DBC/overlay IDs are int32, but AC persists refundable paidExtendedCost
+    // as uint16. Use the positive intersection, not an administrator-selected pool.
+    static ResourceAllocationPolicy ItemExtendedCostIdPolicy() { return {"item-extended-cost.id", 1, 65535}; }
     static ResourceAllocationPolicy CurrencyCategoryIdPolicy() { return {"currency-category.id", 1, 65535}; }
     static ResourceAllocationPolicy CurrencyKnownBitPolicy() { return {"currency.known-bit", 1, 64}; }
     static ResourceAllocationPolicy ItemIdPolicy(std::set<std::uint32_t> const& baselineIDs);

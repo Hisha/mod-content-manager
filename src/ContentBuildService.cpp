@@ -16,6 +16,7 @@
 #include "CurrencyCategoryDbcComposer.h"
 #include "ContentBaselineRegistry.h"
 #include "ContentCurrencyServer.h"
+#include "ContentExtendedCostServer.h"
 #include "DbcDescriptor.h"
 #include "DbcReader.h"
 
@@ -131,6 +132,18 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
         for (auto const& source : selected)
             for (auto const& row : source.validation.manifest.currencyCategories)
                 categoryRequests.push_back({source.validation.manifest.packageKey, row.symbol, "currency-category.id"});
+        std::vector<ResourceAllocationRequest> costRequests;
+        for (auto const& source : selected)
+            for (auto const& row : source.validation.manifest.extendedCosts)
+                costRequests.push_back({source.validation.manifest.packageKey, row.symbol, "item-extended-cost.id"});
+        bool composingCost = !costRequests.empty();
+        if (composingCost)
+        {
+            auto key = Fold("DBFilesClient/ItemExtendedCost.dbc");
+            Require(!owners.count(key), "Raw ItemExtendedCost.dbc conflicts with semantic composition");
+            owners.emplace(key, "ItemExtendedCost composer");
+            Require(!itemRequests.empty(), "Extended costs require active semantic Item declarations");
+        }
         bool composingCategory = !categoryRequests.empty();
         if (composingCategory)
         {
@@ -192,6 +205,21 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
             report("Accepted baseline: " + table + " descriptor v" + std::to_string(b.descriptorVersion) + " SHA-256 " + b.hash);
             return b;
         };
+        ContentBaseline costBaseline;
+        std::set<std::uint32_t> costOccupied, costBaselineItems, costOverlayItems;
+        std::vector<ResolvedExtendedCost> costs;
+        std::vector<std::uint8_t> composedCostBytes;
+        std::string costHash;
+        if (composingCost)
+        {
+            costBaseline = loadBaseline("ItemExtendedCost", "");
+            auto occupied = ItemExtendedCostDbc::Inspect(costBaseline.document);
+            std::vector<ItemAllocation> retained;
+            Require(ContentAllocationRegistry().Read(realmName, retained, error), error);
+            Require(ContentExtendedCostServer::Occupancy(realmName, retained, costOccupied, costOverlayItems, error), error);
+            costOccupied.insert(occupied.ids.begin(), occupied.ids.end());
+            costBaselineItems = occupied.items;
+        }
         std::vector<ResolvedCurrencyCategory> categories;
         std::vector<std::uint8_t> composedCategoryBytes;
         std::string categoryHash;
@@ -224,7 +252,9 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
             Require(registry.Read(realmName, retained, error), error);
             std::set<std::uint32_t> worldIDs;
             Require(registry.OccupiedWorldItems(worldIDs, error), error);
+            worldIDs.insert(costOverlayItems.begin(), costOverlayItems.end());
             Require(ContentServerOwnership::ExcludeOwned(realmName, retained, worldIDs, error), error);
+            worldIDs.insert(costBaselineItems.begin(), costBaselineItems.end());
             worldIDs.insert(baselineIDs.begin(), baselineIDs.end());
             // CurrencyTypes.ID derives from ItemID; exclude both external keys before Item allocation.
             worldIDs.insert(currencyExternalIds.begin(), currencyExternalIds.end());
@@ -336,6 +366,41 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
             report("CurrencyTypes records: " + std::to_string(currencyBaseline.document.recordCount) + " -> "
                 + std::to_string(currencyBaseline.document.recordCount + rows.size()));
         }
+        if (composingCost)
+        {
+            std::vector<ItemAllocation> retained;
+            Require(ContentAllocationRegistry().Read(realmName, retained, error), error);
+            auto plan = ContentResourceAllocator::Plan(realmName, ContentResourceAllocator::ItemExtendedCostIdPolicy(),
+                costRequests, retained, costOccupied, result.buildNumber, costBaseline.hash, acceptedHistory["ItemExtendedCost"]);
+            for (auto const& source : selected)
+                for (auto const& declaration : source.validation.manifest.extendedCosts)
+                {
+                    auto const& manifest = source.validation.manifest;
+                    auto lease = std::find_if(plan.begin(),plan.end(),[&](auto const& a) {
+                        return a.packageKey == manifest.packageKey && a.symbol == declaration.symbol;
+                    });
+                    Require(lease != plan.end(), "Extended-cost allocation missing");
+                    ResolvedExtendedCost cost;
+                    cost.packageKey=manifest.packageKey; cost.packageVersion=manifest.version;
+                    cost.symbol=declaration.symbol; cost.id=lease->value;
+                    cost.honorPoints=declaration.honorPoints; cost.arenaPoints=declaration.arenaPoints;
+                    cost.arenaBracket=declaration.arenaBracket; cost.requiredArenaRating=declaration.requiredArenaRating;
+                    for (auto const& requirement : declaration.requirements)
+                    {
+                        auto item=std::find_if(resolvedServerRows.begin(),resolvedServerRows.end(),[&](auto const& row) {
+                            return row.packageKey == requirement.packageKey && row.symbol == requirement.symbol;
+                        });
+                        Require(item != resolvedServerRows.end(), "Unresolved extended-cost item: " + requirement.packageKey + "/" + requirement.symbol);
+                        cost.requirements.push_back({requirement.packageKey,requirement.symbol,item->id,requirement.count});
+                    }
+                    bool exists=false;
+                    Require(ContentExtendedCostServer::Check(cost, realmName, exists, error), error);
+                    costs.push_back(cost);
+                    report("Planned item-extended-cost.id: " + cost.packageKey + "/" + cost.symbol + " = " + std::to_string(cost.id));
+                }
+            composedCostBytes = ItemExtendedCostDbc::Compose(costBaseline.document,costs);
+            allocationPlan.insert(allocationPlan.end(),plan.begin(),plan.end());
+        }
         Require(!manager.GetOutputDirectory().empty() && !manager.GetWorkDirectory().empty(), "Build directories must not be empty");
         auto filename = FilenameRealm(realmName) + "-Content-" + Number(result.buildNumber) + ".mpq";
         result.outputPath = fs::absolute(fs::path(manager.GetOutputDirectory()) / filename);
@@ -371,7 +436,7 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
             result.fileCount += staged.stagedFiles.size();
             report("  " + std::to_string(staged.stagedFiles.size()) + " file(s)");
         }
-        Require(result.fileCount + (composingItem ? 1 : 0) + (composingCurrency ? 1 : 0) + (composingCategory ? 1 : 0) == owners.size(),
+        Require(result.fileCount + (composingItem ? 1 : 0) + (composingCurrency ? 1 : 0) + (composingCategory ? 1 : 0) + (composingCost ? 1 : 0) == owners.size(),
             "Staged file count does not match the declared cumulative set");
         if (composingItem)
         {
@@ -464,6 +529,37 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
             ++result.fileCount;
             report("Composed CurrencyCategory.dbc SHA-256: " + categoryHash);
         }
+        if (composingCost)
+        {
+            auto target=result.workspace / "DBFilesClient" / "ItemExtendedCost.dbc";
+            RejectLinks(target);
+            fs::create_directories(target.parent_path());
+            Require(!fs::exists(fs::symlink_status(target)), "ItemExtendedCost target already exists");
+            {
+                std::ofstream out(target,std::ios::binary);
+                Require(out.is_open(), "Cannot create ItemExtendedCost.dbc");
+                out.write(reinterpret_cast<char const*>(composedCostBytes.data()),composedCostBytes.size());
+                Require(out.good(), "Cannot write ItemExtendedCost.dbc");
+            }
+            auto parsed=DbcReader::Read(target,*FindDbcDescriptor(manager.GetClientBuild(),"ItemExtendedCost"));
+            Require(parsed.valid && DbcReader::Serialize(parsed.document) == composedCostBytes, "ItemExtendedCost disk readback failed");
+            ItemExtendedCostDbc::Inspect(parsed.document);
+            for (auto const& cost : costs)
+            {
+                auto words=ItemExtendedCostDbc::Words(cost);
+                bool found=false;
+                for (std::size_t i=0;i<parsed.document.recordCount;++i)
+                    if (parsed.document.words[i*16] == cost.id)
+                    {
+                        Require(std::equal(words.begin(),words.end(),parsed.document.words.begin()+i*16), "Extended-cost client/server parity mismatch");
+                        found=true;
+                    }
+                Require(found,"Extended-cost client row missing");
+            }
+            Require(ContentBuildHash::Calculate(target,costHash,error),error);
+            ++result.fileCount;
+            report("Composed ItemExtendedCost.dbc SHA-256: " + costHash);
+        }
         // Recheck every accepted snapshot immediately before artifact assembly. The commit also guards registry identities.
         for (auto const& baseline : baselines)
         {
@@ -494,23 +590,23 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
                 output.write(contents.data(), static_cast<std::streamsize>(contents.size()));
                 Require(output.good(), "Cannot write sidecar: " + path.string());
             };
-            writeSidecar(serverPath, ContentServerBundle::ServerJson(realmName, resolvedServerRows));
+            writeSidecar(serverPath, ContentServerBundle::ServerJson(realmName, resolvedServerRows, costs));
             serverRecord.bundleFilename = serverPath.filename().string();
             Require(ContentBuildHash::Calculate(serverPath, serverRecord.bundleSha256, error),
                 "Server bundle SHA-256 failed: " + error);
             writeSidecar(parityPath, ContentServerBundle::ParityJson(realmName, result.buildNumber,
-                allocationPlan, resolvedServerRows, baselineHash, composedHash, hash, serverRecord.bundleSha256, currencyHash, categoryHash, categories, baselines));
+                allocationPlan, resolvedServerRows, baselineHash, composedHash, hash, serverRecord.bundleSha256, currencyHash, categoryHash, categories, baselines, costHash, costs));
             serverRecord.parityFilename = parityPath.filename().string();
             Require(ContentBuildHash::Calculate(parityPath, serverRecord.paritySha256, error),
                 "Parity manifest SHA-256 failed: " + error);
-            report("Server rows: item_template: " + std::to_string(resolvedServerRows.size()));
+            report("Server rows: item_template: " + std::to_string(resolvedServerRows.size()) + "; itemextendedcost_dbc: " + std::to_string(costs.size()));
             report("Server bundle: " + serverPath.string() + " SHA-256 " + serverRecord.bundleSha256);
             report("Parity manifest: " + parityPath.string() + " SHA-256 " + serverRecord.paritySha256);
         }
         ContentBuildRecord record{result.buildNumber, realmName, filename,
             static_cast<std::uint32_t>(result.packageCount), static_cast<std::uint32_t>(result.fileCount), "STAGED", hash};
         bool committed = composingItem
-            ? ContentAllocationRegistry().CommitComposed(record, allocationPlan, serverRecord, error, baselines)
+            ? ContentAllocationRegistry().CommitComposed(record, allocationPlan, serverRecord, error, baselines, costs)
             : builds.Record(record, serverRecord, error);
         if (!committed)
             throw std::runtime_error("MPQ was created, but recording the build/allocation could not be verified: " + error);

@@ -393,3 +393,14 @@ The Phase 3-only BagFamily=0 restriction is extended to declared tokens (8192).
 ## Phase 4 Hunts category and automatic baseline provenance
 
 The current extension registers validated DBC baselines automatically, requires exact matches thereafter, and supports explicit `.content dbc review` / `.content dbc approve` replacement. Existing Item/CurrencyTypes SHA settings are optional stricter overrides. No category hash setting is needed. Schema 2 category symbols use independent `currency-category.id` leases. See [current installation and acceptance guide](docs/PHASE4_CATEGORY_BASELINES.md); its baseline instructions supersede the mandatory-pin instructions in the earlier phase history above. The first post-install acceptance command is `.content dbc inspect CurrencyCategory`.
+
+## Phase 5 ItemExtendedCost infrastructure
+
+Build 12340 supports `.content dbc inspect ItemExtendedCost`, the generic baseline registry,
+independent persistent `item-extended-cost.id` leases, and Schema 2 `extendedCosts` with logical
+item requirements. Cumulative builds remain STAGED; server apply and client activation remain
+explicit. No Huntmaster vendor/economy migration is included.
+
+See [Phase 5 handoff and inspection-only Eitrigg gate](docs/PHASE5_ITEM_EXTENDED_COST.md)
+and [focused tests](tests/PHASE5_TESTS.md). Do not create/build live extended-cost content until
+the actual Eitrigg inspection output has been reviewed.

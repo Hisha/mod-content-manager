@@ -3,6 +3,7 @@
 #include "ContentServerBundle.h"
 #include "CurrencyDbcComposer.h"
 #include "CurrencyCategoryDbcComposer.h"
+#include "ItemExtendedCostDbc.h"
 #include "DatabaseEnv.h"
 #include "Field.h"
 #include "QueryResult.h"
@@ -64,6 +65,7 @@ ContentBaseline ContentBaselineRegistry::Inspect(std::filesystem::path const& di
     if (b.hash != ContentBuildHash::Bytes(DbcReader::Serialize(b.document)))
         throw std::runtime_error("Baseline changed between validation and hashing");
     if (b.table == "CurrencyTypes") CurrencyDbcComposer::Inspect(b.document);
+    if (b.table == "ItemExtendedCost") ItemExtendedCostDbc::Inspect(b.document);
     if (b.table == "CurrencyCategory") CurrencyCategoryDbcComposer::Inspect(b.document);
     if (b.table == "Item")
     {

@@ -71,6 +71,24 @@ struct ContentCurrencyRow
     }
 };
 
+struct ContentCostRequirement
+{
+    std::string packageKey, symbol;
+    std::uint32_t count = 0;
+    bool operator==(ContentCostRequirement const& other) const
+    { return packageKey == other.packageKey && symbol == other.symbol && count == other.count; }
+};
+
+struct ContentExtendedCost
+{
+    std::string symbol;
+    std::vector<ContentCostRequirement> requirements;
+    std::uint32_t honorPoints = 0, arenaPoints = 0, arenaBracket = 0, requiredArenaRating = 0;
+    bool operator==(ContentExtendedCost const& other) const
+    { return symbol == other.symbol && requirements == other.requirements && honorPoints == other.honorPoints
+        && arenaPoints == other.arenaPoints && arenaBracket == other.arenaBracket && requiredArenaRating == other.requiredArenaRating; }
+};
+
 struct ContentPackageManifest
 {
     uint32_t schema = 0;
@@ -84,6 +102,7 @@ struct ContentPackageManifest
     std::vector<ContentServerItemRow> serverItemRows;
     std::vector<ContentCurrencyRow> currencyRows;
     std::vector<ContentCurrencyCategory> currencyCategories;
+    std::vector<ContentExtendedCost> extendedCosts;
 };
 
 struct ContentPackageStageResult

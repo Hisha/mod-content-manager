@@ -5,6 +5,7 @@
 #include "ContentBuildRegistry.h"
 #include "ContentServerBundle.h"
 #include "ContentCurrencyServer.h"
+#include "ContentExtendedCostServer.h"
 #include <tuple>
 #include "ContentServerOwnership.h"
 #include "ServerTableDescriptor.h"
@@ -110,8 +111,8 @@ std::vector<ItemAllocation> ManifestAllocations(json const& parity,
         auto baseline = resource.at("baselineSha256").get<std::string>();
         auto policy = resource.at("allocationPolicyVersion").get<std::uint32_t>();
         auto kind = resource.at("resourceKind").get<std::string>();
-        if (!value || (kind != "item.id" && kind != "currency.known-bit" && kind != "currency-category.id")
-            || (kind == "currency-category.id" && value > 65535)
+        if (!value || (kind != "item.id" && kind != "currency.known-bit" && kind != "currency-category.id" && kind != "item-extended-cost.id")
+            || ((kind == "currency-category.id" || kind == "item-extended-cost.id") && value > 65535)
             || (kind == "currency.known-bit" && value > 64) || !ContentBuildHash::Valid(baseline)
             || !identities.emplace(package, symbol, kind).second)
             throw std::runtime_error("invalid parity allocation");
@@ -161,7 +162,11 @@ bool ContentServerDeployment::Inspect(std::uint32_t build, std::string const& re
         auto contents = ReadFile(path);
         if (HashText(contents) != status.bundleSha256)
         { error = "Server bundle hash mismatch"; return false; }
-        if (!ContentServerBundle::ParseServer(contents, realm, rows, error)) return false;
+        std::vector<ResolvedExtendedCost> costs;
+        if (!ContentServerBundle::ParseServer(contents, realm, rows, error, &costs)) return false;
+        if (status.state == "APPLIED")
+            for (auto const& cost : costs)
+                if (!ContentExtendedCostServer::Verify(cost,realm,build,status.bundleSha256,error)) return false;
         if (status.state == "APPLIED")
             for (auto const& row : rows)
             {
@@ -215,7 +220,8 @@ bool ContentServerDeployment::Apply(std::uint32_t build, std::string const& real
         Require(HashText(parity) == status.paritySha256,
             "Parity manifest hash differs from recorded build");
         std::vector<ResolvedServerItem> rows;
-        if (!ContentServerBundle::ParseServer(bundle, realm, rows, error)) return false;
+        std::vector<ResolvedExtendedCost> costs;
+        if (!ContentServerBundle::ParseServer(bundle, realm, rows, error, &costs)) return false;
         Require(!rows.empty(), "Server bundle has no item_template rows to apply");
         auto parityObject = json::parse(parity);
         std::vector<ItemAllocation> retained;
@@ -224,7 +230,7 @@ bool ContentServerDeployment::Apply(std::uint32_t build, std::string const& real
         auto baseline = parityObject.at("baselineSha256").get<std::string>();
         Require(ContentBuildHash::Valid(baseline), "Parity baseline fingerprint is invalid");
         if (!ContentServerBundle::VerifyParity(parity, realm, build, baseline,
-            record->sha256, status.bundleSha256, rows, allocations, error)) return false;
+            record->sha256, status.bundleSha256, rows, allocations, error, costs)) return false;
         std::vector<std::string> provenanceGuards;
         if (parityObject.contains("baselines"))
             for (auto const& snapshot : parityObject.at("baselines"))
@@ -273,6 +279,19 @@ bool ContentServerDeployment::Apply(std::uint32_t build, std::string const& real
                     currencyExists[i] = present;
                 }
         }
+        std::vector<bool> costExists;
+        if (!costs.empty())
+        {
+            std::set<std::uint32_t> ids, items;
+            Require(ContentExtendedCostServer::Occupancy(realm,retained,ids,items,error),error);
+            for (auto const& cost : costs)
+            {
+                Require(!ids.count(cost.id),"Extended-cost ID acquired an external reference/collision");
+                bool present=false;
+                Require(ContentExtendedCostServer::Check(cost,realm,present,error),error);
+                costExists.push_back(present);
+            }
+        }
         struct Existing { bool item = false; bool owner = false; ContentItemOwner provenance; };
         std::vector<Existing> before;
         for (auto const& row : rows)
@@ -297,6 +316,8 @@ bool ContentServerDeployment::Apply(std::uint32_t build, std::string const& real
             for (auto const& row : rows)
                 if (row.currency.itemId)
                     Require(ContentCurrencyServer::Verify(row, realm, build, status.bundleSha256, error), error);
+            for (auto const& cost : costs)
+                Require(ContentExtendedCostServer::Verify(cost,realm,build,status.bundleSha256,error),error);
             summary = "Server content already APPLIED and verified. Restart worldserver for item-template visibility.";
             return true;
         }
@@ -307,6 +328,11 @@ bool ContentServerDeployment::Apply(std::uint32_t build, std::string const& real
             // Lock the small overlay range before checking its alternate ItemID/BitIndex keys.
             tx->Append("UPDATE currencytypes_dbc SET ID=ID");
             tx->Append("UPDATE content_manager_currency_owner SET entry=entry");
+        }
+        if (!costs.empty())
+        {
+            tx->Append("UPDATE itemextendedcost_dbc SET ID=ID");
+            tx->Append("UPDATE content_manager_extended_cost_owner SET entry=entry");
         }
         // A failed guard deliberately duplicates the locked primary key, aborting the entire
         // InnoDB transaction. Conditional UPDATEs alone do not guarantee rollback on drift.
@@ -324,6 +350,8 @@ bool ContentServerDeployment::Apply(std::uint32_t build, std::string const& real
                 + " AND s.parity_sha256=" + ContentServerBundle::SqlIdentityText(status.paritySha256) + ")";
         };
         guard(registryCondition("STAGED"));
+        for (std::size_t i=0;i<costs.size();++i)
+            guard(ContentExtendedCostServer::Condition(costs[i],realm,costExists[i]));
         for (auto const& condition : provenanceGuards) guard(condition);
         for (std::size_t i = 0; i < rows.size(); ++i)
         {
@@ -356,6 +384,9 @@ bool ContentServerDeployment::Apply(std::uint32_t build, std::string const& real
             if (rows[i].currency.itemId)
                 for (auto const& sql : ContentCurrencyServer::ApplySql(rows[i], realm, currencyExists[i], build, status.bundleSha256, previousCurrencies[i].currency.categoryId))
                     tx->Append(sql);
+        for (std::size_t i=0;i<costs.size();++i)
+            for (auto const& sql : ContentExtendedCostServer::ApplySql(costs[i],realm,costExists[i],build,status.bundleSha256))
+                tx->Append(sql);
         auto identityText = ContentServerBundle::SqlIdentityText;
         for (std::size_t i = 0; i < rows.size(); ++i)
         {
@@ -415,6 +446,12 @@ bool ContentServerDeployment::Apply(std::uint32_t build, std::string const& real
                 if (row.currency.itemId)
                     guard(ContentCurrencyServer::Condition(row, realm, true));
         }
+        for (auto const& cost : costs)
+        {
+            guard(ContentExtendedCostServer::Condition(cost,realm,true));
+            guard("EXISTS(SELECT 1 FROM content_manager_extended_cost_owner WHERE entry=" + std::to_string(cost.id)
+                + " AND applied_build=" + std::to_string(build) + " AND artifact_sha256=" + identityText(status.bundleSha256) + ")");
+        }
         guard("1=1" + condition);
         tx->Append("UPDATE content_manager_server_build SET server_state='APPLIED',applied_at=NOW() "
             "WHERE build_number=" + std::to_string(build) + " AND server_state=" + identityText("STAGED") + " AND bundle_sha256="
@@ -441,8 +478,10 @@ bool ContentServerDeployment::Apply(std::uint32_t build, std::string const& real
         for (auto const& row : rows)
             if (row.currency.itemId)
                 Require(ContentCurrencyServer::Verify(row, realm, build, status.bundleSha256, error), error);
+        for (auto const& cost : costs)
+            Require(ContentExtendedCostServer::Verify(cost,realm,build,status.bundleSha256,error),error);
         summary = "Server content APPLIED for build " + std::to_string(build)
-            + ". Restart worldserver to load item_template and currencytypes_dbc before testing; client patch remains unactivated.";
+            + ". Restart worldserver to load item_template, currencytypes_dbc and itemextendedcost_dbc before testing; client patch remains unactivated.";
         return true;
     }
     catch (std::exception const& exception)

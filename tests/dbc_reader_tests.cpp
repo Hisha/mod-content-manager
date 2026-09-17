@@ -32,7 +32,7 @@ int main()
         Require(item && item->fields.size() == 8 && item->version == 1, "Item descriptor missing/incomplete");
         Require(!FindDbcDescriptor(12341, "Item"), "unsupported build accepted");
         Require(FindDbcDescriptor(12340, "CurrencyTypes"), "CurrencyTypes descriptor missing");
-        Require(!FindDbcDescriptor(12340, "ItemExtendedCost"), "unsupported table accepted");
+        Require(!FindDbcDescriptor(12340, "Spell"), "unsupported table accepted");
         DbcDocument fixture;
         fixture.recordCount = 2;
         fixture.fieldCount = 8;

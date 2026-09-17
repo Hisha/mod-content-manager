@@ -29,7 +29,7 @@ ContentServerDeployment.cpp ContentServerBundle.cpp ContentCurrencyServer.cpp
 ContentServerOwnership.cpp ContentAllocationRegistry.cpp ContentBuildRegistry.cpp
 ContentBuildHash.cpp ContentBuildPublisher.cpp ServerTableDescriptor.cpp
 CurrencyCategoryDbcComposer.cpp CurrencyDbcComposer.cpp DbcReader.cpp DbcDescriptor.cpp
-ContentBaselineRegistry.cpp
+ContentBaselineRegistry.cpp ItemExtendedCostDbc.cpp ContentExtendedCostServer.cpp
 ```
 
 Run the resulting executable with `PRIVATE_SOCKET ARTIFACT_DIRECTORY`. It tests the actual Apply entry point, Phase 3 upgrade, unowned collision, an injected post-preflight drift rollback, ownership drift, idempotence and a second build apply. A deliberate duplicate-key error from the transaction guard is expected during the rollback test.

@@ -1,5 +1,6 @@
 #include "ContentPackage.h"
 #include "CurrencyCategoryDbcComposer.h"
+#include "ItemExtendedCostDbc.h"
 #include "ContentBuildPaths.h"
 #include "ServerTableDescriptor.h"
 
@@ -191,7 +192,7 @@ ContentPackageValidationResult ContentPackage::Validate() const
 
         return result;
     }
-    if (result.manifest.schema == 1 && (manifest.contains("serverRows") || manifest.contains("currencies") || manifest.contains("currencyCategories")))
+    if (result.manifest.schema == 1 && (manifest.contains("serverRows") || manifest.contains("currencies") || manifest.contains("currencyCategories") || manifest.contains("extendedCosts")))
     { result.error = "serverRows require Schema 2"; return result; }
 
     if (result.manifest.packageKey.empty())
@@ -567,8 +568,65 @@ ContentPackageValidationResult ContentPackage::Validate() const
                 result.manifest.currencyRows.begin(), result.manifest.currencyRows.end(),
                 [&](auto const& row) { return row.itemSymbol == server.symbol; })))
             { result.error = "BagFamily supports only 0 or a declared currency token (8192)"; return result; }
-        if (result.manifest.content.empty() && result.manifest.itemRows.empty())
-        { result.error = "Schema 2 needs content or dbcRows"; return result; }
+        if (manifest.contains("extendedCosts"))
+        {
+            if (!ValidSymbol(result.manifest.packageKey) || !manifest["extendedCosts"].is_array())
+            { result.error = "extendedCosts needs a valid logical package key and an array"; return result; }
+            for (auto const& declaration : manifest["extendedCosts"])
+            {
+                if (!declaration.is_object() || !declaration.contains("symbol") || !declaration["symbol"].is_string()
+                    || !ValidSymbol(declaration["symbol"].get<std::string>())
+                    || !symbols.insert(declaration["symbol"].get<std::string>()).second
+                    || !declaration.contains("requirements") || !declaration["requirements"].is_array()
+                    || declaration["requirements"].empty() || declaration["requirements"].size() > 5)
+                { result.error = "Extended cost requires a unique logical symbol and 1..5 item requirements"; return result; }
+                for (auto const& field : declaration.items())
+                    if (field.key() != "symbol" && field.key() != "requirements" && field.key() != "honorPoints"
+                        && field.key() != "arenaPoints" && field.key() != "arenaBracket" && field.key() != "requiredArenaRating")
+                    { result.error = "Unsupported or allocator-owned extended-cost field: " + field.key(); return result; }
+                ContentExtendedCost cost; cost.symbol = declaration["symbol"].get<std::string>();
+                auto number = [&](char const* key,std::uint32_t max) {
+                    if (!declaration.contains(key)) return std::uint32_t(0);
+                    auto const& value = declaration[key];
+                    if (!value.is_number_unsigned() || value.get<std::uint64_t>() > max)
+                        throw std::runtime_error(std::string("Invalid extended-cost field: ") + key);
+                    return value.get<std::uint32_t>();
+                };
+                try
+                {
+                    cost.honorPoints=number("honorPoints",ItemExtendedCostDbc::MaxPoints);
+                    cost.arenaPoints=number("arenaPoints",ItemExtendedCostDbc::MaxPoints);
+                    cost.arenaBracket=number("arenaBracket",2);
+                    cost.requiredArenaRating=number("requiredArenaRating",0x7fffffffU);
+                    if (cost.arenaBracket && !cost.requiredArenaRating) throw std::runtime_error("arenaBracket requires a rating requirement");
+                    std::set<std::pair<std::string,std::string>> references;
+                    for (auto const& requirement : declaration["requirements"])
+                    {
+                        if (!requirement.is_object() || requirement.size()!=2 || !requirement.contains("item")
+                            || !requirement.contains("count") || !requirement["count"].is_number_unsigned()
+                            || !requirement["count"].get<std::uint64_t>() || requirement["count"].get<std::uint64_t>()>ItemExtendedCostDbc::MaxCount)
+                            throw std::runtime_error("Extended-cost requirement needs a logical item and positive safe count");
+                        auto const& item=requirement["item"];
+                        if (!item.is_object() || !item.contains("symbol") || !item["symbol"].is_string()
+                            || !ValidSymbol(item["symbol"].get<std::string>())
+                            || item.size()!=(item.contains("package")?2:1)
+                            || (item.contains("package") && (!item["package"].is_string() || !ValidSymbol(item["package"].get<std::string>()))))
+                            throw std::runtime_error("Item requirement accepts only a logical symbol and optional package");
+                        ContentCostRequirement ref{item.value("package",result.manifest.packageKey),item["symbol"].get<std::string>(),
+                            requirement["count"].get<std::uint32_t>()};
+                        if (!references.emplace(ref.packageKey,ref.symbol).second) throw std::runtime_error("Duplicate extended-cost item reference");
+                        if (ref.packageKey==result.manifest.packageKey && std::none_of(result.manifest.serverItemRows.begin(),result.manifest.serverItemRows.end(),
+                            [&](auto const& row){return row.symbol==ref.symbol;}))
+                            throw std::runtime_error("Local cost requirement must reference a declared client/server Item");
+                        cost.requirements.push_back(ref);
+                    }
+                }
+                catch (std::exception const& e) { result.error=e.what(); return result; }
+                result.manifest.extendedCosts.push_back(cost);
+            }
+        }
+        if (result.manifest.content.empty() && result.manifest.itemRows.empty() && result.manifest.extendedCosts.empty())
+        { result.error = "Schema 2 needs content, dbcRows or extendedCosts"; return result; }
     }
     result.valid = true;
     return result;
@@ -623,7 +681,7 @@ ContentPackageStageResult ContentPackage::StageInto(std::filesystem::path const&
         bool same = actual.schema == expected.schema && actual.packageKey == expected.packageKey
             && actual.version == expected.version && actual.content.size() == expected.content.size()
             && actual.itemRows == expected.itemRows && actual.serverItemRows == expected.serverItemRows
-            && actual.currencyRows == expected.currencyRows && actual.currencyCategories == expected.currencyCategories;
+            && actual.currencyRows == expected.currencyRows && actual.currencyCategories == expected.currencyCategories && actual.extendedCosts == expected.extendedCosts;
         if (same)
             for (std::size_t i = 0; i < actual.content.size(); ++i)
                 same = same && actual.content[i].type == expected.content[i].type
