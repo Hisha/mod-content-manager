@@ -1,9 +1,10 @@
 #include "ContentManager.h"
 #include "ScriptMgr.h"
+#include "ContentCapabilityProvider.h"
 
 void AddSC_content_manager_commands();
 
-class content_manager_worldscript : public WorldScript
+class content_manager_worldscript : public WorldScript, public ContentCapabilityProvider
 {
 public:
     content_manager_worldscript()

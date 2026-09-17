@@ -24,7 +24,8 @@ public:
         std::string& error);
     static bool Inspect(std::uint32_t build, std::string const& realm,
         std::filesystem::path const& outputDirectory, ContentServerStatus& status,
-        std::vector<ResolvedServerItem>& rows, std::string& error);
+        std::vector<ResolvedServerItem>& rows, std::string& error,
+        std::vector<ResolvedExtendedCost>* costs = nullptr, std::vector<ResolvedVendorRow>* vendors = nullptr);
     static bool Apply(std::uint32_t build, std::string const& realm,
         std::filesystem::path const& outputDirectory, std::string& summary, std::string& error);
 };
