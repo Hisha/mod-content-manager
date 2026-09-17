@@ -157,3 +157,16 @@ CREATE TABLE IF NOT EXISTS content_manager_extended_cost_owner (
   PRIMARY KEY (entry),
   UNIQUE KEY logical_owner (realm_name,package_key,symbol)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+-- One bounded owned vendor relationship per existing creature; no destructive migration.
+CREATE TABLE IF NOT EXISTS `content_manager_vendor_owner` (
+ `creature_entry` INT UNSIGNED NOT NULL,
+ `realm_name` VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+ `package_key` VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+ `symbol` VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+ `original_flags` INT UNSIGNED NOT NULL,
+ `row_json` LONGTEXT NOT NULL,
+ `applied_build` INT UNSIGNED NOT NULL,
+ `artifact_sha256` CHAR(64) NOT NULL,
+ PRIMARY KEY (`creature_entry`), UNIQUE KEY `logical_vendor` (`realm_name`,`package_key`,`symbol`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

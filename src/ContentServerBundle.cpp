@@ -141,7 +141,7 @@ std::string ContentServerBundle::RowJson(ResolvedServerItem const& row)
     return RowObject(row).dump();
 }
 
-std::string ContentServerBundle::ServerJson(std::string const& realm, std::vector<ResolvedServerItem> rows, std::vector<ResolvedExtendedCost> costs)
+std::string ContentServerBundle::ServerJson(std::string const& realm, std::vector<ResolvedServerItem> rows, std::vector<ResolvedExtendedCost> costs, std::vector<ResolvedVendorRow> vendors)
 {
     std::sort(rows.begin(), rows.end(), LessRow);
     json artifact = {{"format", 1}, {"realm", realm}, {"table", "item_template"},
@@ -162,6 +162,7 @@ std::string ContentServerBundle::ServerJson(std::string const& realm, std::vecto
         }
     }
     if (!costs.empty()) { artifact["format"] = 4; artifact["extendedCosts"] = CostObjects(costs); }
+    if (!vendors.empty()) { artifact["format"] = 5; artifact["vendorRows"] = ContentVendorServer::Objects(vendors); }
     return artifact.dump(2) + "\n";
 }
 
@@ -169,7 +170,7 @@ std::string ContentServerBundle::ParityJson(std::string const& realm, std::uint3
     std::vector<ItemAllocation> const& allocations, std::vector<ResolvedServerItem> const& rows,
     std::string const& baselineSha256, std::string const& itemDbcSha256,
     std::string const& clientMpqSha256, std::string const& serverSha256, std::string const& currencyDbcSha256,
-    std::string const& categoryDbcSha256, std::vector<ResolvedCurrencyCategory> categories, std::vector<ContentBaseline> baselines, std::string const& extendedCostDbcSha256, std::vector<ResolvedExtendedCost> costs)
+    std::string const& categoryDbcSha256, std::vector<ResolvedCurrencyCategory> categories, std::vector<ContentBaseline> baselines, std::string const& extendedCostDbcSha256, std::vector<ResolvedExtendedCost> costs, std::vector<ResolvedVendorRow> vendors)
 {
     auto sorted = allocations;
     std::sort(sorted.begin(), sorted.end(), [](auto const& a, auto const& b) {
@@ -227,18 +228,20 @@ std::string ContentServerBundle::ParityJson(std::string const& realm, std::uint3
         artifact["extendedCostDbcSha256"] = extendedCostDbcSha256;
         artifact["extendedCosts"] = CostObjects(costs);
     }
+    if (!vendors.empty()) { artifact["format"] = 5; artifact["vendorRows"] = ContentVendorServer::Objects(vendors); }
     return artifact.dump(2) + "\n";
 }
 
 bool ContentServerBundle::ParseServer(std::string const& text, std::string const& realm,
-    std::vector<ResolvedServerItem>& rows, std::string& error, std::vector<ResolvedExtendedCost>* costs)
+    std::vector<ResolvedServerItem>& rows, std::string& error, std::vector<ResolvedExtendedCost>* costs, std::vector<ResolvedVendorRow>* vendors)
 {
     if (costs) costs->clear();
+    if (vendors) vendors->clear();
     rows.clear();
     try
     {
         auto artifact = json::parse(text);
-        if (!artifact.is_object() || artifact.size() != (artifact.value("format",0) == 4 ? 6 : 5) || (artifact.at("format") != 1 && artifact.at("format") != 2 && artifact.at("format") != 3 && artifact.at("format") != 4)
+        if (!artifact.is_object() || artifact.size() != (artifact.value("format",0) == 5 ? 7 : artifact.value("format",0) == 4 ? 6 : 5) || (artifact.at("format") != 1 && artifact.at("format") != 2 && artifact.at("format") != 3 && artifact.at("format") != 4 && artifact.at("format") != 5)
             || artifact.at("realm") != realm || artifact.at("table") != "item_template"
             || artifact.at("descriptorVersion") != 1 || !artifact.at("rows").is_array())
             throw std::runtime_error("server bundle header or descriptor mismatch");
@@ -328,10 +331,15 @@ bool ContentServerBundle::ParseServer(std::string const& text, std::string const
                 throw std::runtime_error("server bundle row violates item_template descriptor");
             rows.push_back(std::move(row));
         }
-        auto parsedCosts = artifact.at("format") == 4 ? ParseCosts(artifact.at("extendedCosts")) : std::vector<ResolvedExtendedCost>{};
-        if (ServerJson(realm, rows, parsedCosts) != text)
+        auto parsedCosts = artifact.at("format").get<int>() >= 4 ? ParseCosts(artifact.at("extendedCosts")) : std::vector<ResolvedExtendedCost>{};
+        auto parsedVendors = artifact.at("format") == 5 ? ContentVendorServer::Parse(artifact.at("vendorRows")) : std::vector<ResolvedVendorRow>{};
+        for (auto const& v : parsedVendors)
+            if (std::none_of(parsedCosts.begin(),parsedCosts.end(),[&](auto const& c){return c.packageKey==v.packageKey && c.symbol==v.costSymbol && c.id==v.costId;}))
+                throw std::runtime_error("Vendor cost relationship is unresolved");
+        if (ServerJson(realm, rows, parsedCosts, parsedVendors) != text)
             throw std::runtime_error("server bundle is not in canonical generated form");
         if (costs) *costs = std::move(parsedCosts);
+        if (vendors) *vendors = std::move(parsedVendors);
         return true;
     }
     catch (std::exception const& exception)
@@ -341,7 +349,7 @@ bool ContentServerBundle::ParseServer(std::string const& text, std::string const
 bool ContentServerBundle::VerifyParity(std::string const& text, std::string const& realm,
     std::uint32_t build, std::string const& baselineSha256, std::string const& clientMpqSha256,
     std::string const& serverSha256, std::vector<ResolvedServerItem> const& rows,
-    std::vector<ItemAllocation> const& allocations, std::string& error, std::vector<ResolvedExtendedCost> const& costs)
+    std::vector<ItemAllocation> const& allocations, std::string& error, std::vector<ResolvedExtendedCost> const& costs, std::vector<ResolvedVendorRow> const& vendors)
 {
     try
     {
@@ -450,7 +458,7 @@ bool ContentServerBundle::VerifyParity(std::string const& text, std::string cons
             if (tables != expected) throw std::runtime_error("Baseline snapshot set mismatch");
         }
         if (!ContentBuildHash::Valid(itemSha) || actual != json::parse(ParityJson(realm, build,
-            allocations, rows, baselineSha256, itemSha, clientMpqSha256, serverSha256, currencySha, categorySha, categories, baselines, costSha, costs)))
+            allocations, rows, baselineSha256, itemSha, clientMpqSha256, serverSha256, currencySha, categorySha, categories, baselines, costSha, costs, vendors)))
             throw std::runtime_error("manifest values differ from build, allocation, or server bundle");
         return true;
     }

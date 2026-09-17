@@ -16,16 +16,16 @@ tests = {
     'dbc_reader': ['DbcReader', 'DbcDescriptor'],
     'phase2': ['ContentResourceAllocator', 'ItemDbcComposer', 'DbcReader', 'DbcDescriptor'],
     'occupancy': [],
-    'server_bundle': ['ContentServerBundle', 'ServerTableDescriptor'],
+    'server_bundle': ['ContentServerBundle', 'ContentVendorRow', 'ServerTableDescriptor'],
     'schema2': ['ContentPackage', 'ServerTableDescriptor'],
-    'currency': ['CurrencyDbcComposer', 'ContentResourceAllocator', 'ContentServerBundle',
+    'currency': ['CurrencyDbcComposer', 'ContentResourceAllocator', 'ContentServerBundle', 'ContentVendorRow',
                  'ServerTableDescriptor', 'DbcReader', 'DbcDescriptor'],
 }
 for name in ['server_bundle', 'schema2', 'currency']:
     for unit in ['CurrencyCategoryDbcComposer', 'CurrencyDbcComposer', 'ItemExtendedCostDbc', 'DbcReader', 'DbcDescriptor']:
         if unit not in tests[name]: tests[name].append(unit)
 tests['category'] = ['CurrencyCategoryDbcComposer', 'CurrencyDbcComposer', 'DbcReader', 'DbcDescriptor', 'ContentResourceAllocator']
-tests['extended_cost'] = ['ItemExtendedCostDbc', 'ContentResourceAllocator', 'ContentPackage', 'ContentServerBundle', 'ServerTableDescriptor', 'CurrencyCategoryDbcComposer', 'CurrencyDbcComposer', 'DbcReader', 'DbcDescriptor']
+tests['extended_cost'] = ['ItemExtendedCostDbc', 'ContentResourceAllocator', 'ContentPackage', 'ContentServerBundle', 'ContentVendorRow', 'ServerTableDescriptor', 'CurrencyCategoryDbcComposer', 'CurrencyDbcComposer', 'DbcReader', 'DbcDescriptor']
 with tempfile.TemporaryDirectory(prefix='content-phase4-tests-') as directory:
     for name, units in tests.items():
         binary = Path(directory) / name

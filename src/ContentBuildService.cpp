@@ -401,6 +401,21 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
             composedCostBytes = ItemExtendedCostDbc::Compose(costBaseline.document,costs);
             allocationPlan.insert(allocationPlan.end(),plan.begin(),plan.end());
         }
+        std::vector<ResolvedVendorRow> vendors;
+        std::set<std::uint32_t> vendorEntries;
+        for (auto const& source : selected)
+            for (auto const& declaration : source.validation.manifest.vendorRows)
+            {
+                auto const& m=source.validation.manifest;
+                auto cost=std::find_if(costs.begin(),costs.end(),[&](auto const& c){return c.packageKey==m.packageKey && c.symbol==declaration.extendedCostSymbol;});
+                Require(cost!=costs.end(),"Unresolved vendor extended-cost symbol");
+                Require(vendorEntries.insert(declaration.creatureEntry).second,"Multiple packages claim the same vendor creature");
+                ResolvedVendorRow row{m.packageKey,m.version,declaration.symbol,declaration.extendedCostSymbol,
+                    declaration.creatureEntry,declaration.itemEntry,cost->id,0};
+                Require(ContentVendorServer::Prepare(row,realmName,error),error);
+                vendors.push_back(row);
+                report("Planned vendor relationship: "+row.packageKey+"/"+row.symbol+" -> "+row.costSymbol);
+            }
         Require(!manager.GetOutputDirectory().empty() && !manager.GetWorkDirectory().empty(), "Build directories must not be empty");
         auto filename = FilenameRealm(realmName) + "-Content-" + Number(result.buildNumber) + ".mpq";
         result.outputPath = fs::absolute(fs::path(manager.GetOutputDirectory()) / filename);
@@ -590,12 +605,12 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
                 output.write(contents.data(), static_cast<std::streamsize>(contents.size()));
                 Require(output.good(), "Cannot write sidecar: " + path.string());
             };
-            writeSidecar(serverPath, ContentServerBundle::ServerJson(realmName, resolvedServerRows, costs));
+            writeSidecar(serverPath, ContentServerBundle::ServerJson(realmName, resolvedServerRows, costs, vendors));
             serverRecord.bundleFilename = serverPath.filename().string();
             Require(ContentBuildHash::Calculate(serverPath, serverRecord.bundleSha256, error),
                 "Server bundle SHA-256 failed: " + error);
             writeSidecar(parityPath, ContentServerBundle::ParityJson(realmName, result.buildNumber,
-                allocationPlan, resolvedServerRows, baselineHash, composedHash, hash, serverRecord.bundleSha256, currencyHash, categoryHash, categories, baselines, costHash, costs));
+                allocationPlan, resolvedServerRows, baselineHash, composedHash, hash, serverRecord.bundleSha256, currencyHash, categoryHash, categories, baselines, costHash, costs, vendors));
             serverRecord.parityFilename = parityPath.filename().string();
             Require(ContentBuildHash::Calculate(parityPath, serverRecord.paritySha256, error),
                 "Parity manifest SHA-256 failed: " + error);

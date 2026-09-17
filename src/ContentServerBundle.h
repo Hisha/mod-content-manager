@@ -2,6 +2,7 @@
 #define CONTENT_SERVER_BUNDLE_H
 
 #include "ContentPackage.h"
+#include "ContentVendorServer.h"
 #include "ItemExtendedCostDbc.h"
 #include "CurrencyDbcComposer.h"
 #include "CurrencyCategoryDbcComposer.h"
@@ -25,7 +26,7 @@ struct ResolvedServerItem
 class ContentServerBundle
 {
 public:
-    static std::string ServerJson(std::string const& realm, std::vector<ResolvedServerItem> rows, std::vector<ResolvedExtendedCost> costs = {});
+    static std::string ServerJson(std::string const& realm, std::vector<ResolvedServerItem> rows, std::vector<ResolvedExtendedCost> costs = {}, std::vector<ResolvedVendorRow> vendors = {});
     static std::string ParityJson(std::string const& realm, std::uint32_t build,
         std::vector<ItemAllocation> const& allocations,
         std::vector<ResolvedServerItem> const& rows, std::string const& baselineSha256,
@@ -33,14 +34,14 @@ public:
         std::string const& serverSha256, std::string const& currencyDbcSha256 = "",
         std::string const& categoryDbcSha256 = "", std::vector<ResolvedCurrencyCategory> categories = {},
         std::vector<ContentBaseline> baselines = {}, std::string const& extendedCostDbcSha256 = "",
-        std::vector<ResolvedExtendedCost> costs = {});
+        std::vector<ResolvedExtendedCost> costs = {}, std::vector<ResolvedVendorRow> vendors = {});
     static bool ParseServer(std::string const& text, std::string const& realm,
-        std::vector<ResolvedServerItem>& rows, std::string& error, std::vector<ResolvedExtendedCost>* costs = nullptr);
+        std::vector<ResolvedServerItem>& rows, std::string& error, std::vector<ResolvedExtendedCost>* costs = nullptr, std::vector<ResolvedVendorRow>* vendors = nullptr);
     static bool VerifyParity(std::string const& text, std::string const& realm,
         std::uint32_t build, std::string const& baselineSha256, std::string const& clientMpqSha256,
         std::string const& serverSha256, std::vector<ResolvedServerItem> const& rows,
         std::vector<ItemAllocation> const& allocations, std::string& error,
-        std::vector<ResolvedExtendedCost> const& costs = {});
+        std::vector<ResolvedExtendedCost> const& costs = {}, std::vector<ResolvedVendorRow> const& vendors = {});
     static std::string RowJson(ResolvedServerItem const& row);
     static std::string SqlText(std::string const& value);
     static std::string SqlIdentityText(std::string const& value);

@@ -192,7 +192,7 @@ ContentPackageValidationResult ContentPackage::Validate() const
 
         return result;
     }
-    if (result.manifest.schema == 1 && (manifest.contains("serverRows") || manifest.contains("currencies") || manifest.contains("currencyCategories") || manifest.contains("extendedCosts")))
+    if (result.manifest.schema == 1 && (manifest.contains("serverRows") || manifest.contains("currencies") || manifest.contains("currencyCategories") || manifest.contains("extendedCosts") || manifest.contains("vendorRows")))
     { result.error = "serverRows require Schema 2"; return result; }
 
     if (result.manifest.packageKey.empty())
@@ -625,6 +625,29 @@ ContentPackageValidationResult ContentPackage::Validate() const
                 result.manifest.extendedCosts.push_back(cost);
             }
         }
+        if (manifest.contains("vendorRows"))
+        {
+            if (!manifest["vendorRows"].is_array()) { result.error="vendorRows must be an array"; return result; }
+            std::set<std::uint32_t> vendors;
+            for (auto const& d : manifest["vendorRows"])
+            {
+                if (!d.is_object() || d.size()!=4 || !d.contains("symbol") || !d["symbol"].is_string()
+                    || !ValidSymbol(d["symbol"].get<std::string>()) || !symbols.insert(d["symbol"].get<std::string>()).second
+                    || !d.contains("extendedCost") || !d["extendedCost"].is_object() || d["extendedCost"].size()!=1
+                    || !d["extendedCost"].contains("symbol") || !d["extendedCost"]["symbol"].is_string()
+                    || !d.contains("creatureEntry") || !d["creatureEntry"].is_number_unsigned()
+                    || !d["creatureEntry"].get<std::uint64_t>() || d["creatureEntry"].get<std::uint64_t>()>0xffffff
+                    || !d.contains("itemEntry") || !d["itemEntry"].is_number_unsigned()
+                    || !d["itemEntry"].get<std::uint64_t>() || d["itemEntry"].get<std::uint64_t>()>0xffffff)
+                { result.error="vendorRows requires symbol, existing creatureEntry/itemEntry and logical extendedCost.symbol"; return result; }
+                ContentVendorRow row{d["symbol"].get<std::string>(),d["extendedCost"]["symbol"].get<std::string>(),
+                    d["creatureEntry"].get<std::uint32_t>(),d["itemEntry"].get<std::uint32_t>()};
+                if (!vendors.insert(row.creatureEntry).second || std::none_of(result.manifest.extendedCosts.begin(),result.manifest.extendedCosts.end(),
+                    [&](auto const& c){return c.symbol==row.extendedCostSymbol;}))
+                { result.error="Vendor needs a local declared extended cost and a distinct existing creature"; return result; }
+                result.manifest.vendorRows.push_back(row);
+            }
+        }
         if (result.manifest.content.empty() && result.manifest.itemRows.empty() && result.manifest.extendedCosts.empty())
         { result.error = "Schema 2 needs content, dbcRows or extendedCosts"; return result; }
     }
@@ -681,7 +704,7 @@ ContentPackageStageResult ContentPackage::StageInto(std::filesystem::path const&
         bool same = actual.schema == expected.schema && actual.packageKey == expected.packageKey
             && actual.version == expected.version && actual.content.size() == expected.content.size()
             && actual.itemRows == expected.itemRows && actual.serverItemRows == expected.serverItemRows
-            && actual.currencyRows == expected.currencyRows && actual.currencyCategories == expected.currencyCategories && actual.extendedCosts == expected.extendedCosts;
+            && actual.currencyRows == expected.currencyRows && actual.currencyCategories == expected.currencyCategories && actual.extendedCosts == expected.extendedCosts && actual.vendorRows == expected.vendorRows;
         if (same)
             for (std::size_t i = 0; i < actual.content.size(); ++i)
                 same = same && actual.content[i].type == expected.content[i].type

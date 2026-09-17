@@ -89,6 +89,15 @@ struct ContentExtendedCost
         && arenaPoints == other.arenaPoints && arenaBracket == other.arenaBracket && requiredArenaRating == other.requiredArenaRating; }
 };
 
+// Bounded vendor relationship: one owned merchandise row per existing creature.
+struct ContentVendorRow
+{
+    std::string symbol, extendedCostSymbol;
+    std::uint32_t creatureEntry = 0, itemEntry = 0;
+    bool operator==(ContentVendorRow const& o) const
+    { return symbol==o.symbol && extendedCostSymbol==o.extendedCostSymbol && creatureEntry==o.creatureEntry && itemEntry==o.itemEntry; }
+};
+
 struct ContentPackageManifest
 {
     uint32_t schema = 0;
@@ -103,6 +112,7 @@ struct ContentPackageManifest
     std::vector<ContentCurrencyRow> currencyRows;
     std::vector<ContentCurrencyCategory> currencyCategories;
     std::vector<ContentExtendedCost> extendedCosts;
+    std::vector<ContentVendorRow> vendorRows;
 };
 
 struct ContentPackageStageResult
