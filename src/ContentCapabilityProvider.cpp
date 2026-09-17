@@ -4,6 +4,8 @@
 #include "ContentServerDeployment.h"
 #include "ContentAllocationRegistry.h"
 #include "DatabaseEnv.h"
+#include "Field.h"
+#include "QueryResult.h"
 #include "Realm.h"
 #include "ObjectMgr.h"
 #include "Log.h"
