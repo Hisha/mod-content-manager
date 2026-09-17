@@ -1,0 +1,96 @@
+Phase 5 local validation — NOT Eitrigg runtime acceptance
+Reference core: 06234df3d5ab26c93f4f1f06f3edb828b73ecd3c
+Private MySQL over Unix socket, networking disabled; supplied source repositories untouched during tests.
+Expected duplicate-key messages below are deliberate transaction-guard rollback tests.
+
+
+=== unit-all.log ===
+DBC reader tests passed
+dbc_reader: PASS
+Phase 2 allocator/composer tests passed
+phase2: PASS
+occupancy: PASS
+server_bundle: PASS
+schema2: PASS
+Local client baseline records 26; auto bit 4
+Currency allocator/composer/parity tests passed
+currency: PASS
+category composition, fallback, occupancy, retained leases: PASS
+category: PASS
+PASS real local baseline: 972 rows preserved exactly; this is not Eitrigg acceptance
+PASS ItemExtendedCost descriptor, malformed data, preservation, counts, deterministic composition/readback, typed allocation/retention, parser, symbolic references, canonical artifact
+extended_cost: PASS
+
+=== mysql-regression.log ===
+Transaction rejected: Duplicate entry '1' for key 'content_manager_build_lock.PRIMARY'
+Transaction rejected: Duplicate entry '1' for key 'content_manager_build_lock.PRIMARY'
+PASS category upgrade: guarded owned UPDATE, no delete/insert, concurrent category drift rollback, unchanged item/bit IDs, idempotence, unowned protection
+PASS production Apply: Phase 3 upgrade, unowned collision, transactional drift rollback, idempotence, occupancy exclusion, owned drift, rebuild apply. Collations utf8mb4_0900_ai_ci / utf8mb4_unicode_ci
+
+=== build-regression.log ===
+Accepted baseline: CurrencyTypes descriptor v1 SHA-256 61ed134510b11f4c010e505d3167240924e4c105839c15c5ec473cbc51f1844d
+Accepted baseline: Item descriptor v1 SHA-256 d455bc30b59bc368b2a972a913864dd092d50695140b9513582100dc56ed777d
+Planned item.id: mod-hunts/seal = 56807
+Item baseline SHA-256: d455bc30b59bc368b2a972a913864dd092d50695140b9513582100dc56ed777d
+Item records: 46096 -> 46097
+Accepted baseline: CurrencyCategory descriptor v1 SHA-256 b4e06d0e72925144b7668487c3439c778d35f997197f135ccd63cb7de027fb12
+Planned currency-category.id: mod-hunts/hunts = 5
+Planned currency.known-bit: mod-hunts/seal-currency = 4
+Currency parity: CurrencyTypes.ID/ItemID = currencytypes_dbc.ID/ItemID = item_template.entry = 56807; BitIndex = 4; BagFamily = 8192
+CurrencyTypes baseline SHA-256: 61ed134510b11f4c010e505d3167240924e4c105839c15c5ec473cbc51f1844d
+CurrencyTypes records: 26 -> 27
+Building realm content patch...
+Realm: Eitrigg
+Build: 000001
+Installed packages: 2
+Build workspace: /home/smithkt/Documents/Codex/2026-09-16/you/work/build-mysql-w0ajqh1o/staging/build-000001-1796429874
+Staging: aq.scarab-gong-marker 1.0.0
+  1 file(s)
+Staging: mod-hunts 4.1.0
+  0 file(s)
+Composed Item.dbc SHA-256: 00cbf6aa2c52acfde4418a3464094aaa5d1cd0a02df88bdf61f4afe574fa55a7
+Parity PASS: mod-hunts/seal Item.dbc.ID = item_template.entry = 56807
+Composed CurrencyTypes.dbc SHA-256: 5ad48d52b2ca963a3d6982a87409678f0412d6bd160574d781cfe1aa37e48114
+Composed CurrencyCategory.dbc SHA-256: ce096206d844fd9c6e280d6c2a2548cef82dd4cc9172eea819161c1ea20f736b
+Cumulative files: 4
+MPQ built successfully.
+MPQ: /home/smithkt/Documents/Codex/2026-09-16/you/work/build-mysql-w0ajqh1o/output/Eitrigg-Content-000001.mpq
+Packages: 2
+MPQ files: 4
+SHA256: 8005645aeb022067f651c51c041b6b909c16ab830e75d466c96f0ae0371ce337
+Server rows: item_template: 1; itemextendedcost_dbc: 0
+Server bundle: /home/smithkt/Documents/Codex/2026-09-16/you/work/build-mysql-w0ajqh1o/output/Eitrigg-Content-000001.mpq.server.json SHA-256 e5fd09e158ee03a79369ced6fda4f9a52b066f6e187c2f06c0fdf915d9fa4a39
+Parity manifest: /home/smithkt/Documents/Codex/2026-09-16/you/work/build-mysql-w0ajqh1o/output/Eitrigg-Content-000001.mpq.parity.json SHA-256 9ac0613434feb0dbbe2a6478cbe12c2b6a4a354278a7d9027a694369855f6b52
+Build state: STAGED
+Build recorded successfully.
+Build workspace cleanup completed.
+Transaction rejected: Duplicate entry '1' for key 'content_manager_build_lock.PRIMARY'
+PASS approved baseline replacement: original leases preserved, current snapshot parity, concurrent registry drift rollback, new baseline collision refused
+PASS generic baselines: blank pins, legacy lease import, registry persistence, changed baseline refusal
+PASS production cumulative Build: two EPFs, AQ raw asset exact, all three DBCs, no live content writes, stable leases and deterministic DBC rebuild
+
+=== baseline-regression.log ===
+Transaction rejected: Duplicate entry '1' for key 'content_manager_build_lock.PRIMARY'
+Transaction rejected: Duplicate entry '1' for key 'content_manager_build_lock.PRIMARY'
+Transaction rejected: Duplicate entry '1' for key 'content_manager_build_lock.PRIMARY'
+PASS baseline registry: read-only inspection without pin, automatic registration, optional pin mismatch, legacy hash import, immutable leases/history, changed bytes/version refusal, reviewed approval, stale/candidate mismatch rejection
+
+=== integration.log ===
+Transaction rejected: Duplicate entry '1' for key 'content_manager_build_lock.PRIMARY'
+Transaction rejected: Duplicate entry '1' for key 'content_manager_build_lock.PRIMARY'
+PASS Phase 5 real-MySQL production Build/Apply: 4 EPFs; all occupancy sources; preserved Seal/category/bit leases; cross-package symbols; stock and AQ bytes; deterministic restart; generic registry/history; drift; collision; raw conflict; unresolved symbol; parity; immutable applied costs; rollback; explicit deployment; no vendor writes
+
+=== syntax.log ===
+ContentBuildService 0 
+ContentCommands 0 
+ContentManager 0 
+ContentAllocationRegistry 0 
+ContentServerDeployment 0 
+ContentCurrencyServer 0 
+ContentServerOwnership 0 
+ContentBaselineRegistry 0 
+CurrencyCategoryDbcComposer 0 
+ItemExtendedCostDbc 0 
+ContentExtendedCostServer 0 
+ContentServerBundle 0 
+ContentPackage 0 
