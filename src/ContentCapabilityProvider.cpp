@@ -4,6 +4,7 @@
 #include "ContentServerDeployment.h"
 #include "ContentAllocationRegistry.h"
 #include "ObjectMgr.h"
+#include "Log.h"
 #include "DBCStores.h"
 #include "World.h"
 #include <algorithm>
@@ -16,6 +17,11 @@ Result ContentCapabilityProvider::Resolve(std::string const& package,std::string
     std::optional<ContentBuildRecord> active;
     if(!ContentBuildRegistry().GetActiveBuild(active,reason))return Result::Invalid;
     if(!active){reason="No native content activation";return Result::Inactive;}
+	
+	LOG_ERROR("module.content-manager",
+		"Content capability realm diagnostic: active='{}' world='{}'",
+		active->realmName, sWorld->GetRealmName());
+	
     if(active->realmName!=sWorld->GetRealmName()){reason="Active content belongs to another realm";return Result::Invalid;}
     ContentServerStatus status;std::vector<ResolvedServerItem> rows;
     std::vector<ResolvedExtendedCost> costs;std::vector<ResolvedVendorRow> vendors;
