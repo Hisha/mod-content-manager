@@ -42,6 +42,25 @@ bool ContentAllocationRegistry::Read(std::string const& realm, std::vector<ItemA
     return true;
 }
 
+bool ContentAllocationRegistry::FindByPackage(std::string const& realm,
+    std::string const& packageKey, std::vector<ItemAllocation>& rows, std::string& error) const
+{
+    rows.clear();
+    auto query = WorldDatabase.Query("SELECT a.package_key, a.symbol, a.allocated_value, a.state, "
+        "a.first_build, a.last_build, a.baseline_sha256, a.policy_version, a.resource_kind FROM (SELECT 1) seed LEFT JOIN "
+        "content_manager_allocation a ON a.realm_name=" + SqlText(realm) + " AND a.package_key=" + SqlText(packageKey)
+        + " ORDER BY a.package_key, a.symbol, a.resource_kind");
+    if (!query) { error = DbError; return false; }
+    do
+    {
+        auto f = query->Fetch();
+        if (!f[0].IsNull()) rows.push_back({realm, f[0].Get<std::string>(), f[1].Get<std::string>(),
+            f[2].Get<uint32>(), f[3].Get<std::string>(), f[4].Get<uint32>(),
+            f[5].Get<uint32>(), f[6].Get<std::string>(), f[8].Get<std::string>(), f[7].Get<uint32>()});
+    } while (query->NextRow());
+    return true;
+}
+
 bool ContentAllocationRegistry::OccupiedWorldItems(std::set<std::uint32_t>& entries,
     std::string& error) const
 {

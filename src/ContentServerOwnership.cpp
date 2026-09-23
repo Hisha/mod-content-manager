@@ -1,4 +1,5 @@
 #include "ContentServerOwnership.h"
+#include "ContentServerBundle.h"
 #include "DatabaseEnv.h"
 #include "Field.h"
 #include "QueryResult.h"
@@ -45,6 +46,40 @@ bool ContentServerOwnership::ReadCurrentRow(std::uint32_t entry, bool& exists,
         {"BagFamily", f[12].Get<std::int32_t>()}, {"Flags", f[13].Get<std::uint32_t>()}};
     rowJson = fields.dump();
     exists = true;
+    return true;
+}
+
+bool ContentServerOwnership::CountOwned(std::string const& realm,
+    std::string const& packageKey, ContentOwnerSummary& summary, std::string& error)
+{
+    summary = ContentOwnerSummary{};
+    auto const identity = ContentServerBundle::SqlIdentityText;
+    // COUNT always returns one row, so a null result means a missing table or a
+    // failed query. Never report zero for an unknown deployment state.
+    auto count = [&](char const* table, std::uint32_t& count, std::uint32_t& latest) {
+        auto result = WorldDatabase.Query(std::string("SELECT COUNT(*),COALESCE(MAX(applied_build),0) FROM ")
+            + table + " WHERE realm_name=" + identity(realm) + " AND package_key=" + identity(packageKey));
+        if (!result) { error = std::string("Cannot inspect ") + table + "; apply module world SQL and check SQL logs"; return false; }
+        auto fields = result->Fetch();
+        count = fields[0].Get<std::uint32_t>();
+        latest = fields[1].Get<std::uint32_t>();
+        return true;
+    };
+    struct Table { char const* name; std::uint32_t& count; };
+    std::uint32_t latest = 0;
+    Table tables[] = {
+        {"content_manager_item_owner", summary.itemTemplates},
+        {"content_manager_currency_owner", summary.currencies},
+        {"content_manager_extended_cost_owner", summary.extendedCosts},
+        {"content_manager_vendor_owner", summary.vendors}
+    };
+    for (auto const& table : tables)
+    {
+        std::uint32_t ownLatest = 0;
+        if (!count(table.name, table.count, ownLatest)) return false;
+        if (ownLatest > latest) latest = ownLatest;
+    }
+    summary.latestAppliedBuild = latest;
     return true;
 }
 

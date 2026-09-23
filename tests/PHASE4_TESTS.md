@@ -12,7 +12,7 @@ python3 tests/run_phase4.py --hunts-epf ../mod-hunts/content/mod-hunts.epf
 
 Optionally add `--currency-dbc /path/to/verified/CurrencyTypes.dbc` for read-only composition against real baseline bytes. Tests never install generated DBCs. The schema validation test's temporary EPF is under the OS temporary directory; do not run copies of that legacy test concurrently.
 
-Suites cover WDBC parsing, allocation, schema-1 raw EPFs, schema-2 authoring, signed vendor references, server bundle parsing, explicit SQL collations, ownership classification, CurrencyTypes composition, bit bounds/exhaustion/retention, deterministic multi-row composition and parity mismatches.
+Suites cover WDBC parsing, allocation, schema-1 raw EPFs, schema-2 authoring, signed vendor references, server bundle parsing, explicit SQL collations, ownership classification, CurrencyTypes composition, bit bounds/exhaustion/retention, deterministic multi-row composition, parity mismatches, and package lifecycle utilities (source classification, INSTALLED/SOURCE MISSING labels, retained-history detection, uninstall survey text). Nine standalone suites run through `run_phase4.py`.
 
 ## Disposable MySQL integration harnesses
 
@@ -62,10 +62,45 @@ It runs the production cumulative Build entry point with blank pins, seeds retai
 
 ## Added category and provenance coverage
 
-`category_tests.cpp` covers category string offset/UTF-8 validation, exact preservation of baseline records/strings, deterministic ordering, authored-locale/enUS fallback, empty reserved slots, physical/dangling-reference occupancy, independent/retired leases, approved baseline history and collision refusal. Schema 2 tests reject missing/duplicate category selection, concrete IDs, missing symbols and unsupported/empty names. Seven standalone suites run through `run_phase4.py`.
+`category_tests.cpp` covers category string offset/UTF-8 validation, exact preservation of baseline records/strings, deterministic ordering, authored-locale/enUS fallback, empty reserved slots, physical/dangling-reference occupancy, independent/retired leases, approved baseline history and collision refusal. Schema 2 tests reject missing/duplicate category selection, concrete IDs, missing symbols and unsupported/empty names.
 
 The SQL apply fixture now upgrades the owned category-22 Seal row to a category lease, with database triggers that forbid INSERT/DELETE on CurrencyTypes during that upgrade. It injects category drift between preflight and transaction, checks complete rollback and idempotence, and removes ownership to confirm the row cannot be adopted. Fixture category values are test data, never production authoring.
 
 `baseline_mysql_tests.cpp` uses a fresh copy of the empty fixture schema, the same production sources as the SQL apply fixture, and `PRIVATE_SOCKET PRIVATE_FIXTURE_DIRECTORY` arguments. It writes a synthetic valid CurrencyCategory baseline into that disposable directory and checks read-only inspection without pins, automatic registration, legacy-lease agreement, stricter pin mismatch, immutable history/leases, changed-file/descriptor refusal, candidate-bound approval and stale review rejection. It does not run alongside the other MySQL harnesses because all use the same disposable database name.
+
+## Uninstall lifecycle harness
+
+`package_lifecycle_mysql_tests.cpp` covers the production uninstall lifecycle against
+the same fresh fixture schema (no baseline DBC files are required: it uses two
+schema-1 raw-only EPFs such as `mod-native-social.epf` and `aq-scarab-gong-marker.epf`).
+It installs both via `ContentPackageRegistry::Install`, builds, deletes one fixture
+EPF to reproduce the SOURCE MISSING build dead-end, uninstalls the source-missing
+package via the production `Uninstall`, rebuilds from the remaining package only,
+restores and reinstalls the removed package, and asserts deterministic rebuild plus
+complete retention of `content_manager_build`, `content_manager_server_build`,
+`content_manager_allocation` and the four owner tables. Compile with the test adapter,
+mysqlclient, the bundled StormLib, and these production sources (the rest of the
+module units come from the lists above):
+
+```text
+ContentBuildService.cpp ContentPackage.cpp ContentPackageRegistry.cpp
+ContentPackageLifecycle.cpp ContentResourceAllocator.cpp CurrencyDbcComposer.cpp
+ItemDbcComposer.cpp DbcReader.cpp DbcDescriptor.cpp MpqBuilder.cpp
+ContentServerBundle.cpp ContentVendorRow.cpp ServerTableDescriptor.cpp
+ContentVendorServer.cpp ItemExtendedCostDbc.cpp CurrencyCategoryDbcComposer.cpp
+ContentCurrencyServer.cpp ContentExtendedCostServer.cpp ContentServerOwnership.cpp
+ContentBuildRegistry.cpp ContentBuildHash.cpp ContentBuildPublisher.cpp
+ContentBaselineRegistry.cpp ContentAllocationRegistry.cpp third_party/miniz/miniz.c
+```
+
+Run with:
+
+```text
+PRIVATE_SOCKET FIXTURE_ROOT /path/to/mod-native-social.epf /path/to/aq-scarab-gong-marker.epf
+```
+
+The harness copies the EPFs into `FIXTURE_ROOT` and mutates/disables only those copies.
+It exercises production registry, build, lifecycle survey, parity and MPQ code; only
+ContentManager config/discovery is injected.
 
 Local core-facing syntax validation used AzerothCore commit `06234df3d5ab26c93f4f1f06f3edb828b73ecd3c`; no Eitrigg core checkout is available. No full worldserver link or actual client category display test is claimed. Production worker-pool transaction behavior and the real-server/native-client acceptance remain required.

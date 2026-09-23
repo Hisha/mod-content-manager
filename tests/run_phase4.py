@@ -14,6 +14,7 @@ args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 tests = {
     'dbc_reader': ['DbcReader', 'DbcDescriptor'],
+    'package_lifecycle': [],
     'phase2': ['ContentResourceAllocator', 'ItemDbcComposer', 'DbcReader', 'DbcDescriptor'],
     'occupancy': [],
     'server_bundle': ['ContentServerBundle', 'ContentVendorRow', 'ServerTableDescriptor'],

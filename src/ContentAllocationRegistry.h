@@ -34,6 +34,8 @@ class ContentAllocationRegistry
 {
 public:
     bool Read(std::string const& realm, std::vector<ItemAllocation>& rows, std::string& error) const;
+    bool FindByPackage(std::string const& realm, std::string const& packageKey,
+        std::vector<ItemAllocation>& rows, std::string& error) const;
     bool OccupiedWorldItems(std::set<std::uint32_t>& entries, std::string& error) const;
     bool CommitComposed(ContentBuildRecord const& build, std::vector<ItemAllocation> const& plan,
         ContentServerBuildRecord const& server, std::string& error,

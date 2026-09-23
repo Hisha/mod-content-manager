@@ -1,6 +1,7 @@
 #include "Chat.h"
 #include "CommandScript.h"
 #include "ContentManager.h"
+#include "ContentPackageLifecycle.h"
 #include "ContentBuildService.h"
 #include "ContentBuildRegistry.h"
 #include <charconv>
@@ -500,16 +501,10 @@ public:
 
     static void ReportInstalledPackage(ChatHandler* handler, InstalledContentPackage const& package)
     {
-        std::error_code ec;
-        auto status = std::filesystem::status(package.sourcePath, ec);
-        if (ec == std::errc::no_such_file_or_directory || ec == std::errc::not_a_directory
-            || (!ec && !std::filesystem::exists(status)))
-            handler->SendSysMessage("  State: INSTALLED - SOURCE MISSING");
-        else if (ec || !std::filesystem::is_regular_file(status))
-            handler->PSendSysMessage("  State: INSTALLED - SOURCE UNAVAILABLE: {}",
-                ec ? ec.message() : "Source is not a regular file");
-        else
-            handler->SendSysMessage("  State: INSTALLED");
+        auto source = ContentPackageLifecycle::ClassifySource(package.sourcePath);
+        handler->PSendSysMessage("  State: {}", ContentPackageLifecycle::StateLabel(source.state));
+        if (!source.detail.empty())
+            handler->PSendSysMessage("  Source detail: {}", source.detail);
         handler->PSendSysMessage("  Installed version: {}", package.version);
         handler->PSendSysMessage("  Installed provider: {}", package.provider);
         handler->PSendSysMessage("  Installed source: {}", package.sourcePath);
@@ -587,6 +582,50 @@ public:
             handler->SendSysMessage("Usage: .content uninstall <package-key>");
             return true;
         }
+
+        // Determine whether a readable EPF declaring this key is discovered
+        // today. Discovery cannot guess at a removed module, so the survey must
+        // be able to answer "source missing" even when nothing was found.
+        bool discovered = false;
+        std::string discoveredPath;
+        for (auto const& candidate : sContentManager.ScanAvailablePackages())
+        {
+            auto validation = ContentPackage(candidate.path).Validate();
+            if (validation.manifest.packageKey == packageKey)
+            {
+                discovered = true;
+                if (discoveredPath.empty())
+                    discoveredPath = candidate.path.string();
+            }
+        }
+
+        // Survey everything Content Manager still reliably knows about this
+        // package before changing any desired state.
+        ContentPackageRemovalAnalysis analysis;
+        std::string error;
+        if (!ContentPackageLifecycle::Analyse(realm.Name, packageKey, discovered, analysis, error))
+        {
+            handler->PSendSysMessage("Uninstall cannot be surveyed: {}", error);
+            return true;
+        }
+
+        if (!analysis.installed)
+        {
+            if (discovered)
+                handler->PSendSysMessage("Package '{}' is AVAILABLE but not installed; nothing to remove. Use .content install {}",
+                    packageKey, packageKey);
+            else if (ContentPackageLifecycle::HasRetainedHistory(analysis) || analysis.firstMarkerBuild)
+                handler->PSendSysMessage("Package '{}' is not installed, but retained history remains (builds, allocation leases, server ownership). Uninstall leaves that history intact; nothing was removed.",
+                    packageKey);
+            else
+                handler->PSendSysMessage("Package '{}' is unknown to Content Manager; nothing to uninstall.", packageKey);
+            return true;
+        }
+
+        handler->SendSysMessage("Uninstall survey:");
+        for (auto const& line : ContentPackageLifecycle::Summary(analysis))
+            handler->PSendSysMessage("  {}", line);
+
         auto result = ContentPackageRegistry().Uninstall(packageKey);
         if (!result.success)
         {
@@ -598,8 +637,23 @@ public:
             handler->PSendSysMessage("Package '{}' is not installed.", packageKey);
             return true;
         }
-        handler->PSendSysMessage("Uninstalled package: {}", packageKey);
-        handler->SendSysMessage("The EPF was preserved. Run .content build to generate a cumulative MPQ; no patch was rebuilt or published.");
+
+        auto remaining = ContentPackageRegistry().GetInstalledPackages();
+        handler->PSendSysMessage("Uninstalled package: {} ({} -> no current selection)",
+            packageKey, ContentPackageLifecycle::StateLabel(analysis.sourceState));
+        if (discovered)
+            handler->PSendSysMessage("The EPF for '{}' is still discovered at: {}", packageKey, discoveredPath);
+        else
+            handler->SendSysMessage("No EPF for this package is currently discovered; it will no longer block builds.");
+        if (remaining.success)
+            handler->PSendSysMessage("Remaining installed packages: {}", remaining.packages.size());
+        else
+            handler->PSendSysMessage("Remaining installed packages: unknown ({})", remaining.error);
+
+        handler->SendSysMessage("History is retained: completed builds and sidecars, published artifacts, allocation leases, and server ownership records are preserved and kept coherent.");
+        if (analysis.ownedItemTemplates || analysis.ownedCurrencies || analysis.ownedExtendedCosts || analysis.ownedVendors)
+            handler->SendSysMessage("Applied server rows owned by this package were NOT deleted; remove those separately with SQL if no longer wanted.");
+        handler->SendSysMessage("Only the desired package set changed and no patch was rebuilt or published. Run .content build, then .content activate <build-number>; server rows apply only through an explicit .content server apply.");
         return true;
     }
 

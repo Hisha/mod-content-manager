@@ -11,7 +11,7 @@ approved versioned artifacts to a filesystem directory.
 | `.content status` | Shows whether Content Manager is enabled and its configured directories, including Publish Directory. |
 | `.content scan` | Discovers EPFs, validates them, and shows persistent package selection, including missing installed sources. |
 | `.content install <package-key>` | Validates exactly one discovered EPF with this key and persistently selects its version for future builds. |
-| `.content uninstall <package-key>` | Removes the package selection; preserves the EPF and existing builds. |
+| `.content uninstall <package-key>` | Surveys the package (source state, retained leases, applied server ownership, build membership), removes the package selection, and reports what was preserved. Works even when the EPF is missing. |
 | `.content stage <package-key>` | Stages one package and builds a separate development test MPQ, without installing it or creating a build record. |
 | `.content build` | Creates a new cumulative MPQ from all INSTALLED packages, hashes it, records STAGED, then cleans its workspace. No argument is required. |
 | `.content build list` | Lists completed realm builds newest first, with state, filename, package/file counts and SHA256. |
@@ -31,14 +31,59 @@ available packages; it does not automatically install anything.
 
 Installation requires exactly one discovered EPF declaring the package key. Duplicate
 keys are reported with their conflicting sources. Reinstalling an already installed
-key preserves its metadata and installation time. Uninstalling removes selection
-even when the source is missing, without deleting the original EPF.
+key preserves its metadata and installation time. Each installed package is classified
+by its recorded source path:
+
+- **INSTALLED**: the recorded source is a readable regular file.
+- **INSTALLED - SOURCE MISSING**: the recorded source no longer exists (for example
+  after a module was rolled back). Builds are refused while such a package remains
+  selected; uninstalling it removes the dead-end without needing the EPF.
+- **INSTALLED - SOURCE UNAVAILABLE**: the recorded source exists but is not a
+  regular file.
 
 Scan shows both installed and available versions when they differ. It also shows
 installed packages whose EPFs are missing or unavailable. Changing package selection
 does not rebuild, activate, or publish a patch. The next build uses the selected set.
 Package keys are case-sensitive, limited to 191 UTF-8 bytes, and cannot contain NUL
 or end in a space. Registry writes are synchronous and verified by reading back.
+
+## Uninstall / remove lifecycle
+
+`.content uninstall <package-key>` removes the package from the desired installed set
+(one `content_manager_package` row). It is the complete state change: builds are
+cumulative, so the next `.content build` simply omits the removed package's files.
+It never deletes the source EPF, an existing build, a published artifact, or any
+server row.
+
+Before removing anything the command prints an uninstall survey: the installed state
+(including `INSTALLED - SOURCE MISSING`), whether a valid EPF is currently
+discovered, retained DBC allocation leases (with their build range), applied server
+content owned by the package, best-effort build membership markers, and whether the
+currently ACTIVE build includes the package. Retained history is reported, never
+deleted.
+
+Removal preserves for history and rollback:
+
+- every completed build and its server/parity sidecars and published artifacts;
+- every allocation lease, including retired ones (leases are never recycled);
+- every server ownership record (item_template, currencytypes_dbc,
+  itemextendedcost_dbc, npc_vendor provenance).
+
+Live server rows are not auto-deleted: ownership alone does not prove an `item_template`
+or `npc_vendor` row is unreferenced by live characters. Remove those rows separately
+if they are truly no longer wanted.
+
+Uninstall is desired-state-only. After it, run `.content build` to generate the
+cumulative MPQ without the package, then explicitly `.content activate <build-number>`
+and, only if server rows should change, `.content server apply <build-number>`.
+Activation is never automatic.
+
+A key that is not installed is reported as one of three cases: AVAILABLE but not
+installed (a discovered EPF exists), previously uninstalled with retained history
+(leases or ownership remain, informing you the history is intact), or unknown.
+Installing a package again after uninstall restores its selection deterministically;
+reinstalling a previously applied package keeps its leases and ownership records,
+and builds re-derive the same content.
 
 ## Current world schema
 
@@ -80,7 +125,9 @@ already marked the schema file as applied. No runtime migration is performed.
 Every `.content build` reads all INSTALLED packages and rediscovers their original
 EPFs. Each key must have exactly one valid source whose version matches the installed
 record. Missing sources, duplicate keys, invalid EPFs, or version differences refuse
-the build. Recorded source paths do not substitute for discovery. There are no
+the build. Recorded source paths do not substitute for discovery. A package whose EPF
+was lost or rolled back can be removed with `.content uninstall <package-key>` to
+unblock builds; no EPF bytes are needed. There are no
 automatic upgrades or background workers.
 
 The build creates a fresh workspace beneath `ContentManager.WorkDirectory`, named
