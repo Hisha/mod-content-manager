@@ -3,6 +3,7 @@
 #include "ContentBuildPaths.h"
 #include "ContentBuildRegistry.h"
 #include "ContentBuildHash.h"
+#include "ContentClientRequirement.h"
 #include "ContentManager.h"
 #include "ContentPackage.h"
 #include "ContentPackageRegistry.h"
@@ -618,8 +619,21 @@ ContentBuildResult ContentBuildService::Build(ContentManager const& manager, std
             report("Server bundle: " + serverPath.string() + " SHA-256 " + serverRecord.bundleSha256);
             report("Parity manifest: " + parityPath.string() + " SHA-256 " + serverRecord.paritySha256);
         }
+        // Aggregated client requirements belong to THIS generated build. They
+        // are captured only from the exact manifests participating now, and are
+        // recorded immutably; later package state never rewrites them.
+        std::vector<std::vector<std::string>> requirementSets;
+        for (auto const& source : selected)
+            requirementSets.push_back(source.validation.manifest.clientRequirements);
+        auto clientRequirements = ContentClientRequirement::Merge(requirementSets);
+        {
+            std::string line;
+            for (auto const& requirement : clientRequirements)
+                line += (line.empty() ? "" : ", ") + requirement;
+            report("Client requirements: " + (line.empty() ? "none" : line));
+        }
         ContentBuildRecord record{result.buildNumber, realmName, filename,
-            static_cast<std::uint32_t>(result.packageCount), static_cast<std::uint32_t>(result.fileCount), "STAGED", hash};
+            static_cast<std::uint32_t>(result.packageCount), static_cast<std::uint32_t>(result.fileCount), "STAGED", hash, clientRequirements};
         bool committed = composingItem
             ? ContentAllocationRegistry().CommitComposed(record, allocationPlan, serverRecord, error, baselines, costs)
             : builds.Record(record, serverRecord, error);

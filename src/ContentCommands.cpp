@@ -670,11 +670,24 @@ public:
             handler->SendSysMessage("Realm content builds:");
             for (auto const& row : records)
             {
+                std::string error;
+                std::vector<std::string> requirements;
+                std::string requirementsLabel;
+                if (!ContentBuildRegistry().GetClientRequirements(row.buildNumber, requirements, error))
+                    requirementsLabel = "unavailable (" + error + ")";
+                else
+                {
+                    std::string line;
+                    for (auto const& requirement : requirements)
+                        line += (line.empty() ? "" : ", ") + requirement;
+                    requirementsLabel = line.empty() ? "none" : line;
+                }
                 handler->PSendSysMessage("{}  {}", ContentBuildService::Number(row.buildNumber), row.state);
                 handler->PSendSysMessage("  {}", row.filename);
                 handler->PSendSysMessage("  Packages: {}", row.packageCount);
                 handler->PSendSysMessage("  Files: {}", row.fileCount);
                 handler->PSendSysMessage("  SHA256: {}", row.sha256);
+                handler->PSendSysMessage("  Client requirements: {}", requirementsLabel);
             }
         }
         return true;

@@ -19,10 +19,11 @@ tests = {
     'occupancy': [],
     'server_bundle': ['ContentServerBundle', 'ContentVendorRow', 'ServerTableDescriptor'],
     'schema2': ['ContentPackage', 'ServerTableDescriptor'],
+    'schema3': ['ContentPackage', 'ServerTableDescriptor'],
     'currency': ['CurrencyDbcComposer', 'ContentResourceAllocator', 'ContentServerBundle', 'ContentVendorRow',
                  'ServerTableDescriptor', 'DbcReader', 'DbcDescriptor'],
 }
-for name in ['server_bundle', 'schema2', 'currency']:
+for name in ['server_bundle', 'schema2', 'schema3', 'currency']:
     for unit in ['CurrencyCategoryDbcComposer', 'CurrencyDbcComposer', 'ItemExtendedCostDbc', 'DbcReader', 'DbcDescriptor']:
         if unit not in tests[name]: tests[name].append(unit)
 tests['category'] = ['CurrencyCategoryDbcComposer', 'CurrencyDbcComposer', 'DbcReader', 'DbcDescriptor', 'ContentResourceAllocator']
@@ -33,7 +34,7 @@ with tempfile.TemporaryDirectory(prefix='content-phase4-tests-') as directory:
         command = [os.environ.get('CXX', 'g++'), '-std=c++17', '-O0', '-g', '-I' + str(root / 'src'),
                    str(root / 'tests' / (name + '_tests.cpp'))]
         command += [str(root / 'src' / (unit + '.cpp')) for unit in units]
-        if name in ['schema2','extended_cost']:
+        if name in ['schema2','schema3','extended_cost']:
             command.append(str(root / 'src/third_party/miniz/miniz.c'))
         subprocess.run(command + ['-o', str(binary)], check=True)
         inputs = []

@@ -1,5 +1,6 @@
 #include "ContentBuildRegistry.h"
 #include "ContentAllocationRegistry.h"
+#include "ContentClientRequirement.h"
 
 #include "DatabaseEnv.h"
 #include "Transaction.h"
@@ -54,6 +55,7 @@ bool ContentBuildRegistry::Record(ContentBuildRecord const& record,
     if (!record.buildNumber || record.realmName.empty() || record.realmName.size() > 255
         || record.filename.empty() || record.filename.size() > 255 || !record.packageCount || !record.fileCount
         || record.state != "STAGED" || !ContentBuildHash::Valid(record.sha256)
+        || !ContentClientRequirement::ValidSet(record.clientRequirements)
         || server.bundleFilename != record.filename + ".server.json"
         || server.parityFilename != record.filename + ".parity.json"
         || !ContentBuildHash::Valid(server.bundleSha256) || !ContentBuildHash::Valid(server.paritySha256))
@@ -72,6 +74,16 @@ bool ContentBuildRegistry::Record(ContentBuildRecord const& record,
         "parity_filename,parity_sha256,server_state) VALUES (" + std::to_string(record.buildNumber)
         + "," + SqlText(server.bundleFilename) + "," + SqlText(server.bundleSha256)
         + "," + SqlText(server.parityFilename) + "," + SqlText(server.paritySha256) + ",'STAGED')");
+    if (!record.clientRequirements.empty())
+    {
+        std::string requirements = "INSERT INTO content_manager_build_client_requirement (build_number,requirement) VALUES ";
+        for (std::size_t i = 0; i < record.clientRequirements.size(); ++i)
+        {
+            if (i) requirements += ",";
+            requirements += "(" + std::to_string(record.buildNumber) + "," + SqlText(record.clientRequirements[i]) + ")";
+        }
+        tx->Append(requirements);
+    }
     WorldDatabase.DirectCommitTransaction(tx);
     // AzerothCore's synchronous transaction API has no success result; verify both rows.
     auto query = WorldDatabase.Query("SELECT realm_name, filename, package_count, file_count, state, sha256 "
@@ -97,6 +109,48 @@ bool ContentBuildRegistry::Record(ContentBuildRecord const& record,
         || sidecars->Fetch()[3].Get<std::string>() != server.paritySha256
         || sidecars->Fetch()[4].Get<std::string>() != "STAGED")
     { error = "Server sidecar metadata could not be verified; inspect SQL logs"; return false; }
+    std::vector<std::string> savedRequirements;
+    if (!GetClientRequirements(record.buildNumber, savedRequirements, error)) return false;
+    if (savedRequirements != record.clientRequirements)
+    { error = "Client requirements could not be verified; inspect SQL logs"; return false; }
+    return true;
+}
+
+bool ContentBuildRegistry::GetClientRequirements(std::uint32_t number,
+    std::vector<std::string>& requirements, std::string& error) const
+{
+    requirements.clear();
+    // Explicit existence gate: EXISTS always returns exactly one row, so the
+    // empty-result case cannot be confused with "no such build". This keeps a
+    // nonexistent build clearly distinguishable from "build requires nothing",
+    // which the future mod-realm-config consumer depends on.
+    auto exists = WorldDatabase.Query("SELECT EXISTS(SELECT 1 FROM content_manager_build WHERE build_number="
+        + std::to_string(number) + ")");
+    if (!exists || exists->Fetch()[0].Get<std::uint64_t>() == 0)
+    {
+        error = "Build " + std::to_string(number) + " does not exist";
+        return false;
+    }
+    // LEFT JOIN guarantees a build without rows still returns a row, so the
+    // empty result is a successful "requires nothing" rather than a failed query.
+    auto query = WorldDatabase.Query("SELECT r.requirement FROM (SELECT 1) seed LEFT JOIN "
+        "content_manager_build_client_requirement r ON r.build_number=" + std::to_string(number)
+        + " ORDER BY r.requirement");
+    if (!query) { error = DatabaseError; return false; }
+    do
+    {
+        auto f = query->Fetch();
+        if (!f[0].IsNull())
+        {
+            if (!ContentClientRequirement::IsSupported(f[0].Get<std::string>()))
+            {
+                error = "Build " + std::to_string(number) + " has an unknown client requirement; check build registry integrity";
+                requirements.clear();
+                return false;
+            }
+            requirements.push_back(f[0].Get<std::string>());
+        }
+    } while (query->NextRow());
     return true;
 }
 
@@ -135,7 +189,7 @@ bool ContentBuildRegistry::GetBuilds(std::vector<ContentBuildRecord>& records, s
                 return false;
             }
             records.push_back({f[0].Get<uint32>(), f[1].Get<std::string>(), f[2].Get<std::string>(),
-                f[3].Get<uint32>(), f[4].Get<uint32>(), f[5].Get<std::string>(), hash});
+                f[3].Get<uint32>(), f[4].Get<uint32>(), f[5].Get<std::string>(), hash, {}});
         }
     } while (query->NextRow());
     return true;

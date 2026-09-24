@@ -184,7 +184,7 @@ ContentPackageValidationResult ContentPackage::Validate() const
     // Validate basic metadata
     // ---------------------------------------------------------
 
-    if (result.manifest.schema != 1 && result.manifest.schema != 2)
+    if (result.manifest.schema != 1 && result.manifest.schema != 2 && result.manifest.schema != 3)
     {
         result.error =
             "Unsupported manifest schema " +
@@ -194,6 +194,44 @@ ContentPackageValidationResult ContentPackage::Validate() const
     }
     if (result.manifest.schema == 1 && (manifest.contains("serverRows") || manifest.contains("currencies") || manifest.contains("currencyCategories") || manifest.contains("extendedCosts") || manifest.contains("vendorRows")))
     { result.error = "serverRows require Schema 2"; return result; }
+
+    // ---------------------------------------------------------
+    // Schema 3 client capability requirements
+    // ---------------------------------------------------------
+
+    if (result.manifest.schema < 3 && manifest.contains("clientRequirements"))
+    {
+        result.error = "clientRequirements require Schema 3";
+        return result;
+    }
+
+    if (manifest.contains("clientRequirements") &&
+        !manifest["clientRequirements"].is_array())
+    {
+        result.error = "'clientRequirements' must be an array";
+        return result;
+    }
+
+    {
+        std::set<std::string> requirements;
+        for (auto const& requirement : (manifest.contains("clientRequirements") ? manifest["clientRequirements"] : json::array()))
+        {
+            if (!requirement.is_string())
+            {
+                result.error = "Client requirement must be a string";
+                return result;
+            }
+            auto name = requirement.get<std::string>();
+            if (!ContentClientRequirement::IsSupported(name))
+            {
+                result.error = "Unsupported client requirement '" + name + "'; supported: " + ContentClientRequirement::ProtectedFrameXml;
+                return result;
+            }
+            // Duplicates are an authoring artifact; the manifest requirement set stays deduplicated.
+            requirements.insert(name);
+        }
+        result.manifest.clientRequirements.assign(requirements.begin(), requirements.end());
+    }
 
     if (result.manifest.packageKey.empty())
     {
@@ -360,7 +398,7 @@ ContentPackageValidationResult ContentPackage::Validate() const
             std::move(entry));
     }
 
-    if (result.manifest.schema == 2)
+    if (result.manifest.schema >= 2)
     {
         if (manifest.contains("dbcRows") && !manifest["dbcRows"].is_array())
         {
@@ -649,7 +687,7 @@ ContentPackageValidationResult ContentPackage::Validate() const
             }
         }
         if (result.manifest.content.empty() && result.manifest.itemRows.empty() && result.manifest.extendedCosts.empty())
-        { result.error = "Schema 2 needs content, dbcRows or extendedCosts"; return result; }
+        { result.error = "Schema 2 or newer needs content, dbcRows or extendedCosts"; return result; }
     }
     result.valid = true;
     return result;
@@ -703,6 +741,7 @@ ContentPackageStageResult ContentPackage::StageInto(std::filesystem::path const&
         auto const& actual = validation.manifest;
         bool same = actual.schema == expected.schema && actual.packageKey == expected.packageKey
             && actual.version == expected.version && actual.content.size() == expected.content.size()
+            && actual.clientRequirements == expected.clientRequirements
             && actual.itemRows == expected.itemRows && actual.serverItemRows == expected.serverItemRows
             && actual.currencyRows == expected.currencyRows && actual.currencyCategories == expected.currencyCategories && actual.extendedCosts == expected.extendedCosts && actual.vendorRows == expected.vendorRows;
         if (same)

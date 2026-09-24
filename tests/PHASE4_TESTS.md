@@ -12,7 +12,7 @@ python3 tests/run_phase4.py --hunts-epf ../mod-hunts/content/mod-hunts.epf
 
 Optionally add `--currency-dbc /path/to/verified/CurrencyTypes.dbc` for read-only composition against real baseline bytes. Tests never install generated DBCs. The schema validation test's temporary EPF is under the OS temporary directory; do not run copies of that legacy test concurrently.
 
-Suites cover WDBC parsing, allocation, schema-1 raw EPFs, schema-2 authoring, signed vendor references, server bundle parsing, explicit SQL collations, ownership classification, CurrencyTypes composition, bit bounds/exhaustion/retention, deterministic multi-row composition, parity mismatches, and package lifecycle utilities (source classification, INSTALLED/SOURCE MISSING labels, retained-history detection, uninstall survey text). Nine standalone suites run through `run_phase4.py`.
+Suites cover WDBC parsing, allocation, schema-1 raw EPFs, schema-2 authoring, schema-3 client requirements, signed vendor references, server bundle parsing, explicit SQL collations, ownership classification, CurrencyTypes composition, bit bounds/exhaustion/retention, deterministic multi-row composition, parity mismatches, and package lifecycle utilities (source classification, INSTALLED/SOURCE MISSING labels, retained-history detection, uninstall survey text). Ten standalone suites run through `run_phase4.py`.
 
 ## Disposable MySQL integration harnesses
 
@@ -102,5 +102,29 @@ PRIVATE_SOCKET FIXTURE_ROOT /path/to/mod-native-social.epf /path/to/aq-scarab-go
 The harness copies the EPFs into `FIXTURE_ROOT` and mutates/disables only those copies.
 It exercises production registry, build, lifecycle survey, parity and MPQ code; only
 ContentManager config/discovery is injected.
+
+## Schema 3 client requirement harness
+
+`client_requirement_mysql_tests.cpp` runs against the same fresh fixture schema and no
+baseline DBC files (two schema-1 raw-only EPFs such as `mod-native-social.epf` and
+`aq-scarab-gong-marker.epf`). It creates two schema-3 fixture EPFs declaring
+`protected-framexml` in `FIXTURE_ROOT`, then exercises the production cumulative build
+through `ContentBuildService::Build`. It asserts aggregation across participating
+manifests (both schema-3 packages plus the two legacy packages yield a single deduplicated
+requirement), immutable per-build persistence in
+`content_manager_build_client_requirement`, read-back verification, the empty result for
+a requirement-free build, a clearly distinguishable failure for a never-recorded build
+number, union deduplication, package-state independence (uninstalling
+the schema-3 packages rewrites nothing about build 1), unchanged MPQ bytes and lifecycle
+(three STAGED builds, no ACTIVE, no allocations/owner rows). Compile with the test
+adapter, mysqlclient, the bundled StormLib, and the same production source list as the
+uninstall lifecycle harness above. Run with:
+
+```text
+PRIVATE_SOCKET FIXTURE_ROOT /path/to/mod-native-social.epf /path/to/aq-scarab-gong-marker.epf
+```
+
+Only ContentManager config/discovery is injected; registry, build, parity and MPQ are
+production code.
 
 Local core-facing syntax validation used AzerothCore commit `06234df3d5ab26c93f4f1f06f3edb828b73ecd3c`; no Eitrigg core checkout is available. No full worldserver link or actual client category display test is claimed. Production worker-pool transaction behavior and the real-server/native-client acceptance remain required.

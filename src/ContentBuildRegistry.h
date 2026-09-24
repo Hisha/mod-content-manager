@@ -18,6 +18,9 @@ struct ContentBuildRecord
     std::uint32_t fileCount = 0;
     std::string state = "STAGED";
     std::string sha256;
+    // Immutable client requirements recorded with this exact build. Sorted,
+    // deduplicated, sourced from the manifests that participated in the build.
+    std::vector<std::string> clientRequirements;
 };
 struct ContentServerBuildRecord;
 
@@ -33,6 +36,12 @@ public:
     bool NextNumber(std::uint32_t& number, std::string& error) const;
     // Called only after the private output MPQ is closed and hashed successfully.
     bool Record(ContentBuildRecord const& record, ContentServerBuildRecord const& server,
+        std::string& error) const;
+    // Client requirements recorded immutably against build `number`. Never
+    // recomputed from current package state. An existing build with no recorded
+    // requirements succeeds with an empty set; a build that does not exist fails
+    // with a distinguishable error ("Build <n> does not exist").
+    bool GetClientRequirements(std::uint32_t number, std::vector<std::string>& requirements,
         std::string& error) const;
 };
 #endif

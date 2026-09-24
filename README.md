@@ -101,6 +101,8 @@ The schema creates:
 - `content_manager_package`: the working persistent package registry.
 - `content_manager_build`: build number, realm name, filename, package/file counts,
   state, SHA256, and creation timestamp.
+- `content_manager_build_client_requirement`: immutable Schema 3 client capability
+  requirements recorded per generated build (see "Schema 3 client requirements").
 - `content_manager_build_lock`: a singleton InnoDB row serializing activation
   transactions across worldserver processes sharing the world database.
 
@@ -119,6 +121,14 @@ build tables as needed, then explicitly apply the current schema. Preserve
 before restarting build numbering; the builder never overwrites an existing MPQ.
 A manual table reset may require explicitly reapplying SQL if the updater has
 already marked the schema file as applied. No runtime migration is performed.
+
+Existing installations receive table additions through the module's normal update
+path (`data/sql/db-world/updates/*.sql`), which the AzerothCore database updater
+applies automatically from this module. The Schema 3 client-requirement table is
+delivered to already-installed servers by
+`data/sql/db-world/updates/2026_09_24_05_content_manager_client_requirements.sql`
+(CREATE TABLE IF NOT EXISTS only; no backfill, no changes to existing
+`content_manager_build` rows).
 
 ## Cumulative builds
 
@@ -451,3 +461,53 @@ explicit. No Huntmaster vendor/economy migration is included.
 See [Phase 5 handoff and inspection-only Eitrigg gate](docs/PHASE5_ITEM_EXTENDED_COST.md)
 and [focused tests](tests/PHASE5_TESTS.md). Do not create/build live extended-cost content until
 the actual Eitrigg inspection output has been reviewed.
+
+## Schema 3 client requirements
+
+Schema 3 is backward compatible: it accepts every Schema 1/2 EPF unchanged and the
+same build, MPQ, activation and publication behavior. Its only addition is an optional
+top-level `clientRequirements` array that declares what the generated client content
+requires at runtime, for example:
+
+```json
+{
+  "schema": 3,
+  "package": "example",
+  "name": "Example",
+  "version": "1",
+  "clientRequirements": ["protected-framexml"]
+}
+```
+
+Only one requirement is recognized in this milestone: `protected-framexml`, meaning
+the realm provides loaded modifications to protected FrameXML resources (a realm-
+configured, signed client-side capability). An unknown entry or `clientRequirements`
+on a Schema 1/2 EPF fails validation with a diagnostic. Duplicate entries inside one
+EPF are an authoring artifact: the declared requirement set is deduplicated and sorted.
+
+This stage records only **what** a build requires. It must never record or transmit
+how a requirement is fulfilled (no offsets, patch bytes, recipe IDs or file hashes),
+and it does not change what the MPQ contains. Downstream modules (such as portalkeeper)
+decide and implement how a declared capability is provided.
+
+When a cumulative `.content build` runs, the declared requirement sets of the exact
+manifests participating in that build are united (deterministic, deduplicated) and
+stored immutably for that build number. Requirements are never recomputed later from
+current package state: uninstalling a package changes future builds only. Each build
+row in `content_manager_build_client_requirement` has a composite primary key
+(build number + requirement), so it is a duplicate guard; a build with no rows records
+"requires nothing". Existing Schema 1/2 builds have no rows and need no backfill.
+
+The requirement insert is part of the same transaction that records the build in both
+the ordinary (`ContentBuildRegistry::Record`) and composed-allocation
+(`ContentAllocationRegistry::CommitComposed`) paths, and the build is only accepted after
+the stored set is read back and matches. `.content build list` shows each build's
+requirements as `none`, a comma-joined list, or `unavailable (<database error>)`.
+The read API is `ContentBuildRegistry::GetClientRequirements(buildNumber, ...)`:
+"what client requirements were recorded for build N?".
+
+The logic lives in the header-only `src/ContentClientRequirement.h`
+(`IsSupported`, `ValidSet`, `Merge`). `ContentCapabilityProvider` is separate and
+unchanged: it inspects runtime/native-content capabilities, while Schema 3
+requirements are an immutable build property. See
+[tests/PHASE4_TESTS.md](tests/PHASE4_TESTS.md) for the parser and MySQL harnesses.

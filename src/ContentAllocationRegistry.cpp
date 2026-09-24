@@ -1,5 +1,6 @@
 #include "ContentAllocationRegistry.h"
 #include "ContentBuildHash.h"
+#include "ContentClientRequirement.h"
 #include "ContentItemOccupancy.h"
 #include "ContentServerOwnership.h"
 #include "ContentCurrencyServer.h"
@@ -110,6 +111,7 @@ bool ContentAllocationRegistry::CommitComposed(ContentBuildRecord const& build,
 {
     std::lock_guard<std::mutex> lock(allocationWrites);
     if (plan.empty() || build.state != "STAGED" || !ContentBuildHash::Valid(build.sha256)
+        || !ContentClientRequirement::ValidSet(build.clientRequirements)
         || server.bundleFilename != build.filename + ".server.json"
         || server.parityFilename != build.filename + ".parity.json"
         || !ContentBuildHash::Valid(server.bundleSha256) || !ContentBuildHash::Valid(server.paritySha256))
@@ -207,6 +209,16 @@ bool ContentAllocationRegistry::CommitComposed(ContentBuildRecord const& build,
         "parity_filename,parity_sha256,server_state) VALUES (" + std::to_string(build.buildNumber)
         + "," + SqlText(server.bundleFilename) + "," + SqlText(server.bundleSha256)
         + "," + SqlText(server.parityFilename) + "," + SqlText(server.paritySha256) + ",'STAGED')");
+    if (!build.clientRequirements.empty())
+    {
+        std::string requirements = "INSERT INTO content_manager_build_client_requirement (build_number,requirement) VALUES ";
+        for (std::size_t i = 0; i < build.clientRequirements.size(); ++i)
+        {
+            if (i) requirements += ",";
+            requirements += "(" + std::to_string(build.buildNumber) + "," + SqlText(build.clientRequirements[i]) + ")";
+        }
+        tx->Append(requirements);
+    }
     WorldDatabase.DirectCommitTransaction(tx);
     auto check = WorldDatabase.Query("SELECT filename,sha256 FROM content_manager_build WHERE build_number="
         + std::to_string(build.buildNumber));
@@ -232,5 +244,9 @@ bool ContentAllocationRegistry::CommitComposed(ContentBuildRecord const& build,
                 found = true;
         if (!found) { error = "Committed allocation did not verify; inspect SQL logs"; return false; }
     }
+    std::vector<std::string> savedRequirements;
+    if (!ContentBuildRegistry().GetClientRequirements(build.buildNumber, savedRequirements, error)) return false;
+    if (savedRequirements != build.clientRequirements)
+    { error = "Client requirements could not be verified; inspect SQL logs"; return false; }
     return true;
 }

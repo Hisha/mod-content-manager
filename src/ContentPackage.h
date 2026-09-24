@@ -1,6 +1,8 @@
 #ifndef CONTENT_PACKAGE_H
 #define CONTENT_PACKAGE_H
 
+#include "ContentClientRequirement.h"
+
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -105,6 +107,8 @@ struct ContentPackageManifest
     std::string name;
     std::string version;
     std::string description;
+    // Schema 3: sorted, deduplicated immutable client requirements (e.g. protected-framexml).
+    std::vector<std::string> clientRequirements;
 
     std::vector<ContentPackageEntry> content;
     std::vector<ContentItemRow> itemRows;

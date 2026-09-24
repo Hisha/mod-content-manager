@@ -51,6 +51,15 @@ CREATE TABLE IF NOT EXISTS `content_manager_build` (
     PRIMARY KEY (`build_number`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
+-- Schema 3 client capability requirements, immutable per generated build. The
+-- composite key is the duplicate guard; a build without rows requires nothing.
+-- Existing builds naturally have no rows and need no backfill.
+CREATE TABLE IF NOT EXISTS `content_manager_build_client_requirement` (
+    `build_number` INT UNSIGNED NOT NULL,
+    `requirement` VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+    PRIMARY KEY (`build_number`, `requirement`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
 -- A singleton InnoDB row serializes activation transactions across processes.
 CREATE TABLE IF NOT EXISTS `content_manager_build_lock` (
     `id` TINYINT UNSIGNED NOT NULL,
