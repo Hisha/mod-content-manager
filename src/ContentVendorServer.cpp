@@ -32,8 +32,8 @@ bool ContentVendorServer::Prepare(ResolvedVendorRow& r,std::string const& realm,
 }
 std::string ContentVendorServer::Condition(ResolvedVendorRow const& r,std::string const& realm,bool exists)
 {
-    std::string base="EXISTS(SELECT 1 FROM item_template WHERE entry="+N(r.itemEntry)+") AND "
-        "NOT EXISTS(SELECT 1 FROM game_event_npc_vendor e JOIN creature c ON c.guid=e.guid WHERE c.id1="+N(r.creatureEntry)+" OR c.id2="+N(r.creatureEntry)+" OR c.id3="+N(r.creatureEntry)+") AND ";
+	std::string base="EXISTS(SELECT 1 FROM item_template WHERE entry="+N(r.itemEntry)+") AND "
+	"NOT EXISTS(SELECT 1 FROM game_event_npc_vendor e JOIN creature c ON c.guid=e.guid WHERE c.id="+N(r.creatureEntry)+") AND ";
     if(!exists)return base+"EXISTS(SELECT 1 FROM creature_template WHERE entry="+N(r.creatureEntry)+" AND npcflag="+N(r.flagsManaged?(r.originalFlags|128):r.originalFlags)+") AND "
         "NOT EXISTS(SELECT 1 FROM npc_vendor WHERE entry="+N(r.creatureEntry)+") AND NOT EXISTS(SELECT 1 FROM content_manager_vendor_owner "
         "WHERE creature_entry="+N(r.creatureEntry)+" OR (realm_name="+T(realm)+" AND package_key="+T(r.packageKey)+" AND symbol="+T(r.symbol)+"))";
