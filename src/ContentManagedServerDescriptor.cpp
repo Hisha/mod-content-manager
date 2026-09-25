@@ -22,7 +22,6 @@ json Creature(ResolvedCreatureTemplate const &r) {
 			  {"npcflag", r.npcFlags},
 			  {"speed_walk", r.speedWalk},
 			  {"speed_run", r.speedRun},
-			  {"scale", r.scale},
 			  {"rank", r.rank},
 			  {"dmgschool", r.damageSchool},
 			  {"BaseAttackTime", r.baseAttackTime},
@@ -31,7 +30,6 @@ json Creature(ResolvedCreatureTemplate const &r) {
 			  {"unit_flags", r.unitFlags},
 			  {"type", r.type},
 			  {"type_flags", r.typeFlags},
-			  {"InhabitType", r.inhabitType},
 			  {"RegenHealth", r.regenHealth},
 			  {"flags_extra", r.flagsExtra},
 			  {"AIName", r.aiName},
@@ -94,7 +92,6 @@ ResolvedCreatureTemplate ParseCreature(json const &v) {
 	r.npcFlags = f.at("npcflag");
 	r.speedWalk = f.at("speed_walk");
 	r.speedRun = f.at("speed_run");
-	r.scale = f.at("scale");
 	r.rank = f.at("rank");
 	r.damageSchool = f.at("dmgschool");
 	r.baseAttackTime = f.at("BaseAttackTime");
@@ -103,7 +100,6 @@ ResolvedCreatureTemplate ParseCreature(json const &v) {
 	r.unitFlags = f.at("unit_flags");
 	r.type = f.at("type");
 	r.typeFlags = f.at("type_flags");
-	r.inhabitType = f.at("InhabitType");
 	r.regenHealth = f.at("RegenHealth");
 	r.flagsExtra = f.at("flags_extra");
 	r.aiName = f.at("AIName");
@@ -169,8 +165,8 @@ ResolvedCreatureSpawn ParseSpawn(json const &v) {
 std::string
 ContentManagedServer::DescriptorFingerprint(std::string const &kind) {
 	if (kind == "creature-template.id")
-		return "def143fb5ba1cbd3d550ba66de5548233be1230fb0419b04b5d6aaf6908c284"
-			   "e";
+		return "6f8a44b7fa08e9130a48f886b3c8eacc05626fd8ec48818c3aaa079628ceaa6"
+			   "d";
 	if (kind == "gameobject-template.id")
 		return "d9745969651d85c8a533f038d66ad1d2bdf8b0e1f020f171f427929a78094e2"
 			   "8";

@@ -75,12 +75,10 @@ int main() {
 	creature.faction = 14;
 	creature.speedWalk = 1;
 	creature.speedRun = 1.14286f;
-	creature.scale = 1;
 	creature.baseAttackTime = 2000;
 	creature.rangeAttackTime = 2000;
 	creature.unitClass = 1;
 	creature.type = 1;
-	creature.inhabitType = 1;
 	creature.regenHealth = 1;
 	ResolvedGameObjectTemplate object;
 	object.packageKey = "package-a";
@@ -104,6 +102,10 @@ int main() {
 	spawn.y = 2;
 	spawn.z = 3;
 	auto managed = ContentManagedServer::Objects({creature}, {object}, {spawn});
+	auto const &creatureFields =
+		managed.at("creatureTemplates").at(0).at("fields");
+	assert(!creatureFields.contains("scale") &&
+		   !creatureFields.contains("InhabitType"));
 	std::vector<ResolvedCreatureTemplate> creatures;
 	std::vector<ResolvedGameObjectTemplate> objects;
 	std::vector<ResolvedCreatureSpawn> spawns;

@@ -16,9 +16,9 @@ struct ResolvedCreatureTemplate {
 				  faction = 0, npcFlags = 0;
 	std::uint32_t rank = 0, damageSchool = 0, baseAttackTime = 0,
 				  rangeAttackTime = 0, unitClass = 0;
-	std::uint32_t unitFlags = 0, type = 0, typeFlags = 0, inhabitType = 0,
-				  regenHealth = 0, flagsExtra = 0;
-	float speedWalk = 0, speedRun = 0, scale = 0;
+	std::uint32_t unitFlags = 0, type = 0, typeFlags = 0, regenHealth = 0,
+				  flagsExtra = 0;
+	float speedWalk = 0, speedRun = 0;
 	std::string name, subname, aiName, scriptName;
 };
 

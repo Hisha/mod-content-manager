@@ -50,7 +50,6 @@ json CreatureObject(ResolvedCreatureTemplate const &r) {
 			  {"npcflag", r.npcFlags},
 			  {"speed_walk", r.speedWalk},
 			  {"speed_run", r.speedRun},
-			  {"scale", r.scale},
 			  {"rank", r.rank},
 			  {"dmgschool", r.damageSchool},
 			  {"BaseAttackTime", r.baseAttackTime},
@@ -59,7 +58,6 @@ json CreatureObject(ResolvedCreatureTemplate const &r) {
 			  {"unit_flags", r.unitFlags},
 			  {"type", r.type},
 			  {"type_flags", r.typeFlags},
-			  {"InhabitType", r.inhabitType},
 			  {"RegenHealth", r.regenHealth},
 			  {"flags_extra", r.flagsExtra},
 			  {"AIName", r.aiName},
@@ -144,7 +142,6 @@ ResolvedCreatureTemplate ParseCreature(json const &v) {
 	r.npcFlags = f.at("npcflag");
 	r.speedWalk = f.at("speed_walk");
 	r.speedRun = f.at("speed_run");
-	r.scale = f.at("scale");
 	r.rank = f.at("rank");
 	r.damageSchool = f.at("dmgschool");
 	r.baseAttackTime = f.at("BaseAttackTime");
@@ -153,7 +150,6 @@ ResolvedCreatureTemplate ParseCreature(json const &v) {
 	r.unitFlags = f.at("unit_flags");
 	r.type = f.at("type");
 	r.typeFlags = f.at("type_flags");
-	r.inhabitType = f.at("InhabitType");
 	r.regenHealth = f.at("RegenHealth");
 	r.flagsExtra = f.at("flags_extra");
 	r.aiName = f.at("AIName");
@@ -257,8 +253,8 @@ bool ContentManagedServer::ResolveDonor(ContentCreatureTemplate const &d,
 	auto q = WorldDatabase.Query(
 		"SELECT "
 		"name,subname,minlevel,maxlevel,faction,npcflag,speed_walk,speed_run,"
-		"scale,rank,dmgschool,BaseAttackTime,RangeAttackTime,unit_class,unit_"
-		"flags,type,type_flags,InhabitType,RegenHealth,flags_extra,AIName,"
+		"rank,dmgschool,BaseAttackTime,RangeAttackTime,unit_class,unit_flags,"
+		"type,type_flags,RegenHealth,flags_extra,AIName,"
 		"ScriptName FROM creature_template WHERE entry=" +
 		N(d.copyFrom));
 	if (!q) {
@@ -279,20 +275,18 @@ bool ContentManagedServer::ResolveDonor(ContentCreatureTemplate const &d,
 	r.npcFlags = f[5].Get<std::uint32_t>();
 	r.speedWalk = f[6].Get<float>();
 	r.speedRun = f[7].Get<float>();
-	r.scale = f[8].Get<float>();
-	r.rank = f[9].Get<std::uint32_t>();
-	r.damageSchool = f[10].Get<std::uint32_t>();
-	r.baseAttackTime = f[11].Get<std::uint32_t>();
-	r.rangeAttackTime = f[12].Get<std::uint32_t>();
-	r.unitClass = f[13].Get<std::uint32_t>();
-	r.unitFlags = f[14].Get<std::uint32_t>();
-	r.type = f[15].Get<std::uint32_t>();
-	r.typeFlags = f[16].Get<std::uint32_t>();
-	r.inhabitType = f[17].Get<std::uint32_t>();
-	r.regenHealth = f[18].Get<std::uint32_t>();
-	r.flagsExtra = f[19].Get<std::uint32_t>();
-	r.aiName = f[20].Get<std::string>();
-	r.scriptName = f[21].Get<std::string>();
+	r.rank = f[8].Get<std::uint32_t>();
+	r.damageSchool = f[9].Get<std::uint32_t>();
+	r.baseAttackTime = f[10].Get<std::uint32_t>();
+	r.rangeAttackTime = f[11].Get<std::uint32_t>();
+	r.unitClass = f[12].Get<std::uint32_t>();
+	r.unitFlags = f[13].Get<std::uint32_t>();
+	r.type = f[14].Get<std::uint32_t>();
+	r.typeFlags = f[15].Get<std::uint32_t>();
+	r.regenHealth = f[16].Get<std::uint32_t>();
+	r.flagsExtra = f[17].Get<std::uint32_t>();
+	r.aiName = f[18].Get<std::string>();
+	r.scriptName = f[19].Get<std::string>();
 	if (d.name)
 		r.name = *d.name;
 	if (d.subname)
@@ -464,14 +458,13 @@ std::string ContentManagedServer::Condition(ResolvedCreatureTemplate const &r,
 		" AND t.maxlevel=" + N(r.maxLevel) + " AND t.faction=" + N(r.faction) +
 		" AND t.npcflag=" + N(r.npcFlags) +
 		" AND t.speed_walk=" + F(r.speedWalk) +
-		" AND t.speed_run=" + F(r.speedRun) + " AND t.scale=" + F(r.scale) +
+		" AND t.speed_run=" + F(r.speedRun) +
 		" AND t.rank=" + N(r.rank) + " AND t.dmgschool=" + N(r.damageSchool) +
 		" AND t.BaseAttackTime=" + N(r.baseAttackTime) +
 		" AND t.RangeAttackTime=" + N(r.rangeAttackTime) +
 		" AND t.unit_class=" + N(r.unitClass) +
 		" AND t.unit_flags=" + N(r.unitFlags) + " AND t.type=" + N(r.type) +
 		" AND t.type_flags=" + N(r.typeFlags) +
-		" AND t.InhabitType=" + N(r.inhabitType) +
 		" AND t.RegenHealth=" + N(r.regenHealth) +
 		" AND t.flags_extra=" + N(r.flagsExtra) +
 		" AND t.AIName=" + Q(r.aiName) + " AND t.ScriptName=" + Q(r.scriptName);
@@ -527,7 +520,7 @@ std::string ContentManagedServer::Condition(ResolvedCreatureSpawn const &r,
 											std::string const &realm,
 											bool exists) {
 	auto fields =
-		"t.id1=" + N(r.creatureEntry) + " AND t.map=" + N(r.map) +
+		"t.id=" + N(r.creatureEntry) + " AND t.map=" + N(r.map) +
 		" AND t.spawnMask=" + N(r.spawnMask) +
 		" AND t.phaseMask=" + N(r.phaseMask) + " AND t.position_x=" + F(r.x) +
 		" AND t.position_y=" + F(r.y) + " AND t.position_z=" + F(r.z) +
@@ -576,17 +569,17 @@ ContentManagedServer::ApplySql(ResolvedCreatureTemplate const &r,
 				T("creature-template.id") + " AND entry=" + N(r.entry)};
 	std::string columns =
 		"entry,name,subname,minlevel,maxlevel,faction,npcflag,speed_walk,speed_"
-		"run,scale,rank,dmgschool,BaseAttackTime,RangeAttackTime,unit_class,"
-		"unit_flags,type,type_flags,InhabitType,RegenHealth,flags_extra,AIName,"
+		"run,rank,dmgschool,BaseAttackTime,RangeAttackTime,unit_class,unit_flags,"
+		"type,type_flags,RegenHealth,flags_extra,AIName,"
 		"ScriptName";
 	std::string values =
 		N(r.entry) + "," + Q(r.name) + "," + Q(r.subname) + "," +
 		N(r.minLevel) + "," + N(r.maxLevel) + "," + N(r.faction) + "," +
 		N(r.npcFlags) + "," + F(r.speedWalk) + "," + F(r.speedRun) + "," +
-		F(r.scale) + "," + N(r.rank) + "," + N(r.damageSchool) + "," +
+		N(r.rank) + "," + N(r.damageSchool) + "," +
 		N(r.baseAttackTime) + "," + N(r.rangeAttackTime) + "," +
 		N(r.unitClass) + "," + N(r.unitFlags) + "," + N(r.type) + "," +
-		N(r.typeFlags) + "," + N(r.inhabitType) + "," + N(r.regenHealth) + "," +
+		N(r.typeFlags) + "," + N(r.regenHealth) + "," +
 		N(r.flagsExtra) + "," + Q(r.aiName) + "," + Q(r.scriptName);
 	return {"INSERT INTO creature_template (" + columns + ") VALUES (" +
 				values + ")",
@@ -637,7 +630,7 @@ ContentManagedServer::ApplySql(ResolvedCreatureSpawn const &r,
 				",artifact_sha256=" + T(hash) + " WHERE resource_kind=" +
 				T("creature-spawn.guid") + " AND entry=" + N(r.guid)};
 	auto insert = "INSERT INTO "
-				  "creature(guid,id1,map,spawnMask,phaseMask,position_x,"
+				  "creature(guid,id,map,spawnMask,phaseMask,position_x,"
 				  "position_y,position_z,orientation,spawntimesecs,wander_"
 				  "distance,MovementType) VALUES (" +
 				  N(r.guid) + "," + N(r.creatureEntry) + "," + N(r.map) + "," +
