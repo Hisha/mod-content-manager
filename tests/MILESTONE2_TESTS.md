@@ -1,5 +1,13 @@
 # Milestone 2 tests
 
+`run_phase4.py` first performs a C++17 syntax-only compile of
+`ContentManagedServer.cpp` against the compile mode of `tests/mysql_adapter`.
+That mode exposes the same relevant `DatabaseWorkerPool::Query` overload shape
+as AzerothCore, including the variadic template, without requiring MySQL client
+headers or providing fake database behavior. This check covers the production
+`Check`, `ApplySql`, and `Verify` template/SQL construction paths even when the
+disposable-MySQL integration test is unavailable.
+
 `managed_server_tests.cpp` is part of `run_phase4.py` and covers the generic descriptor/parser, schema-2 compatibility, stable and non-recycled allocation, duplicate/collision rejection, canonical creature/gameobject/spawn representations, symbolic permanent-spawn resolution, parity, and symbolic vendor creature declarations. Existing schema 1–3 and resource suites remain in the same runner.
 
 `managed_server_mysql_tests.cpp` follows the existing disposable-MySQL strategy. Compile it with `tests/mysql_adapter` before `src`, the MySQL client headers/library, C++17, and these production units:

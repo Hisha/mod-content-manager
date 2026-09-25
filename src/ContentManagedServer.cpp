@@ -222,13 +222,13 @@ bool QueryCheck(Row const &r, std::string const &realm, bool &exists,
 		"SELECT CAST((" + ContentManagedServer::Condition(r, realm, false) +
 		") AS UNSIGNED),CAST((" +
 		ContentManagedServer::Condition(r, realm, true) + ") AS UNSIGNED)");
-	if (!q || (!q->Fetch()[0].Get<std::uint64_t>() &&
-			   !q->Fetch()[1].Get<std::uint64_t>())) {
+	if (!q || (!q->Fetch()[0].template Get<std::uint64_t>() &&
+			   !q->Fetch()[1].template Get<std::uint64_t>())) {
 		error = "Managed server resource collision, missing donor, ownership "
 				"mismatch or drift";
 		return false;
 	}
-	exists = q->Fetch()[1].Get<std::uint64_t>() != 0;
+	exists = q->Fetch()[1].template Get<std::uint64_t>() != 0;
 	return true;
 }
 template <class Row>
@@ -240,7 +240,7 @@ bool QueryVerify(Row const &r, std::string const &realm, std::uint32_t build,
 		"WHERE resource_kind=" +
 		T(Kind(r)) + " AND entry=" + N(Entry(r)) + " AND applied_build=" +
 		N(build) + " AND artifact_sha256=" + T(hash) + ") AS UNSIGNED)");
-	if (!q || !q->Fetch()[0].Get<std::uint64_t>()) {
+	if (!q || !q->Fetch()[0].template Get<std::uint64_t>()) {
 		error = "Managed server resource post-apply provenance mismatch";
 		return false;
 	}
@@ -569,7 +569,7 @@ std::vector<std::string>
 ContentManagedServer::ApplySql(ResolvedCreatureTemplate const &r,
 							   std::string const &realm, bool exists,
 							   std::uint32_t build, std::string const &hash) {
-	auto owner = "content_manager_server_resource_owner";
+	std::string const owner = "content_manager_server_resource_owner";
 	if (exists)
 		return {"UPDATE " + owner + " SET applied_build=" + N(build) +
 				",artifact_sha256=" + T(hash) + " WHERE resource_kind=" +
@@ -601,7 +601,7 @@ std::vector<std::string>
 ContentManagedServer::ApplySql(ResolvedGameObjectTemplate const &r,
 							   std::string const &realm, bool exists,
 							   std::uint32_t build, std::string const &hash) {
-	auto owner = "content_manager_server_resource_owner";
+	std::string const owner = "content_manager_server_resource_owner";
 	if (exists)
 		return {"UPDATE " + owner + " SET applied_build=" + N(build) +
 				",artifact_sha256=" + T(hash) + " WHERE resource_kind=" +
@@ -631,7 +631,7 @@ std::vector<std::string>
 ContentManagedServer::ApplySql(ResolvedCreatureSpawn const &r,
 							   std::string const &realm, bool exists,
 							   std::uint32_t build, std::string const &hash) {
-	auto owner = "content_manager_server_resource_owner";
+	std::string const owner = "content_manager_server_resource_owner";
 	if (exists)
 		return {"UPDATE " + owner + " SET applied_build=" + N(build) +
 				",artifact_sha256=" + T(hash) + " WHERE resource_kind=" +

@@ -12,6 +12,13 @@ parser.add_argument('--hunts-epf', type=Path)
 parser.add_argument('--extended-cost-dbc', type=Path)
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
+compiler = os.environ.get('CXX', 'g++')
+subprocess.run([
+    compiler, '-std=c++17', '-DCONTENT_MANAGER_COMPILE_ONLY', '-fsyntax-only',
+    '-I' + str(root / 'tests/mysql_adapter'), '-I' + str(root / 'src'),
+    str(root / 'src/ContentManagedServer.cpp')
+], check=True)
+print('managed_server_core_compile: PASS', flush=True)
 tests = {
     'dbc_reader': ['DbcReader', 'DbcDescriptor'],
     'package_lifecycle': [],
@@ -36,7 +43,7 @@ tests['managed_server'] = ['ContentResourceAllocator', 'ContentPackage', 'Conten
 with tempfile.TemporaryDirectory(prefix='content-phase4-tests-') as directory:
     for name, units in tests.items():
         binary = Path(directory) / name
-        command = [os.environ.get('CXX', 'g++'), '-std=c++17', '-O0', '-g', '-I' + str(root / 'src'),
+        command = [compiler, '-std=c++17', '-O0', '-g', '-I' + str(root / 'src'),
                    str(root / 'tests' / (name + '_tests.cpp'))]
         command += [str(root / 'src' / (unit + '.cpp')) for unit in units]
         if name in ['schema2','schema3','extended_cost','managed_server']:

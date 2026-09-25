@@ -1,10 +1,13 @@
 // Test-only synchronous adapter. Exercises production SQL against disposable MySQL;
 // it does not simulate AzerothCore's async worker pool or Field metadata checks.
 #pragma once
+#ifndef CONTENT_MANAGER_COMPILE_ONLY
 #include <mysql.h>
+#endif
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <functional>
 #include <stdexcept>
@@ -38,8 +41,15 @@ struct Transaction
 };
 class TestDatabase
 {
+#ifndef CONTENT_MANAGER_COMPILE_ONLY
     MYSQL* connection=nullptr;
+#endif
 public:
+#ifdef CONTENT_MANAGER_COMPILE_ONLY
+    QueryResult Query(std::string_view sql);
+    template<typename... Args>
+    QueryResult Query(std::string_view sql, Args&&... args);
+#else
     std::function<void()> beforeCommit;
     std::string lastError;
     ~TestDatabase(){if(connection)mysql_close(connection);}
@@ -57,9 +67,10 @@ public:
         return true;
     }
     void DirectExecute(std::string const& sql){if(!Execute(sql))throw std::runtime_error(lastError);}
-    QueryResult Query(std::string const& sql)
+    QueryResult Query(std::string_view sql)
     {
-        if(mysql_query(connection,sql.c_str())){lastError=mysql_error(connection);std::cerr<<lastError<<'\n';return {};}
+        std::string statement(sql);
+        if(mysql_query(connection,statement.c_str())){lastError=mysql_error(connection);std::cerr<<lastError<<'\n';return {};}
         auto* result=mysql_store_result(connection);if(!result)return {};
         auto output=std::make_shared<Result>();
         while(auto row=mysql_fetch_row(result))
@@ -70,6 +81,8 @@ public:
         }
         mysql_free_result(result);return output->rows.empty()?QueryResult():output;
     }
+    template<typename... Args>
+    QueryResult Query(std::string_view sql, Args&&... args);
     std::shared_ptr<Transaction> BeginTransaction(){return std::make_shared<Transaction>();}
     void DirectCommitTransaction(std::shared_ptr<Transaction> tx)
     {
@@ -78,5 +91,6 @@ public:
         for(auto const& sql:tx->sql)if(!Execute(sql)){std::cerr<<"Transaction rejected: "<<lastError<<'\n';Execute("ROLLBACK");return;}
         if(!Execute("COMMIT"))throw std::runtime_error(lastError);
     }
+#endif
 };
 inline TestDatabase WorldDatabase,CharacterDatabase;
