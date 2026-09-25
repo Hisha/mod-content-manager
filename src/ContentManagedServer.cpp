@@ -253,7 +253,7 @@ bool ContentManagedServer::ResolveDonor(ContentCreatureTemplate const &d,
 	auto q = WorldDatabase.Query(
 		"SELECT "
 		"name,subname,minlevel,maxlevel,faction,npcflag,speed_walk,speed_run,"
-		"rank,dmgschool,BaseAttackTime,RangeAttackTime,unit_class,unit_flags,"
+		"`rank`,dmgschool,BaseAttackTime,RangeAttackTime,unit_class,unit_flags,"
 		"type,type_flags,RegenHealth,flags_extra,AIName,"
 		"ScriptName FROM creature_template WHERE entry=" +
 		N(d.copyFrom));
@@ -459,7 +459,7 @@ std::string ContentManagedServer::Condition(ResolvedCreatureTemplate const &r,
 		" AND t.npcflag=" + N(r.npcFlags) +
 		" AND t.speed_walk=" + F(r.speedWalk) +
 		" AND t.speed_run=" + F(r.speedRun) +
-		" AND t.rank=" + N(r.rank) + " AND t.dmgschool=" + N(r.damageSchool) +
+		" AND t.`rank`=" + N(r.rank) + " AND t.dmgschool=" + N(r.damageSchool) +
 		" AND t.BaseAttackTime=" + N(r.baseAttackTime) +
 		" AND t.RangeAttackTime=" + N(r.rangeAttackTime) +
 		" AND t.unit_class=" + N(r.unitClass) +
@@ -569,7 +569,7 @@ ContentManagedServer::ApplySql(ResolvedCreatureTemplate const &r,
 				T("creature-template.id") + " AND entry=" + N(r.entry)};
 	std::string columns =
 		"entry,name,subname,minlevel,maxlevel,faction,npcflag,speed_walk,speed_"
-		"run,rank,dmgschool,BaseAttackTime,RangeAttackTime,unit_class,unit_flags,"
+		"run,`rank`,dmgschool,BaseAttackTime,RangeAttackTime,unit_class,unit_flags,"
 		"type,type_flags,RegenHealth,flags_extra,AIName,"
 		"ScriptName";
 	std::string values =
