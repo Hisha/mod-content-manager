@@ -1,5 +1,9 @@
 # mod-content-manager
 
+## Generic managed server resources
+
+Content Manager supports retained symbolic `creature-template.id` and `gameobject-template.id` allocations, donor-derived typed template descriptors, symbolic permanent creature spawns, and symbolic vendor creature references. These optional declarations work in EPF schemas 2 and 3; existing EPFs remain unchanged. Server modules can resolve package-owned resources through the optional generic API in `src/api/ContentResourceApiV1.h`, but only from an ACTIVE/APPLIED and fully verified build. See `docs/MILESTONE2_MANAGED_SERVER_RESOURCES.md` for the descriptor and deployment contract.
+
 AzerothCore module for discovering and validating EPF content packages, persistently
 selecting packages, building cumulative WoW 3.3.5a realm MPQs with bundled StormLib, and publishing
 approved versioned artifacts to a filesystem directory.

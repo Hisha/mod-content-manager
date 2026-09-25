@@ -6,6 +6,7 @@ struct ResolvedVendorRow
 {
     std::string packageKey, packageVersion, symbol, costSymbol;
     std::uint32_t creatureEntry=0, itemEntry=0, costId=0, originalFlags=0;
+    bool flagsManaged=false;
 };
 class ContentVendorServer
 {

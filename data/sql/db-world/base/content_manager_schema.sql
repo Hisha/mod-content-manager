@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS `content_manager_build_lock` (
 ) ENGINE=InnoDB;
 INSERT IGNORE INTO `content_manager_build_lock` (`id`) VALUES (1);
 
--- Retained logical Item IDs. No allocation is deleted on uninstall or build removal.
+-- Retained logical resource IDs. No allocation is deleted on uninstall or build removal.
 CREATE TABLE IF NOT EXISTS `content_manager_allocation` (
     `realm_name` VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
     `package_key` VARCHAR(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
@@ -179,3 +179,17 @@ CREATE TABLE IF NOT EXISTS `content_manager_vendor_owner` (
  `artifact_sha256` CHAR(64) NOT NULL,
  PRIMARY KEY (`creature_entry`), UNIQUE KEY `logical_vendor` (`realm_name`,`package_key`,`symbol`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Generic ownership/provenance for donor-derived server templates and permanent spawns.
+CREATE TABLE IF NOT EXISTS `content_manager_server_resource_owner` (
+ `resource_kind` VARCHAR(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+ `entry` INT UNSIGNED NOT NULL,
+ `realm_name` VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+ `package_key` VARCHAR(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+ `symbol` VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+ `row_json` LONGTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+ `applied_build` INT UNSIGNED NOT NULL,
+ `artifact_sha256` CHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+ PRIMARY KEY (`resource_kind`,`entry`),
+ UNIQUE KEY `logical_server_resource` (`realm_name`,`package_key`,`symbol`,`resource_kind`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;

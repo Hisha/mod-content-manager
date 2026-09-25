@@ -71,7 +71,8 @@ bool ContentServerOwnership::CountOwned(std::string const& realm,
         {"content_manager_item_owner", summary.itemTemplates},
         {"content_manager_currency_owner", summary.currencies},
         {"content_manager_extended_cost_owner", summary.extendedCosts},
-        {"content_manager_vendor_owner", summary.vendors}
+        {"content_manager_vendor_owner", summary.vendors},
+        {"content_manager_server_resource_owner", summary.managedServerResources}
     };
     for (auto const& table : tables)
     {

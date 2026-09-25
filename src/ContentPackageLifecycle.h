@@ -50,6 +50,7 @@ struct ContentPackageRemovalAnalysis
     std::uint32_t ownedCurrencies = 0;
     std::uint32_t ownedExtendedCosts = 0;
     std::uint32_t ownedVendors = 0;
+    std::uint32_t ownedManagedServerResources = 0;
     std::uint32_t ownerLatestBuild = 0;
 
     // Best-effort build membership markers. Retained leases start at
@@ -107,7 +108,7 @@ inline char const* ContentPackageLifecycle::StateLabel(ContentInstalledSourceSta
 inline bool ContentPackageLifecycle::HasRetainedHistory(ContentPackageRemovalAnalysis const& analysis)
 {
     return !analysis.allocations.empty() || analysis.ownedItemTemplates || analysis.ownedCurrencies
-        || analysis.ownedExtendedCosts || analysis.ownedVendors;
+        || analysis.ownedExtendedCosts || analysis.ownedVendors || analysis.ownedManagedServerResources;
 }
 
 inline std::vector<std::string> ContentPackageLifecycle::Summary(
@@ -137,13 +138,14 @@ inline std::vector<std::string> ContentPackageLifecycle::Summary(
                 : std::string())
             + "; these leases are never recycled on removal");
     if (analysis.ownedItemTemplates || analysis.ownedCurrencies
-        || analysis.ownedExtendedCosts || analysis.ownedVendors)
+        || analysis.ownedExtendedCosts || analysis.ownedVendors || analysis.ownedManagedServerResources)
     {
         lines.push_back("  Applied server content owned by this package:");
         lines.push_back("    item_template: " + std::to_string(analysis.ownedItemTemplates)
             + "   currencytypes_dbc: " + std::to_string(analysis.ownedCurrencies)
             + "   itemextendedcost_dbc: " + std::to_string(analysis.ownedExtendedCosts)
-            + "   npc_vendor relationships: " + std::to_string(analysis.ownedVendors));
+            + "   npc_vendor relationships: " + std::to_string(analysis.ownedVendors)
+            + "   generic server resources: " + std::to_string(analysis.ownedManagedServerResources));
         if (analysis.ownerLatestBuild)
             lines.push_back("    latest applied build: " + std::to_string(analysis.ownerLatestBuild));
     }
@@ -160,7 +162,7 @@ inline std::vector<std::string> ContentPackageLifecycle::Summary(
     lines.push_back("  Preserved: completed builds and sidecars, published artifacts, allocation leases,");
     lines.push_back("  and server ownership records, so historical builds and rollback remain coherent.");
     lines.push_back("  Not deleted: live server rows (item_template, currencytypes_dbc,");
-    lines.push_back("  itemextendedcost_dbc, npc_vendor). Remove those separately if no longer wanted.");
+    lines.push_back("  itemextendedcost_dbc, npc_vendor, managed templates/spawns). Remove those separately if no longer wanted.");
     lines.push_back("  No build, publish, or activation happens here. Run .content build, then");
     lines.push_back("  .content activate <build-number> (and .content server apply if server rows apply).");
     return lines;

@@ -12,6 +12,36 @@
 #include "DBCStores.h"
 #include "World.h"
 #include <algorithm>
+#include <optional>
+ContentResourcesV1::Result ContentCapabilityProvider::ResolveResource(std::string const& package,
+    std::string const& symbol,std::string const& kind,std::uint32_t& value,std::string& reason) const
+{
+    using R=ContentResourcesV1::Result;value=0;
+    if(!sContentManager.IsEnabled()){reason="Content Manager disabled";return R::Inactive;}
+    std::optional<ContentBuildRecord> active;if(!ContentBuildRegistry().GetActiveBuild(active,reason))return R::Invalid;
+    if(!active){reason="No native content activation";return R::Inactive;}
+    auto realmResult=LoginDatabase.Query("SELECT name FROM realmlist WHERE id = {}",realm.Id.Realm);
+    if(!realmResult||realmResult->GetFieldCount()!=1||realmResult->Fetch()[0].IsNull()){reason="Cannot resolve current realm identity";return R::Invalid;}
+    auto currentRealm=realmResult->Fetch()[0].Get<std::string>();if(active->realmName!=currentRealm){reason="Active content belongs to another realm";return R::Invalid;}
+    ContentServerStatus status;std::vector<ResolvedServerItem> items;std::vector<ResolvedExtendedCost> costs;std::vector<ResolvedVendorRow> vendors;
+    std::vector<ResolvedCreatureTemplate> creatures;std::vector<ResolvedGameObjectTemplate> gameObjects;std::vector<ResolvedCreatureSpawn> spawns;
+    if(!ContentServerDeployment::Inspect(active->buildNumber,active->realmName,sContentManager.GetOutputDirectory(),status,items,reason,&costs,&vendors,&creatures,&gameObjects,&spawns))return R::Invalid;
+    if(status.state!="APPLIED"){reason="Active native content is not server APPLIED";return R::Invalid;}
+    bool declared=false;
+    if(kind=="item.id")declared=std::any_of(items.begin(),items.end(),[&](auto const& r){return r.packageKey==package&&r.symbol==symbol;});
+    else if(kind=="item-extended-cost.id")declared=std::any_of(costs.begin(),costs.end(),[&](auto const& r){return r.packageKey==package&&r.symbol==symbol;});
+    else if(kind=="currency.known-bit")declared=std::any_of(items.begin(),items.end(),[&](auto const& r){return r.packageKey==package&&r.currency.symbol==symbol&&r.currency.bitIndex;});
+    else if(kind=="currency-category.id")declared=std::any_of(items.begin(),items.end(),[&](auto const& r){return r.packageKey==package&&r.currency.categorySymbol==symbol&&r.currency.categoryId;});
+    else if(kind=="creature-template.id")declared=std::any_of(creatures.begin(),creatures.end(),[&](auto const& r){return r.packageKey==package&&r.symbol==symbol;});
+    else if(kind=="gameobject-template.id")declared=std::any_of(gameObjects.begin(),gameObjects.end(),[&](auto const& r){return r.packageKey==package&&r.symbol==symbol;});
+    else if(kind=="creature-spawn.guid")declared=std::any_of(spawns.begin(),spawns.end(),[&](auto const& r){return r.packageKey==package&&r.symbol==symbol;});
+    else {reason="Unsupported resource kind";return R::Invalid;}
+    if(!declared){reason="Resource is not declared by the ACTIVE/APPLIED build";return R::Inactive;}
+    std::vector<ItemAllocation> leases;if(!ContentAllocationRegistry().Read(active->realmName,leases,reason))return R::Invalid;
+    auto lease=std::find_if(leases.begin(),leases.end(),[&](auto const& a){return a.packageKey==package&&a.symbol==symbol&&a.resourceKind==kind;});
+    if(lease==leases.end()){reason="Declared resource lacks retained allocation";return R::Invalid;}
+    value=lease->value;reason="Validated ACTIVE/APPLIED managed resource";return R::Ready;
+}
 using namespace ContentCapabilitiesV1;
 Result ContentCapabilityProvider::Resolve(std::string const& package,std::string const& vendorSymbol,
     std::vector<Resource>& requests,Vendor& vendor,std::string& reason) const

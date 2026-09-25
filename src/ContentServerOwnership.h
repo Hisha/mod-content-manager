@@ -27,6 +27,7 @@ struct ContentOwnerSummary
     std::uint32_t currencies = 0;
     std::uint32_t extendedCosts = 0;
     std::uint32_t vendors = 0;
+    std::uint32_t managedServerResources = 0;
     std::uint32_t latestAppliedBuild = 0;
 };
 

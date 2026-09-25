@@ -26,15 +26,20 @@ tests = {
 for name in ['server_bundle', 'schema2', 'schema3', 'currency']:
     for unit in ['CurrencyCategoryDbcComposer', 'CurrencyDbcComposer', 'ItemExtendedCostDbc', 'DbcReader', 'DbcDescriptor']:
         if unit not in tests[name]: tests[name].append(unit)
+for name in ['server_bundle', 'currency']:
+    tests[name].append('ContentManagedServerDescriptor')
 tests['category'] = ['CurrencyCategoryDbcComposer', 'CurrencyDbcComposer', 'DbcReader', 'DbcDescriptor', 'ContentResourceAllocator']
-tests['extended_cost'] = ['ItemExtendedCostDbc', 'ContentResourceAllocator', 'ContentPackage', 'ContentServerBundle', 'ContentVendorRow', 'ServerTableDescriptor', 'CurrencyCategoryDbcComposer', 'CurrencyDbcComposer', 'DbcReader', 'DbcDescriptor']
+tests['extended_cost'] = ['ItemExtendedCostDbc', 'ContentResourceAllocator', 'ContentPackage', 'ContentServerBundle', 'ContentVendorRow', 'ContentManagedServerDescriptor', 'ServerTableDescriptor', 'CurrencyCategoryDbcComposer', 'CurrencyDbcComposer', 'DbcReader', 'DbcDescriptor']
+tests['managed_server'] = ['ContentResourceAllocator', 'ContentPackage', 'ContentServerBundle', 'ContentVendorRow',
+                           'ContentManagedServerDescriptor', 'ServerTableDescriptor', 'CurrencyCategoryDbcComposer',
+                           'CurrencyDbcComposer', 'ItemExtendedCostDbc', 'DbcReader', 'DbcDescriptor']
 with tempfile.TemporaryDirectory(prefix='content-phase4-tests-') as directory:
     for name, units in tests.items():
         binary = Path(directory) / name
         command = [os.environ.get('CXX', 'g++'), '-std=c++17', '-O0', '-g', '-I' + str(root / 'src'),
                    str(root / 'tests' / (name + '_tests.cpp'))]
         command += [str(root / 'src' / (unit + '.cpp')) for unit in units]
-        if name in ['schema2','schema3','extended_cost']:
+        if name in ['schema2','schema3','extended_cost','managed_server']:
             command.append(str(root / 'src/third_party/miniz/miniz.c'))
         subprocess.run(command + ['-o', str(binary)], check=True)
         inputs = []

@@ -33,6 +33,9 @@ public:
     static ResourceAllocationPolicy ItemExtendedCostIdPolicy() { return {"item-extended-cost.id", 1, 65535}; }
     static ResourceAllocationPolicy CurrencyCategoryIdPolicy() { return {"currency-category.id", 1, 65535}; }
     static ResourceAllocationPolicy CurrencyKnownBitPolicy() { return {"currency.known-bit", 1, 64}; }
+    static ResourceAllocationPolicy CreatureTemplateIdPolicy() { return {"creature-template.id", 1, 0x00ffffff}; }
+    static ResourceAllocationPolicy GameObjectTemplateIdPolicy() { return {"gameobject-template.id", 1, 0x00ffffff}; }
+    static ResourceAllocationPolicy CreatureSpawnGuidPolicy() { return {"creature-spawn.guid", 1, 0xffffffff}; }
     static ResourceAllocationPolicy ItemIdPolicy(std::set<std::uint32_t> const& baselineIDs);
     static std::vector<ItemAllocation> Plan(std::string const& realm,
         ResourceAllocationPolicy const& policy,

@@ -246,8 +246,9 @@ public:
         { handler->SendSysMessage("No realm build found."); return true; }
         ContentServerStatus status;
         std::vector<ResolvedServerItem> rows;
+        std::vector<ResolvedCreatureTemplate> creatures;std::vector<ResolvedGameObjectTemplate> gameObjects;std::vector<ResolvedCreatureSpawn> spawns;
         if (!ContentServerDeployment::Inspect(number, realm.Name, sContentManager.GetOutputDirectory(),
-            status, rows, error))
+            status, rows, error,nullptr,nullptr,&creatures,&gameObjects,&spawns))
         { handler->PSendSysMessage("Server status unavailable: {}", error); return true; }
         handler->PSendSysMessage("Build: {}  server: {}  client: {}", ContentBuildService::Number(number),
             status.state, build->state);
@@ -260,6 +261,8 @@ public:
                 handler->PSendSysMessage("{} / {} / currency.known-bit = {}; CurrencyTypes / currencytypes_dbc ID=ItemID={}; CategoryID={}; BagFamily=8192",
                     row.packageKey, row.currency.symbol, row.currency.bitIndex, row.id, row.currency.categoryId);
         }
+        handler->PSendSysMessage("Managed creature_template rows: {}; gameobject_template rows: {}; permanent creature spawns: {}",
+            creatures.size(),gameObjects.size(),spawns.size());
         handler->PSendSysMessage("Server bundle SHA-256: {}", status.bundleSha256);
         handler->PSendSysMessage("Parity manifest SHA-256: {}", status.paritySha256);
         return true;
@@ -783,9 +786,11 @@ public:
 	        if (validation.manifest.packageKey != packageKey)
 	            continue;
 
-            if (!validation.manifest.itemRows.empty() || !validation.manifest.extendedCosts.empty())
+            if (!validation.manifest.itemRows.empty() || !validation.manifest.extendedCosts.empty()
+                || !validation.manifest.creatureTemplates.empty() || !validation.manifest.gameObjectTemplates.empty()
+                || !validation.manifest.creatureSpawns.empty())
             {
-                handler->SendSysMessage("Schema 2 DBC rows require an installed cumulative .content build for allocation and composition.");
+                handler->SendSysMessage("Typed resources require an installed cumulative .content build for allocation and composition.");
                 return true;
             }
 

@@ -18,6 +18,7 @@ struct Field
     template<class T> T Get() const
     {
         if constexpr(std::is_same_v<T,std::string>) return text;
+        else if constexpr(std::is_floating_point_v<T>) return static_cast<T>(std::stod(text));
         else if constexpr(std::is_signed_v<T>) return static_cast<T>(std::stoll(text));
         else return static_cast<T>(std::stoull(text));
     }

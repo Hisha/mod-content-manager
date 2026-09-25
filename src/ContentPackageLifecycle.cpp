@@ -56,6 +56,7 @@ bool ContentPackageLifecycle::Analyse(std::string const& realm, std::string cons
     analysis.ownedCurrencies = owners.currencies;
     analysis.ownedExtendedCosts = owners.extendedCosts;
     analysis.ownedVendors = owners.vendors;
+    analysis.ownedManagedServerResources = owners.managedServerResources;
     analysis.ownerLatestBuild = owners.latestAppliedBuild;
     if (analysis.ownerLatestBuild)
     {

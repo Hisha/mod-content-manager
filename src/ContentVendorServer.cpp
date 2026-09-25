@@ -34,7 +34,7 @@ std::string ContentVendorServer::Condition(ResolvedVendorRow const& r,std::strin
 {
     std::string base="EXISTS(SELECT 1 FROM item_template WHERE entry="+N(r.itemEntry)+") AND "
         "NOT EXISTS(SELECT 1 FROM game_event_npc_vendor e JOIN creature c ON c.guid=e.guid WHERE c.id1="+N(r.creatureEntry)+" OR c.id2="+N(r.creatureEntry)+" OR c.id3="+N(r.creatureEntry)+") AND ";
-    if(!exists)return base+"EXISTS(SELECT 1 FROM creature_template WHERE entry="+N(r.creatureEntry)+" AND npcflag="+N(r.originalFlags)+") AND "
+    if(!exists)return base+"EXISTS(SELECT 1 FROM creature_template WHERE entry="+N(r.creatureEntry)+" AND npcflag="+N(r.flagsManaged?(r.originalFlags|128):r.originalFlags)+") AND "
         "NOT EXISTS(SELECT 1 FROM npc_vendor WHERE entry="+N(r.creatureEntry)+") AND NOT EXISTS(SELECT 1 FROM content_manager_vendor_owner "
         "WHERE creature_entry="+N(r.creatureEntry)+" OR (realm_name="+T(realm)+" AND package_key="+T(r.packageKey)+" AND symbol="+T(r.symbol)+"))";
     return base+"(SELECT COUNT(*) FROM npc_vendor WHERE entry="+N(r.creatureEntry)+")=1 AND EXISTS(SELECT 1 FROM "
@@ -54,10 +54,12 @@ std::vector<std::string> ContentVendorServer::ApplySql(ResolvedVendorRow const& 
 {
     // Keep the semantic owner snapshot stable across package-version-only updates.
     if(exists)return {"UPDATE content_manager_vendor_owner SET applied_build="+N(build)+",artifact_sha256="+T(hash)+" WHERE creature_entry="+N(r.creatureEntry)};
-    return {"UPDATE creature_template SET npcflag="+N(r.originalFlags|128)+" WHERE entry="+N(r.creatureEntry)+" AND npcflag="+N(r.originalFlags),
+    std::vector<std::string> sql;
+    if(!r.flagsManaged)sql.push_back("UPDATE creature_template SET npcflag="+N(r.originalFlags|128)+" WHERE entry="+N(r.creatureEntry)+" AND npcflag="+N(r.originalFlags));
+    sql.insert(sql.end(),{
         "INSERT INTO npc_vendor(entry,slot,item,maxcount,incrtime,ExtendedCost,VerifiedBuild) VALUES ("+N(r.creatureEntry)+",0,"+N(r.itemEntry)+",0,0,"+N(r.costId)+",12340)",
         "INSERT INTO content_manager_vendor_owner(creature_entry,realm_name,package_key,symbol,original_flags,row_json,applied_build,artifact_sha256) VALUES ("
-        +N(r.creatureEntry)+","+T(realm)+","+T(r.packageKey)+","+T(r.symbol)+","+N(r.originalFlags)+","+T(Snapshot(r))+","+N(build)+","+T(hash)+")"};
+        +N(r.creatureEntry)+","+T(realm)+","+T(r.packageKey)+","+T(r.symbol)+","+N(r.originalFlags)+","+T(Snapshot(r))+","+N(build)+","+T(hash)+")"});return sql;
 }
 bool ContentVendorServer::Verify(ResolvedVendorRow const& r,std::string const& realm,std::uint32_t build,std::string const& hash,std::string& error)
 {
