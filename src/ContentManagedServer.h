@@ -77,6 +77,11 @@ public:
 								 std::string const &realm, bool exists);
 	static std::string Condition(ResolvedCreatureSpawn const &,
 								 std::string const &realm, bool exists);
+	// Temporary diagnostic decomposition of the managed creature
+	// post-apply condition.
+	static std::vector<std::string>
+	DiagnosticConditions(ResolvedCreatureTemplate const &,
+	                     std::string const &realm);
 	static std::vector<std::string> ApplySql(ResolvedCreatureTemplate const &,
 											 std::string const &realm,
 											 bool exists, std::uint32_t build,

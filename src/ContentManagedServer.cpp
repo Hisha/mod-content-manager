@@ -656,6 +656,17 @@ std::string ContentManagedServer::Condition(ResolvedCreatureTemplate const &r,
 						 r.symbol, Snapshot(r)) +
 		   ")";
 }
+std::vector<std::string>
+ContentManagedServer::DiagnosticConditions(
+    ResolvedCreatureTemplate const &r,
+    std::string const &realm) {
+    return {
+        TargetCondition(r),
+        FieldsCondition(r),
+        OwnerAllocationCondition(r, realm),
+        OwnerSnapshotCondition(r)
+    };
+}
 std::string ContentManagedServer::Condition(ResolvedGameObjectTemplate const &r,
 											std::string const &realm,
 											bool exists) {
