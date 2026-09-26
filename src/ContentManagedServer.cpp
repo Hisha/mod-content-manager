@@ -373,43 +373,51 @@ ResolvedCreatureSpawn ParseSpawn(json const &v) {
 template <class Row>
 bool QueryCheck(Row const &r, std::string const &realm, bool &exists,
 				std::string &error) {
-	auto q = WorldDatabase.Query(
+	auto missing = WorldDatabase.Query(
 		"SELECT CAST((" + ContentManagedServer::Condition(r, realm, false) +
-		") AS UNSIGNED),CAST((" +
-		ContentManagedServer::Condition(r, realm, true) + ") AS UNSIGNED)");
-	if (!q) {
-		error = ResourceLabel(r) + ": condition SQL query failed";
+		") AS UNSIGNED)");
+	if (!missing) {
+		error = ResourceLabel(r) + ": new-resource condition SQL query failed";
 		return false;
 	}
-	auto fields = q->Fetch();
-	bool const missing = fields[0].template Get<std::uint64_t>() != 0;
-	bool const existing = fields[1].template Get<std::uint64_t>() != 0;
-	if (!missing && !existing) {
-		auto diagnostic = WorldDatabase.Query(
-			"SELECT CAST((" + DonorCondition(r) +
-			") AS UNSIGNED),CAST((" + TargetCondition(r) +
-			") AS UNSIGNED),CAST((" + OwnerCondition(r) +
-			") AS UNSIGNED),CAST((" + FieldsCondition(r) +
-			") AS UNSIGNED),CAST((" + OwnerAllocationCondition(r, realm) +
-			") AS UNSIGNED),CAST((" + OwnerSnapshotCondition(r) +
-			") AS UNSIGNED)");
-		if (!diagnostic) {
-			error = ResourceLabel(r) +
-					": conditions returned false; diagnostic SQL query failed";
-			return false;
-		}
-		auto detail = diagnostic->Fetch();
-		error = ExplainCheckFailure(
-			r, realm, detail[0].template Get<std::uint64_t>() != 0,
-			detail[1].template Get<std::uint64_t>() != 0,
-			detail[2].template Get<std::uint64_t>() != 0,
-			detail[3].template Get<std::uint64_t>() != 0,
-			detail[4].template Get<std::uint64_t>() != 0,
-			detail[5].template Get<std::uint64_t>() != 0);
+	if (missing->Fetch()[0].template Get<std::uint64_t>()) {
+		exists = false;
+		return true;
+	}
+	auto existing = WorldDatabase.Query(
+		"SELECT CAST((" + ContentManagedServer::Condition(r, realm, true) +
+		") AS UNSIGNED)");
+	if (!existing) {
+		error =
+			ResourceLabel(r) + ": existing-resource condition SQL query failed";
 		return false;
 	}
-	exists = existing;
-	return true;
+	if (existing->Fetch()[0].template Get<std::uint64_t>()) {
+		exists = true;
+		return true;
+	}
+	auto diagnostic = WorldDatabase.Query(
+		"SELECT CAST((" + DonorCondition(r) +
+		") AS UNSIGNED),CAST((" + TargetCondition(r) +
+		") AS UNSIGNED),CAST((" + OwnerCondition(r) +
+		") AS UNSIGNED),CAST((" + FieldsCondition(r) +
+		") AS UNSIGNED),CAST((" + OwnerAllocationCondition(r, realm) +
+		") AS UNSIGNED),CAST((" + OwnerSnapshotCondition(r) +
+		") AS UNSIGNED)");
+	if (!diagnostic) {
+		error = ResourceLabel(r) +
+				": conditions returned false; diagnostic SQL query failed";
+		return false;
+	}
+	auto detail = diagnostic->Fetch();
+	error = ExplainCheckFailure(
+		r, realm, detail[0].template Get<std::uint64_t>() != 0,
+		detail[1].template Get<std::uint64_t>() != 0,
+		detail[2].template Get<std::uint64_t>() != 0,
+		detail[3].template Get<std::uint64_t>() != 0,
+		detail[4].template Get<std::uint64_t>() != 0,
+		detail[5].template Get<std::uint64_t>() != 0);
+	return false;
 }
 template <class Row>
 bool QueryVerify(Row const &r, std::string const &realm, std::uint32_t build,

@@ -114,7 +114,15 @@ int main(int argc, char **argv) {
 	assert(Has(error, "kind=creature-template.id") &&
 		   Has(error, "package=package-a") &&
 		   Has(error, "symbol=managed-creature") && Has(error, "entry=1000") &&
-		   Has(error, "donor=999") && Has(error, "donor creature_template entry 999 is missing"));
+		   Has(error, "donor=999") &&
+		   Has(error, "donor creature_template entry 999 is missing"));
+	// Removing an existing-path-only column proves that a true new-resource
+	// condition returns without evaluating the irrelevant existing condition.
+	SQL("ALTER TABLE creature_template DROP COLUMN `rank`");
+	assert(ContentManagedServer::Check(creature, "Realm", exists, error) &&
+		   !exists);
+	SQL("ALTER TABLE creature_template ADD COLUMN `rank` INT UNSIGNED NOT NULL "
+		"DEFAULT 0");
 	SQL("INSERT INTO creature_template(entry,name) VALUES(1000,'Occupied')");
 	assert(!ContentManagedServer::Check(creature, "Realm", exists, error));
 	assert(Has(error, "entry=1000") &&
@@ -181,6 +189,8 @@ int main(int argc, char **argv) {
 										std::string(64, 'a'), error));
 	assert(ContentManagedServer::Verify(spawn, "Realm", 1, std::string(64, 'a'),
 										error));
+	assert(ContentManagedServer::Check(creature, "Realm", exists, error) &&
+		   exists); // A false new condition evaluates the existing-owned path.
 	SQL("UPDATE creature_template SET name='Drifted' WHERE entry=1000");
 	assert(!ContentManagedServer::Check(creature, "Realm", exists, error));
 	assert(Has(error, "kind=creature-template.id") &&
@@ -197,10 +207,14 @@ int main(int argc, char **argv) {
 		"resource_kind='creature-template.id' AND entry=1000");
 	assert(!ContentManagedServer::Check(creature, "Realm", exists, error));
 	assert(Has(error, "ownership snapshot differs from the expected row"));
+	SQL("ALTER TABLE creature_template DROP COLUMN `rank`");
+	assert(!ContentManagedServer::Check(creature, "Realm", exists, error));
+	assert(Has(error, "kind=creature-template.id") &&
+		   Has(error, "existing-resource condition SQL query failed"));
 	SQL("DROP TABLE creature");
 	assert(!ContentManagedServer::Check(spawn, "Realm", exists, error));
 	assert(Has(error, "kind=creature-spawn.guid") &&
-		   Has(error, "condition SQL query failed"));
+		   Has(error, "new-resource condition SQL query failed"));
 	std::cout << "PASS donor validation, managed representations, ownership, "
 				 "spawn resolution, diagnostics and transactional rollback\n";
 }

@@ -205,6 +205,25 @@ int main(int argc,char** argv)
     auto staged=WorldDatabase.Query("SELECT COUNT(*) FROM content_manager_build WHERE state='STAGED'");
     assert(staged&&staged->Fetch()[0].Get<uint64>()==3);
 
-    std::cout<<"PASS client requirements: schema-3 declaration, deduplicated union, immutable per-build persistence, empty for no-requirement builds, distinguished missing builds, unchanged MPQ/lifecycle\n";
+    // The command-facing registry limit is applied in SQL and ordered by the
+    // actual build number. General lifecycle callers still receive all rows.
+    for(std::uint32_t offset=1;offset<=9;++offset)
+    {
+        auto number=third.buildNumber+offset;
+        WorldDatabase.DirectExecute("INSERT INTO content_manager_build(build_number,realm_name,filename,"
+            "package_count,file_count,state,sha256) VALUES ("+std::to_string(number)+",'Eitrigg','fixture-"
+            +std::to_string(number)+".mpq',1,1,'STAGED','"+std::string(64,'b')+"')");
+    }
+    std::string listError;
+    std::vector<ContentBuildRecord> recent;
+    assert(ContentBuildRegistry().GetBuilds(recent,listError,10));
+    assert(recent.size()==10&&recent.front().buildNumber==third.buildNumber+9
+        &&recent.back().buildNumber==third.buildNumber);
+    std::vector<ContentBuildRecord> all;
+    assert(ContentBuildRegistry().GetBuilds(all,listError));
+    assert(all.size()==12&&all.front().buildNumber==third.buildNumber+9
+        &&all.back().buildNumber==first.buildNumber);
+
+    std::cout<<"PASS client requirements: schema-3 declaration, deduplicated union, immutable per-build persistence, empty for no-requirement builds, distinguished missing builds, unchanged MPQ/lifecycle, newest-ten build listing\n";
     return 0;
 }

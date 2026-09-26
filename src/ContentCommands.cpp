@@ -664,13 +664,13 @@ public:
     {
         std::vector<ContentBuildRecord> records;
         std::string error;
-        if (!ContentBuildRegistry().GetBuilds(records, error))
+        if (!ContentBuildRegistry().GetBuilds(records, error, 10))
             handler->PSendSysMessage("Cannot list builds: {}", error);
         else if (records.empty())
             handler->SendSysMessage("No realm content builds exist.");
         else
         {
-            handler->SendSysMessage("Realm content builds:");
+            handler->SendSysMessage("10 most recent realm content builds, newest first:");
             for (auto const& row : records)
             {
                 std::string error;

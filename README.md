@@ -18,7 +18,7 @@ approved versioned artifacts to a filesystem directory.
 | `.content uninstall <package-key>` | Surveys the package (source state, retained leases, applied server ownership, build membership), removes the package selection, and reports what was preserved. Works even when the EPF is missing. |
 | `.content stage <package-key>` | Stages one package and builds a separate development test MPQ, without installing it or creating a build record. |
 | `.content build` | Creates a new cumulative MPQ from all INSTALLED packages, hashes it, records STAGED, then cleans its workspace. No argument is required. |
-| `.content build list` | Lists completed realm builds newest first, with state, filename, package/file counts and SHA256. |
+| `.content build list` | Lists the 10 most recent realm builds, newest first, with state, filename, package/file counts and SHA256. |
 | `.content activate <build-number>` | Verifies and publishes the versioned artifact, verifies the published SHA256, then selects it as ACTIVE. Also supports rollback. |
 
 Activation requires an administrator session or the server console. Handled Content
@@ -505,8 +505,9 @@ row in `content_manager_build_client_requirement` has a composite primary key
 The requirement insert is part of the same transaction that records the build in both
 the ordinary (`ContentBuildRegistry::Record`) and composed-allocation
 (`ContentAllocationRegistry::CommitComposed`) paths, and the build is only accepted after
-the stored set is read back and matches. `.content build list` shows each build's
-requirements as `none`, a comma-joined list, or `unavailable (<database error>)`.
+the stored set is read back and matches. `.content build list` shows the 10 most
+recent builds' requirements as `none`, a comma-joined list, or
+`unavailable (<database error>)`.
 The read API is `ContentBuildRegistry::GetClientRequirements(buildNumber, ...)`:
 "what client requirements were recorded for build N?".
 

@@ -27,7 +27,8 @@ struct ContentServerBuildRecord;
 class ContentBuildRegistry
 {
 public:
-    bool GetBuilds(std::vector<ContentBuildRecord>& records, std::string& error) const;
+    bool GetBuilds(std::vector<ContentBuildRecord>& records, std::string& error,
+        std::uint32_t limit = 0) const;
     bool GetBuild(std::uint32_t number, std::optional<ContentBuildRecord>& record, std::string& error) const;
     bool GetActiveBuild(std::optional<ContentBuildRecord>& record, std::string& error) const;
     bool ActivateBuild(std::uint32_t number, std::filesystem::path const& outputDirectory,

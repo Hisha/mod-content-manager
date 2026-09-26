@@ -168,13 +168,17 @@ std::filesystem::path Artifact(ContentBuildRecord const& record, std::filesystem
 }
 }
 
-bool ContentBuildRegistry::GetBuilds(std::vector<ContentBuildRecord>& records, std::string& error) const
+bool ContentBuildRegistry::GetBuilds(std::vector<ContentBuildRecord>& records,
+    std::string& error, std::uint32_t limit) const
 {
     records.clear();
     // LEFT JOIN guarantees an empty registry still returns a row, unlike a failed query.
-    auto query = WorldDatabase.Query("SELECT b.build_number, b.realm_name, b.filename, b.package_count, "
+    std::string sql = "SELECT b.build_number, b.realm_name, b.filename, b.package_count, "
         "b.file_count, b.state, b.sha256 FROM (SELECT 1) AS seed LEFT JOIN content_manager_build b ON 1=1 "
-        "ORDER BY b.build_number DESC");
+        "ORDER BY b.build_number DESC";
+    if (limit)
+        sql += " LIMIT " + std::to_string(limit);
+    auto query = WorldDatabase.Query(sql);
     if (!query) { error = DatabaseError; return false; }
     do
     {
