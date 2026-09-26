@@ -22,6 +22,9 @@ std::string F(float value) {
 	out << std::setprecision(std::numeric_limits<float>::max_digits10) << value;
 	return out.str();
 }
+std::string FCmp(std::string const &column, float value) {
+    return column + "=CAST(" + F(value) + " AS FLOAT)";
+}
 std::string Q(std::string const &value) {
 	return ContentServerBundle::SqlText(value) + " COLLATE utf8mb4_unicode_ci";
 }
@@ -136,8 +139,8 @@ std::string ManagedFields(ResolvedCreatureTemplate const &r) {
 		   " AND t.minlevel=" + N(r.minLevel) +
 		   " AND t.maxlevel=" + N(r.maxLevel) + " AND t.faction=" +
 		   N(r.faction) + " AND t.npcflag=" + N(r.npcFlags) +
-		   " AND t.speed_walk=" + F(r.speedWalk) +
-		   " AND t.speed_run=" + F(r.speedRun) +
+		   " AND " + FCmp("t.speed_walk", r.speedWalk) +
+		   " AND " + FCmp("t.speed_run", r.speedRun) +
 		   " AND t.`rank`=" + N(r.rank) +
 		   " AND t.dmgschool=" + N(r.damageSchool) +
 		   " AND t.BaseAttackTime=" + N(r.baseAttackTime) +
@@ -155,7 +158,7 @@ std::string ManagedFields(ResolvedGameObjectTemplate const &r) {
 		"t.type=" + N(r.type) + " AND t.displayId=" + N(r.displayId) +
 		" AND t.name=" + Q(r.name) + " AND t.IconName=" + Q(r.iconName) +
 		" AND t.castBarCaption=" + Q(r.castBarCaption) +
-		" AND t.unk1=" + Q(r.unk1) + " AND t.size=" + F(r.size);
+		" AND t.unk1=" + Q(r.unk1) + " AND " + FCmp("t.size", r.size);
 	for (unsigned i = 0; i < 24; ++i)
 		fields += " AND t.Data" + std::to_string(i) + "=" + N(r.data[i]);
 	return fields + " AND t.AIName=" + Q(r.aiName) +
@@ -166,11 +169,12 @@ std::string ManagedFields(ResolvedCreatureSpawn const &r) {
 	return "t.id=" + N(r.creatureEntry) + " AND t.map=" + N(r.map) +
 		   " AND t.spawnMask=" + N(r.spawnMask) +
 		   " AND t.phaseMask=" + N(r.phaseMask) +
-		   " AND t.position_x=" + F(r.x) + " AND t.position_y=" + F(r.y) +
-		   " AND t.position_z=" + F(r.z) +
-		   " AND t.orientation=" + F(r.orientation) +
+		   " AND " + FCmp("t.position_x", r.x) +
+		   " AND " + FCmp("t.position_y", r.y) +
+		   " AND " + FCmp("t.position_z", r.z) +
+		   " AND " + FCmp("t.orientation", r.orientation) +
 		   " AND t.spawntimesecs=" + N(r.respawnSeconds) +
-		   " AND t.wander_distance=" + F(r.wanderDistance) +
+		   " AND " + FCmp("t.wander_distance", r.wanderDistance) +
 		   " AND t.MovementType=" + N(r.movementType);
 }
 std::string DonorCondition(ResolvedCreatureTemplate const &r) {
@@ -655,17 +659,6 @@ std::string ContentManagedServer::Condition(ResolvedCreatureTemplate const &r,
 		   OwnerIdentity("creature-template.id", r.entry, realm, r.packageKey,
 						 r.symbol, Snapshot(r)) +
 		   ")";
-}
-std::vector<std::string>
-ContentManagedServer::DiagnosticConditions(
-    ResolvedCreatureTemplate const &r,
-    std::string const &realm) {
-    return {
-        TargetCondition(r),
-        FieldsCondition(r),
-        OwnerAllocationCondition(r, realm),
-        OwnerSnapshotCondition(r)
-    };
 }
 std::string ContentManagedServer::Condition(ResolvedGameObjectTemplate const &r,
 											std::string const &realm,

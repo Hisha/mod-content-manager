@@ -675,18 +675,9 @@ bool ContentServerDeployment::Apply(
 		// a distinct sentinel so SQL errors identify the failed assertion.
 		std::uint32_t guardId = 1;
 
-		auto guard = [&](std::string const& condition) {
-		    ++guardId;
-
-		    tx->Append(
-		        "INSERT INTO content_manager_build_lock (id) VALUES (" +
-		        std::to_string(guardId) +
-		        ") ON DUPLICATE KEY UPDATE id=id");
-
-		    tx->Append(
-		        "INSERT INTO content_manager_build_lock (id) SELECT " +
-		        std::to_string(guardId) +
-		        " WHERE NOT (" + condition + ")");
+		auto guard = [&](std::string const &condition) {
+		    tx->Append("INSERT INTO content_manager_build_lock (id) SELECT 1 "
+		               "WHERE NOT (" + condition + ")");
 		};
         auto registryCondition = [&](char const* serverState) {
 			return "EXISTS(SELECT 1 FROM content_manager_build b JOIN "
@@ -902,13 +893,8 @@ bool ContentServerDeployment::Apply(
         }
 		for (auto const &vendor : vendors)
 			guard(ContentVendorServer::Condition(vendor, realm, true));
-		for (auto const &r : creatures) {
-		    for (auto const &diagnostic :
-		         ContentManagedServer::DiagnosticConditions(r, realm))
-		        guard(diagnostic);
-
+		for (auto const &r : creatures)
 		    guard(ContentManagedServer::Condition(r, realm, true));
-		}
 		for (auto const &r : gameObjects)
 			guard(ContentManagedServer::Condition(r, realm, true));
 		for (auto const &r : spawns)
