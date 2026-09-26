@@ -902,8 +902,13 @@ bool ContentServerDeployment::Apply(
         }
 		for (auto const &vendor : vendors)
 			guard(ContentVendorServer::Condition(vendor, realm, true));
-		for (auto const &r : creatures)
-			guard(ContentManagedServer::Condition(r, realm, true));
+		for (auto const &r : creatures) {
+		    for (auto const &diagnostic :
+		         ContentManagedServer::DiagnosticConditions(r, realm))
+		        guard(diagnostic);
+
+		    guard(ContentManagedServer::Condition(r, realm, true));
+		}
 		for (auto const &r : gameObjects)
 			guard(ContentManagedServer::Condition(r, realm, true));
 		for (auto const &r : spawns)
