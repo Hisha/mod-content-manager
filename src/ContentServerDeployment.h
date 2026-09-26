@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <string>
 #include <vector>
+#include "ContentBuildPublisher.h"
 #include "ContentServerBundle.h"
 
 struct ContentServerStatus
@@ -15,6 +16,14 @@ struct ContentServerStatus
     std::string bundleSha256;
     std::string parityFilename;
     std::string paritySha256;
+};
+
+struct ContentActivationResult
+{
+    bool hasManagedServerContent = false;
+    bool serverAppliedNow = false;
+    bool serverAlreadyApplied = false;
+    std::string serverSummary;
 };
 
 class ContentServerDeployment
@@ -31,5 +40,12 @@ public:
         std::vector<ResolvedCreatureSpawn>* spawns = nullptr);
     static bool Apply(std::uint32_t build, std::string const& realm,
         std::filesystem::path const& outputDirectory, std::string& summary, std::string& error);
+    // Activation orchestration only: managed server content is applied or
+    // verified before the existing client publication/lifecycle path runs.
+    static bool Activate(std::uint32_t build, std::string const& realm,
+        std::filesystem::path const& outputDirectory,
+        std::filesystem::path const& publishDirectory,
+        ContentActivationResult& result, ContentPublicationResult& publication,
+        bool& alreadyActive, std::string& error);
 };
 #endif

@@ -2,7 +2,7 @@
 
 # Phase 4: native Wrath currency infrastructure
 
-This change adds a logical currency declaration, constrained known-bit allocation, cumulative CurrencyTypes composition, and explicit server deployment through AzerothCore's typed `currencytypes_dbc` overlay. Hunt rewards and purchases still use `hunt_stats.huntmaster_seals`. No mod-hunts gameplay code, UI, Portalkeeper code, or baseline DBC is changed.
+This change adds a logical currency declaration, constrained known-bit allocation, cumulative CurrencyTypes composition, and guarded server deployment through AzerothCore's typed `currencytypes_dbc` overlay. Hunt rewards and purchases still use `hunt_stats.huntmaster_seals`. No mod-hunts gameplay code, UI, Portalkeeper code, or baseline DBC is changed.
 
 ## Evidence and environment boundary
 
@@ -77,7 +77,7 @@ Each cumulative build creates exactly one Item.dbc and one CurrencyTypes.dbc for
 
 The server bundle adds the resolved currency relationship beside its item row. Currency builds use bundle/parity format 2; existing Phase 3 format-1 bundles remain readable. Parity records both allocation identities, baseline fingerprints, policy/descriptor versions, both generated DBC hashes, MPQ/bundle hashes, and the CurrencyTypes ↔ currencytypes_dbc ↔ item_template relationship including BagFamily.
 
-`.content build` records immutable STAGED artifacts and leases only. It never writes item_template, currencytypes_dbc or deployment ownership. Explicit `.content server apply` validates schema, provenance, allocations and collisions, then writes the SQL overlay and item_template together. `content_manager_currency_owner` tracks the applied relationship. Both new and retained rows require exact ownership checks; identical but unowned rows are still conflicts. SQL errors or failed transaction guards roll back the entire apply. Identity comparisons use explicit utf8mb4_bin; item text comparisons preserve explicit utf8mb4_unicode_ci. The overlay is loaded on the next administrator-controlled restart. No restart or client publication is automatic.
+`.content build` records immutable STAGED artifacts and leases only. It never writes item_template, currencytypes_dbc or deployment ownership. The guarded server apply path, invoked automatically by `.content activate` when required or manually through `.content server apply`, validates schema, provenance, allocations and collisions, then writes the SQL overlay and item_template together. `content_manager_currency_owner` tracks the applied relationship. Both new and retained rows require exact ownership checks; identical but unowned rows are still conflicts. SQL errors or failed transaction guards roll back the entire apply. Identity comparisons use explicit utf8mb4_bin; item text comparisons preserve explicit utf8mb4_unicode_ci. The overlay is loaded on the next administrator-controlled restart. No restart or client publication is automatic.
 
 ## Eitrigg installation and acceptance
 
@@ -110,12 +110,11 @@ Uninstall/reinstall is the existing package-version selection workflow; it prese
 
 ```text
 .content server status N
-.content server apply N
-.content server status N
 .content activate N
+.content server status N
 ```
 
-Server apply must report APPLIED. Activation is the existing explicit publication command. Verify the new patch through Portalkeeper and restart worldserver/client at an appropriate maintenance point. Worldserver restart is needed to load BOTH the SQL overlay and the item template. Status APPLIED means the database transaction is verified, not that the running DBC store has been reloaded.
+Activation must report that the managed server prerequisite is APPLIED before it publishes and selects the client artifact. The advanced `.content server apply N` command may still be used independently for inspection or recovery. Verify the new patch through Portalkeeper and restart worldserver/client at an appropriate maintenance point. Worldserver restart is needed to load BOTH the SQL overlay and the item template. Status APPLIED means the database transaction is verified, not that the running DBC store has been reloaded.
 
 5. Check the world DB without editing it:
 

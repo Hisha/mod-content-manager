@@ -20,7 +20,8 @@ struct ContentItemOwner
 
 // Provable ownership records retained for one package across every managed
 // server table. These are provenance counts, never live-row snapshots: the
-// ownership tables are written only by an explicit .content server apply.
+// Ownership tables are written only by the guarded server Apply path, whether
+// invoked explicitly or as the prerequisite to activation.
 struct ContentOwnerSummary
 {
     std::uint32_t itemTemplates = 0;

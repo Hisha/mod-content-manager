@@ -59,8 +59,8 @@ Uninstall survey:
 Then, after a successful removal: the state transition (`INSTALLED - SOURCE MISSING
 -> no current selection`), the remaining installed-package count, whether an EPF is
 still discovered, and the required follow-up (`run .content build`, then
-`.content activate <build-number>`, and `.content server apply <build-number>` only
-if server rows should change).
+`.content activate <build-number>`; activation applies any managed server prerequisite
+before publishing the client artifact).
 
 ## Not-installed answers
 

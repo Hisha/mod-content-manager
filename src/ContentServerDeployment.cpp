@@ -166,8 +166,6 @@ ManifestAllocations(json const &parity,
 				package + "/" + symbol);
         result.push_back(*found);
     }
-	if (result.empty())
-		throw std::runtime_error("parity manifest has no allocated resources");
     return result;
 }
 } // namespace
@@ -305,12 +303,11 @@ bool ContentServerDeployment::Inspect(
 		Require(ContentAllocationRegistry().Read(realm, retained, error),
 				error);
         auto allocations=ManifestAllocations(parityObject,retained);
-		if (!allocations.empty())
-			Require(ContentServerBundle::VerifyParity(
-						parity, realm, build, parityObject.at("baselineSha256"),
-						record->sha256, status.bundleSha256, rows, allocations,
-						error, costs, vendors, creatures, gameObjects, spawns),
-					error);
+		Require(ContentServerBundle::VerifyParity(
+					parity, realm, build, parityObject.at("baselineSha256"),
+					record->sha256, status.bundleSha256, rows, allocations,
+					error, costs, vendors, creatures, gameObjects, spawns),
+				error);
         if(parityObject.contains("baselines"))
 			for (auto const &snapshot : parityObject.at("baselines")) {
 				ContentBaseline b;
@@ -339,6 +336,81 @@ bool ContentServerDeployment::Inspect(
 		error = exception.what();
 		return false;
     }
+}
+
+bool ContentServerDeployment::Activate(
+	std::uint32_t build, std::string const &realm,
+	std::filesystem::path const &outputDirectory,
+	std::filesystem::path const &publishDirectory,
+	ContentActivationResult &result, ContentPublicationResult &publication,
+	bool &alreadyActive, std::string &error) {
+	result = {};
+	publication = {};
+	alreadyActive = false;
+	try {
+		using ContentBuildPaths::Require;
+		std::optional<ContentBuildRecord> record;
+		if (!ContentBuildRegistry().GetBuild(build, record, error))
+			return false;
+		Require(record && record->realmName == realm,
+				"Build does not exist for this realm");
+		Require(record->state == "STAGED" || record->state == "ACTIVE" ||
+				record->state == "SUPERSEDED",
+				"Unknown build state");
+		Require(ContentBuildHash::Valid(record->sha256),
+				"Build record has an invalid SHA256; activation refused");
+
+		ContentServerStatus status;
+		std::vector<ResolvedServerItem> rows;
+		std::vector<ResolvedExtendedCost> costs;
+		std::vector<ResolvedVendorRow> vendors;
+		std::vector<ResolvedCreatureTemplate> creatures;
+		std::vector<ResolvedGameObjectTemplate> gameObjects;
+		std::vector<ResolvedCreatureSpawn> spawns;
+		if (!Inspect(build, realm, outputDirectory, status, rows, error, &costs,
+					 &vendors, &creatures, &gameObjects, &spawns)) {
+			error = "Activation prerequisite validation failed before client "
+					"publication: " + error;
+			return false;
+		}
+		result.hasManagedServerContent =
+			!rows.empty() || !costs.empty() || !vendors.empty() ||
+			!creatures.empty() || !gameObjects.empty() || !spawns.empty();
+		if (result.hasManagedServerContent) {
+			Require(status.state == "STAGED" || status.state == "APPLIED",
+					"Unknown server deployment state");
+			if (status.state == "STAGED") {
+				std::string applySummary;
+				if (!Apply(build, realm, outputDirectory, applySummary, error)) {
+					error = "Managed server prerequisite failed before client "
+							"publication: " + error;
+					return false;
+				}
+				result.serverAppliedNow = true;
+				result.serverSummary = "Server content APPLIED and verified for "
+					"build " + std::to_string(build) + ".";
+			} else {
+				result.serverAlreadyApplied = true;
+				result.serverSummary =
+					"Server content already APPLIED and verified.";
+			}
+		}
+
+		std::string activationError;
+		if (!ContentBuildRegistry().ActivateBuild(
+				build, outputDirectory, publishDirectory, publication,
+				alreadyActive, activationError)) {
+			error = result.hasManagedServerContent
+				? "Client activation failed after the managed server prerequisite "
+				  "succeeded: " + activationError
+				: activationError;
+			return false;
+		}
+		return true;
+	} catch (std::exception const &exception) {
+		error = exception.what();
+		return false;
+	}
 }
 
 bool ContentServerDeployment::Apply(

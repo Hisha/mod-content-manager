@@ -19,7 +19,7 @@ int main(int argc,char** argv)
     ResolvedServerItem row;row.packageKey="mod-hunts";row.packageVersion="4.0.0";row.symbol="seal";
     row.id=56807;row.displayId=6418;row.client.classID=15;
     row.server.symbol="seal";row.server.name="Huntmaster's Seal";row.server.description="A token issued by the Huntmasters.";
-    row.server.stackable=200;row.server.bagFamily=8192;row.currency={"seal-currency",row.id,22,4};
+    row.server.stackable=200;row.server.bagFamily=8192;row.currency={"seal-currency",row.id,22,4,""};
     ItemAllocation item{"Eitrigg","mod-hunts","seal",row.id,"reserved",1,8,hash};
     auto bit=item;bit.symbol="seal-currency";bit.value=4;bit.resourceKind="currency.known-bit";
     std::vector<ItemAllocation> leases={item,bit};
@@ -31,8 +31,11 @@ int main(int argc,char** argv)
             assert(ContentBuildHash::Calculate(file,digest,error));
         };
         save("","SQL test fixture; not a playable MPQ",mpqHash);
+        auto stageLeases=rows.empty()?std::vector<ItemAllocation>{}:leases;
+        auto itemHash=rows.empty()?std::string():hash;
+        auto currencyHash=rows.empty()?std::string():hash;
         save(".server.json",ContentServerBundle::ServerJson("Eitrigg",rows),bundleHash);
-        save(".parity.json",ContentServerBundle::ParityJson("Eitrigg",build,leases,rows,hash,hash,mpqHash,bundleHash,hash,categories.empty()?"":hash,categories),parityHash);
+        save(".parity.json",ContentServerBundle::ParityJson("Eitrigg",build,stageLeases,rows,itemHash,itemHash,mpqHash,bundleHash,currencyHash,categories.empty()?"":hash,categories),parityHash);
         SQL("INSERT INTO content_manager_build(build_number,realm_name,filename,package_count,file_count,state,sha256) VALUES ("
             +std::to_string(build)+",'Eitrigg',"+text(name)+",1,2,'STAGED',"+text(mpqHash)+")");
         SQL("INSERT INTO content_manager_server_build(build_number,bundle_filename,bundle_sha256,parity_filename,parity_sha256) VALUES ("
@@ -41,6 +44,20 @@ int main(int argc,char** argv)
     for(auto const& lease:leases)
         SQL("INSERT INTO content_manager_allocation VALUES ('Eitrigg','mod-hunts',"+text(lease.symbol)+","+text(lease.resourceKind)+","
             +std::to_string(lease.value)+",'reserved',1,8,"+text(hash)+",1,1)");
+    auto publish=output.parent_path()/"published";
+    ContentActivationResult activation;
+    ContentPublicationResult publication;
+    bool alreadyActive=false;
+    // A client-only bundle bypasses server Apply and retains its independent
+    // STAGED server marker while the existing client activation path runs.
+    stage(7,{});
+    assert(ContentServerDeployment::Activate(7,"Eitrigg",output,publish,
+        activation,publication,alreadyActive,error));
+    assert(!activation.hasManagedServerContent&&!activation.serverAppliedNow
+        &&!activation.serverAlreadyApplied&&!alreadyActive);
+    auto clientOnly=WorldDatabase.Query("SELECT b.state,s.server_state FROM content_manager_build b JOIN content_manager_server_build s USING(build_number) WHERE b.build_number=7");
+    assert(clientOnly&&clientOnly->Fetch()[0].Get<std::string>()=="ACTIVE"
+        &&clientOnly->Fetch()[1].Get<std::string>()=="STAGED");
     // Begin with a Phase 3 owned ordinary item; upgrade the same allocation in place.
     auto previous=row;previous.currency={};previous.server.bagFamily=0;
     SQL(ContentServerBundle::InsertSql(previous));
@@ -48,28 +65,57 @@ int main(int argc,char** argv)
     stage(8,{row});
     // An unowned overlay collision fails before any item mutation.
     SQL("INSERT INTO currencytypes_dbc VALUES (56807,56807,22,4)");
-    assert(!ContentServerDeployment::Apply(8,"Eitrigg",output,summary,error));
+    assert(!ContentServerDeployment::Activate(8,"Eitrigg",output,publish,
+        activation,publication,alreadyActive,error));
+    assert(activation.hasManagedServerContent);
+    assert(error.find("before client publication")!=std::string::npos);
     assert(Count("content_manager_currency_owner")==0);
+    auto failedBuild=WorldDatabase.Query("SELECT state FROM content_manager_build WHERE build_number=8");
+    assert(failedBuild&&failedBuild->Fetch()[0].Get<std::string>()=="STAGED");
+    assert(!std::filesystem::exists(publish/"Eitrigg-Content-8.mpq"));
     SQL("DELETE FROM currencytypes_dbc");
     // Concurrent drift after preflight must roll back the currency insert and item change.
     WorldDatabase.beforeCommit=[&]{SQL("UPDATE item_template SET name='concurrent drift' WHERE entry=56807");};
-    assert(!ContentServerDeployment::Apply(8,"Eitrigg",output,summary,error));
+    assert(!ContentServerDeployment::Activate(8,"Eitrigg",output,publish,
+        activation,publication,alreadyActive,error));
     assert(Count("currencytypes_dbc")==0 && Count("content_manager_currency_owner")==0);
     auto state=WorldDatabase.Query("SELECT server_state FROM content_manager_server_build WHERE build_number=8");
     assert(state->Fetch()[0].Get<std::string>()=="STAGED");
     SQL("UPDATE item_template SET name="+text(previous.server.name)+" WHERE entry=56807");
+    // The explicit advanced command still reaches the same guarded Apply path.
     assert(ContentServerDeployment::Apply(8,"Eitrigg",output,summary,error));
     assert(Count("currencytypes_dbc")==1 && Count("content_manager_currency_owner")==1);
-    assert(ContentServerDeployment::Apply(8,"Eitrigg",output,summary,error)); // Idempotent.
+    // Activation verifies the already-APPLIED state, then publishes/activates.
+    assert(ContentServerDeployment::Activate(8,"Eitrigg",output,publish,
+        activation,publication,alreadyActive,error));
+    assert(activation.hasManagedServerContent&&!activation.serverAppliedNow
+        &&activation.serverAlreadyApplied&&!alreadyActive);
+    // Re-running activation on ACTIVE/APPLIED performs no deployment or
+    // lifecycle transaction; the existing publication is reused.
+    unsigned unexpectedCommit=0;
+    WorldDatabase.beforeCommit=[&]{++unexpectedCommit;};
+    assert(ContentServerDeployment::Activate(8,"Eitrigg",output,publish,
+        activation,publication,alreadyActive,error));
+    assert(alreadyActive&&activation.serverAlreadyApplied&&publication.reused
+        &&unexpectedCommit==0);
+    WorldDatabase.beforeCommit={};
     std::set<std::uint32_t> bits,ids;
     assert(ContentCurrencyServer::Occupancy("Eitrigg",leases,bits,ids,error) && bits.empty() && ids.empty());
     // Ownership drift rejects rebuild occupancy and an APPLIED retry.
     SQL("UPDATE currencytypes_dbc SET BitIndex=5 WHERE ID=56807");
     assert(!ContentCurrencyServer::Occupancy("Eitrigg",leases,bits,ids,error));
-    assert(!ContentServerDeployment::Apply(8,"Eitrigg",output,summary,error));
+    assert(!ContentServerDeployment::Activate(8,"Eitrigg",output,publish,
+        activation,publication,alreadyActive,error));
     SQL("UPDATE currencytypes_dbc SET BitIndex=4 WHERE ID=56807");
     stage(9,{row});
-    assert(ContentServerDeployment::Apply(9,"Eitrigg",output,summary,error));
+    // STAGED managed content is applied first and only then activated.
+    assert(ContentServerDeployment::Activate(9,"Eitrigg",output,publish,
+        activation,publication,alreadyActive,error));
+    assert(activation.hasManagedServerContent&&activation.serverAppliedNow
+        &&!activation.serverAlreadyApplied&&!alreadyActive);
+    auto automatic=WorldDatabase.Query("SELECT b.state,s.server_state FROM content_manager_build b JOIN content_manager_server_build s USING(build_number) WHERE b.build_number=9");
+    assert(automatic&&automatic->Fetch()[0].Get<std::string>()=="ACTIVE"
+        &&automatic->Fetch()[1].Get<std::string>()=="APPLIED");
     // The accepted Phase 4 row changes category by UPDATE only. Triggers make delete/recreate fail the test.
     SQL("CREATE TRIGGER reject_currency_delete BEFORE DELETE ON currencytypes_dbc FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='delete forbidden'");
     SQL("CREATE TRIGGER reject_currency_insert BEFORE INSERT ON currencytypes_dbc FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='insert forbidden'");
@@ -93,6 +139,7 @@ int main(int argc,char** argv)
     // Losing ownership must never grant permission to overwrite the existing row.
     SQL("DELETE FROM content_manager_currency_owner WHERE entry=56807");
     stage(11,{row});assert(!ContentServerDeployment::Apply(11,"Eitrigg",output,summary,error));
+    std::cout<<"PASS activation orchestration: client-only bypass, failed apply blocks publication, explicit apply, APPLIED verification, ACTIVE idempotence, staged apply-before-activate\n";
     std::cout<<"PASS category upgrade: guarded owned UPDATE, no delete/insert, concurrent category drift rollback, unchanged item/bit IDs, idempotence, unowned protection\n";
     auto q=WorldDatabase.Query("SELECT @@collation_connection,@@collation_database");
     std::cout<<"PASS production Apply: Phase 3 upgrade, unowned collision, transactional drift rollback, idempotence, occupancy exclusion, owned drift, rebuild apply. Collations "

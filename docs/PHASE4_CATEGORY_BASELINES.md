@@ -134,17 +134,17 @@ WHERE o.realm_name='Eitrigg' AND o.package_key='mod-hunts';
 
 Do not require a particular category numeric value. It must be the retained `hunts` lease, free of all specified occupancy. Inspect the generated MPQ's `.server.json` and `.parity.json`: the server row is still ID=ItemID=56807 and BitIndex=4, but CategoryID equals that lease and categorySymbol is `hunts`; the category definition has enUS `Hunts`. The parity manifest must include the category DBC hash and all three baseline snapshots.
 
-### 3. Explicit server apply, then explicit client activation
+### 3. Activate (managed server apply runs first)
 
 Replace `N` below with the newly reported build number:
 
 ```text
 .content server status N
-.content server apply N
+.content activate N
 .content server status N
 ```
 
-Apply must report **APPLIED** and update the existing owned currency row in place. The exact old relationship and owner identity must match before the transaction; an unowned or drifted row is rejected. No delete/recreate is used. Repeating `.content server apply N` before activation must verify idempotently.
+Activation must report **APPLIED** before client publication and update the existing owned currency row in place. The exact old relationship and owner identity must match before the transaction; an unowned or drifted row is rejected. No delete/recreate is used. The advanced `.content server apply N` command remains available for manual verification and recovery and uses the same apply path.
 
 Verify resolved parity with read-only SQL:
 
@@ -162,12 +162,6 @@ WHERE a.realm_name='Eitrigg' AND a.package_key='mod-hunts'
 ```
 
 Expect entry=ID=ItemID=56807, BagFamily=8192, BitIndex=4, category_parity=1, and the same allocated category in all three columns. There is no server category-table install step.
-
-Only then explicitly publish/activate:
-
-```text
-.content activate N
-```
 
 Use the existing Portalkeeper/client patch process without changing Portalkeeper. Restart worldserver to reload its cached item/DBC SQL overlay, and restart the patched client. APPLIED describes the verified database state, not a running-cache reload.
 

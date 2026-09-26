@@ -656,7 +656,7 @@ public:
         handler->SendSysMessage("History is retained: completed builds and sidecars, published artifacts, allocation leases, and server ownership records are preserved and kept coherent.");
         if (analysis.ownedItemTemplates || analysis.ownedCurrencies || analysis.ownedExtendedCosts || analysis.ownedVendors)
             handler->SendSysMessage("Applied server rows owned by this package were NOT deleted; remove those separately with SQL if no longer wanted.");
-        handler->SendSysMessage("Only the desired package set changed and no patch was rebuilt or published. Run .content build, then .content activate <build-number>; server rows apply only through an explicit .content server apply.");
+        handler->SendSysMessage("Only the desired package set changed and no patch was rebuilt or published. Run .content build, then .content activate <build-number>; activation applies any managed server prerequisite first.");
         return true;
     }
 
@@ -717,13 +717,21 @@ public:
         }
         std::string error;
         bool alreadyActive = false;
-        ContentBuildRegistry registry;
+        ContentActivationResult activation;
         ContentPublicationResult publication;
-        if (!registry.ActivateBuild(number, sContentManager.GetOutputDirectory(),
-            sContentManager.GetPublishDirectory(), publication, alreadyActive, error))
+        if (!ContentServerDeployment::Activate(number, realm.Name,
+            sContentManager.GetOutputDirectory(), sContentManager.GetPublishDirectory(),
+            activation, publication, alreadyActive, error))
             handler->PSendSysMessage("Activation refused: {}", error);
         else
         {
+            if (activation.hasManagedServerContent)
+            {
+                handler->PSendSysMessage("Build {} contains managed server content.",
+                    ContentBuildService::Number(number));
+                handler->SendSysMessage(activation.serverSummary);
+                handler->SendSysMessage("Managed server prerequisite completed before client publication.");
+            }
             handler->PSendSysMessage("Build {} verified.", ContentBuildService::Number(number));
             handler->PSendSysMessage("Published: {}", publication.path.string());
             handler->PSendSysMessage("SHA256: {}", publication.sha256);

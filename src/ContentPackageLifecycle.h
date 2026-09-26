@@ -164,7 +164,7 @@ inline std::vector<std::string> ContentPackageLifecycle::Summary(
     lines.push_back("  Not deleted: live server rows (item_template, currencytypes_dbc,");
     lines.push_back("  itemextendedcost_dbc, npc_vendor, managed templates/spawns). Remove those separately if no longer wanted.");
     lines.push_back("  No build, publish, or activation happens here. Run .content build, then");
-    lines.push_back("  .content activate <build-number> (and .content server apply if server rows apply).");
+    lines.push_back("  .content activate <build-number>; activation applies any managed server prerequisite first.");
     return lines;
 }
 

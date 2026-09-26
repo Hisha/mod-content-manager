@@ -32,7 +32,7 @@ CurrencyCategoryDbcComposer.cpp CurrencyDbcComposer.cpp DbcReader.cpp DbcDescrip
 ContentBaselineRegistry.cpp ItemExtendedCostDbc.cpp ContentExtendedCostServer.cpp
 ```
 
-Run the resulting executable with `PRIVATE_SOCKET ARTIFACT_DIRECTORY`. It tests the actual Apply entry point, Phase 3 upgrade, unowned collision, an injected post-preflight drift rollback, ownership drift, idempotence and a second build apply. A deliberate duplicate-key error from the transaction guard is expected during the rollback test.
+Run the resulting executable with `PRIVATE_SOCKET ARTIFACT_DIRECTORY`. It tests the actual Apply entry point and activation orchestration: client-only activation bypasses server deployment, a failed prerequisite does not publish or activate, explicit apply remains available, APPLIED content is verified without reapplication, ACTIVE/APPLIED activation is idempotent, and STAGED managed content is applied before activation. It also covers Phase 3 upgrade, unowned collision, an injected post-preflight drift rollback, ownership drift, idempotence and a second build apply. A deliberate duplicate-key error from the transaction guard is expected during the rollback test.
 
 For `currency_build_mysql_tests.cpp`, start with a fresh fixture database and also create empty occupancy tables:
 

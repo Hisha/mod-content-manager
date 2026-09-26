@@ -19,7 +19,8 @@ approved versioned artifacts to a filesystem directory.
 | `.content stage <package-key>` | Stages one package and builds a separate development test MPQ, without installing it or creating a build record. |
 | `.content build` | Creates a new cumulative MPQ from all INSTALLED packages, hashes it, records STAGED, then cleans its workspace. No argument is required. |
 | `.content build list` | Lists the 10 most recent realm builds, newest first, with state, filename, package/file counts and SHA256. |
-| `.content activate <build-number>` | Verifies and publishes the versioned artifact, verifies the published SHA256, then selects it as ACTIVE. Also supports rollback. |
+| `.content activate <build-number>` | Applies or verifies any managed server prerequisite, then verifies and publishes the versioned artifact and selects it as ACTIVE. Also supports rollback. |
+| `.content server apply <build-number>` | Advanced/manual command that runs the same managed server deployment used automatically by activation, without publishing or activating the client artifact. |
 
 Activation requires an administrator session or the server console. Handled Content
 Manager errors print their explanation without appending generic command usage.
@@ -78,9 +79,10 @@ or `npc_vendor` row is unreferenced by live characters. Remove those rows separa
 if they are truly no longer wanted.
 
 Uninstall is desired-state-only. After it, run `.content build` to generate the
-cumulative MPQ without the package, then explicitly `.content activate <build-number>`
-and, only if server rows should change, `.content server apply <build-number>`.
-Activation is never automatic.
+cumulative MPQ without the package, then explicitly `.content activate <build-number>`.
+Activation applies or verifies any managed server content before client publication;
+the advanced `.content server apply <build-number>` command remains available for
+manual inspection and recovery. Activation is never automatic.
 
 A key that is not installed is reported as one of three cases: AVAILABLE but not
 installed (a discovered EPF exists), previously uninstalled with retained history
@@ -437,9 +439,9 @@ The same package must declare a `dbcRows` Item add with that symbol. The EPF can
 
 A cumulative `.content build` remains STAGED. Alongside its MPQ it writes immutable `<mpq>.server.json` and `<mpq>.parity.json` sidecars in OutputDirectory. The server bundle contains typed resolved rows and provenance. The parity manifest contains the realm, build, allocation identities, descriptor versions, baseline, composed Item.dbc hash, MPQ hash, and server bundle hash. Both sidecar hashes are recorded atomically with the build and allocation rows. The MPQ itself still contains only client content. Builds never write `item_template`.
 
-Use `.content server status [build-number]` to inspect the server bundle and independent deployment state. Use `.content server apply <build-number>` for explicit deployment of a recorded STAGED build. Apply verifies the MPQ, both sidecars, the parity manifest, current retained allocations, and deployed `item_template` schema before using one InnoDB transaction. An absent row is inserted and marked owned. An existing row must have matching Content Manager provenance and match the last recorded managed-field snapshot; otherwise apply refuses it. Owned rows converge through a guarded update. Apply verifies the row and ownership after the transaction. It never renumbers a retained allocation or deletes an item. No automatic rollback exists; the owner record retains package/symbol, applied build, artifact hash, and managed-field snapshot.
+Use `.content server status [build-number]` to inspect the server bundle and independent deployment state. The normal lifecycle is `.content build`, then `.content activate <build-number>`; activation invokes the existing server apply path before client publication when the bundle contains managed server rows. `.content server apply <build-number>` remains an advanced/manual deployment command. Apply verifies the MPQ, both sidecars, the parity manifest, current retained allocations, and deployed `item_template` schema before using one InnoDB transaction. An absent row is inserted and marked owned. An existing row must have matching Content Manager provenance and match the last recorded managed-field snapshot; otherwise apply refuses it. Owned rows converge through a guarded update. Apply verifies the row and ownership after the transaction. It never renumbers a retained allocation or deletes an item. No automatic rollback exists; the owner record retains package/symbol, applied build, artifact hash, and managed-field snapshot.
 
-Allocation state remains `reserved`; build state remains `STAGED` until the separate client activation command changes it. Server state is `STAGED` or `APPLIED` in `content_manager_server_build`. A server apply does not activate or publish the client patch. AzerothCore caches item templates at worldserver startup, so restart worldserver after server apply before using `.additem`.
+Allocation state remains `reserved`; build state remains `STAGED` until activation changes it. Server state is independently `STAGED` or `APPLIED` in `content_manager_server_build`. Activation completes a required STAGED-to-APPLIED server transition before publishing the client patch; an already APPLIED bundle is verified without reapplication. The advanced server-apply command alone does not activate or publish the client patch. AzerothCore caches item templates at worldserver startup, so restart worldserver after applying managed server content before using `.additem`.
 
 Future runtime modules should receive an optional `ContentManager::Resolve(package, symbol, resourceKind)` API backed by the retained allocation registry and ownership checks. Do not make `mod-hunts` query allocation SQL or take a hard dependency in this phase.
 
@@ -459,8 +461,8 @@ The current extension registers validated DBC baselines automatically, requires 
 
 Build 12340 supports `.content dbc inspect ItemExtendedCost`, the generic baseline registry,
 independent persistent `item-extended-cost.id` leases, and Schema 2 `extendedCosts` with logical
-item requirements. Cumulative builds remain STAGED; server apply and client activation remain
-explicit. No Huntmaster vendor/economy migration is included.
+item requirements. Cumulative builds remain STAGED; explicit client activation applies any
+required managed server content first. No Huntmaster vendor/economy migration is included.
 
 See [Phase 5 handoff and inspection-only Eitrigg gate](docs/PHASE5_ITEM_EXTENDED_COST.md)
 and [focused tests](tests/PHASE5_TESTS.md). Do not create/build live extended-cost content until

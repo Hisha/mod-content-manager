@@ -45,6 +45,9 @@ class TestDatabase
     MYSQL* connection=nullptr;
 #endif
 public:
+    // Integration-test hook. In compile-only mode it exists solely so the
+    // production-path regression source receives a full C++17 syntax check.
+    std::function<void()> beforeCommit;
 #ifdef CONTENT_MANAGER_COMPILE_ONLY
     std::string lastError;
     void Connect(char const* socket);
@@ -55,7 +58,6 @@ public:
     std::shared_ptr<Transaction> BeginTransaction();
     void DirectCommitTransaction(std::shared_ptr<Transaction> tx);
 #else
-    std::function<void()> beforeCommit;
     std::string lastError;
     ~TestDatabase(){if(connection)mysql_close(connection);}
     void Connect(char const* socket)

@@ -16,7 +16,9 @@ compiler = os.environ.get('CXX', 'g++')
 subprocess.run([
     compiler, '-std=c++17', '-DCONTENT_MANAGER_COMPILE_ONLY', '-fsyntax-only',
     '-I' + str(root / 'tests/mysql_adapter'), '-I' + str(root / 'src'),
+    str(root / 'src/ContentServerDeployment.cpp'),
     str(root / 'src/ContentManagedServer.cpp'),
+    str(root / 'tests/currency_mysql_tests.cpp'),
     str(root / 'tests/managed_server_mysql_tests.cpp'),
     str(root / 'src/ContentBuildRegistry.cpp')
 ], check=True)
