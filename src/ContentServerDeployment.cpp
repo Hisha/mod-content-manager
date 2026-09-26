@@ -678,10 +678,6 @@ bool ContentServerDeployment::Apply(
 		auto guard = [&](std::string const& condition) {
 		    ++guardId;
 
-		    LOG_INFO("module",
-		             "Content Manager activation guard {}: {}",
-		             guardId, condition);
-
 		    tx->Append(
 		        "INSERT INTO content_manager_build_lock (id) VALUES (" +
 		        std::to_string(guardId) +
