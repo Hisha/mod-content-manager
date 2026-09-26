@@ -670,14 +670,28 @@ bool ContentServerDeployment::Apply(
 			tx->Append(
 				"UPDATE content_manager_extended_cost_owner SET entry=entry");
         }
-		// A failed guard deliberately duplicates the locked primary key,
-		// aborting the entire InnoDB transaction. Conditional UPDATEs alone do
-		// not guarantee rollback on drift.
-        auto guard = [&](std::string const& condition) {
-			tx->Append("INSERT INTO content_manager_build_lock (id) SELECT 1 "
-					   "WHERE NOT (" +
-					   condition + ")");
-        };
+		// A failed guard deliberately duplicates a transaction-local sentinel
+		// primary key, aborting the entire InnoDB transaction. Give each guard
+		// a distinct sentinel so SQL errors identify the failed assertion.
+		std::uint32_t guardId = 1;
+
+		auto guard = [&](std::string const& condition) {
+		    ++guardId;
+
+		    LOG_INFO("module",
+		             "Content Manager activation guard {}: {}",
+		             guardId, condition);
+
+		    tx->Append(
+		        "INSERT INTO content_manager_build_lock (id) VALUES (" +
+		        std::to_string(guardId) +
+		        ") ON DUPLICATE KEY UPDATE id=id");
+
+		    tx->Append(
+		        "INSERT INTO content_manager_build_lock (id) SELECT " +
+		        std::to_string(guardId) +
+		        " WHERE NOT (" + condition + ")");
+		};
         auto registryCondition = [&](char const* serverState) {
 			return "EXISTS(SELECT 1 FROM content_manager_build b JOIN "
 				   "content_manager_server_build s "
