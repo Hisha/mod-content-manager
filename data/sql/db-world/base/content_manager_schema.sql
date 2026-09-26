@@ -178,7 +178,7 @@ CREATE TABLE IF NOT EXISTS `content_manager_vendor_owner` (
  `applied_build` INT UNSIGNED NOT NULL,
  `artifact_sha256` CHAR(64) NOT NULL,
  PRIMARY KEY (`creature_entry`), UNIQUE KEY `logical_vendor` (`realm_name`,`package_key`,`symbol`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 -- Generic ownership/provenance for donor-derived server templates and permanent spawns.
 CREATE TABLE IF NOT EXISTS `content_manager_server_resource_owner` (
