@@ -46,9 +46,14 @@ class TestDatabase
 #endif
 public:
 #ifdef CONTENT_MANAGER_COMPILE_ONLY
+    std::string lastError;
+    void Connect(char const* socket);
+    bool Execute(std::string const& sql);
     QueryResult Query(std::string_view sql);
     template<typename... Args>
     QueryResult Query(std::string_view sql, Args&&... args);
+    std::shared_ptr<Transaction> BeginTransaction();
+    void DirectCommitTransaction(std::shared_ptr<Transaction> tx);
 #else
     std::function<void()> beforeCommit;
     std::string lastError;

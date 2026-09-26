@@ -13,6 +13,9 @@ unsigned Scalar(std::string const &sql) {
 	assert(q);
 	return q->Fetch()[0].Get<unsigned>();
 }
+bool Has(std::string const &value, std::string const &part) {
+	return value.find(part) != std::string::npos;
+}
 } // namespace
 int main(int argc, char **argv) {
 	assert(argc == 2);
@@ -105,6 +108,34 @@ int main(int argc, char **argv) {
 								0,
 								0};
 	bool exists = false;
+	auto missingDonor = creature;
+	missingDonor.copyFrom = 999;
+	assert(!ContentManagedServer::Check(missingDonor, "Realm", exists, error));
+	assert(Has(error, "kind=creature-template.id") &&
+		   Has(error, "package=package-a") &&
+		   Has(error, "symbol=managed-creature") && Has(error, "entry=1000") &&
+		   Has(error, "donor=999") && Has(error, "donor creature_template entry 999 is missing"));
+	SQL("INSERT INTO creature_template(entry,name) VALUES(1000,'Occupied')");
+	assert(!ContentManagedServer::Check(creature, "Realm", exists, error));
+	assert(Has(error, "entry=1000") &&
+		   Has(error, "occupied by an unowned target row"));
+	SQL("DELETE FROM creature_template WHERE entry=1000");
+	SQL("INSERT INTO gameobject_template(entry,type,displayId,name) "
+		"VALUES(2000,5,300,'Occupied')");
+	assert(!ContentManagedServer::Check(object, "Realm", exists, error));
+	assert(Has(error, "kind=gameobject-template.id") &&
+		   Has(error, "package=package-a") && Has(error, "symbol=managed-object") &&
+		   Has(error, "entry=2000") && Has(error, "donor=200") &&
+		   Has(error, "occupied by an unowned target row"));
+	SQL("DELETE FROM gameobject_template WHERE entry=2000");
+	SQL("INSERT INTO creature(guid,id,map,position_x,position_y,position_z,"
+		"orientation) VALUES(3000,1000,0,1,2,3,0)");
+	assert(!ContentManagedServer::Check(spawn, "Realm", exists, error));
+	assert(Has(error, "kind=creature-spawn.guid") &&
+		   Has(error, "package=package-a") && Has(error, "symbol=managed-spawn") &&
+		   Has(error, "guid=3000") && Has(error, "creatureEntry=1000") &&
+		   Has(error, "occupied by an unowned target row"));
+	SQL("DELETE FROM creature WHERE guid=3000");
 	assert(ContentManagedServer::Check(creature, "Realm", exists, error) &&
 		   !exists);
 	assert(ContentManagedServer::Check(object, "Realm", exists, error) &&
@@ -150,6 +181,26 @@ int main(int argc, char **argv) {
 										std::string(64, 'a'), error));
 	assert(ContentManagedServer::Verify(spawn, "Realm", 1, std::string(64, 'a'),
 										error));
+	SQL("UPDATE creature_template SET name='Drifted' WHERE entry=1000");
+	assert(!ContentManagedServer::Check(creature, "Realm", exists, error));
+	assert(Has(error, "kind=creature-template.id") &&
+		   Has(error, "managed target fields differ from the expected row"));
+	SQL("UPDATE creature_template SET name='Managed Creature' WHERE entry=1000");
+	SQL("UPDATE content_manager_server_resource_owner SET package_key='wrong' "
+		"WHERE resource_kind='creature-template.id' AND entry=1000");
+	assert(!ContentManagedServer::Check(creature, "Realm", exists, error));
+	assert(Has(error, "ownership row does not match realm=Realm package=package-a "
+				  "symbol=managed-creature"));
+	SQL("UPDATE content_manager_server_resource_owner SET package_key='package-a' "
+		"WHERE resource_kind='creature-template.id' AND entry=1000");
+	SQL("UPDATE content_manager_server_resource_owner SET row_json='{}' WHERE "
+		"resource_kind='creature-template.id' AND entry=1000");
+	assert(!ContentManagedServer::Check(creature, "Realm", exists, error));
+	assert(Has(error, "ownership snapshot differs from the expected row"));
+	SQL("DROP TABLE creature");
+	assert(!ContentManagedServer::Check(spawn, "Realm", exists, error));
+	assert(Has(error, "kind=creature-spawn.guid") &&
+		   Has(error, "condition SQL query failed"));
 	std::cout << "PASS donor validation, managed representations, ownership, "
-				 "spawn resolution and transactional rollback\n";
+				 "spawn resolution, diagnostics and transactional rollback\n";
 }

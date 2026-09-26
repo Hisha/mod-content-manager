@@ -25,13 +25,19 @@ std::string F(float value) {
 std::string Q(std::string const &value) {
 	return ContentServerBundle::SqlText(value);
 }
+std::string OwnerAllocation(std::string const &kind, std::uint32_t entry,
+							std::string const &realm,
+							std::string const &package,
+							std::string const &symbol) {
+	return "o.resource_kind=" + T(kind) + " AND o.entry=" + N(entry) +
+		   " AND o.realm_name=" + T(realm) +
+		   " AND o.package_key=" + T(package) + " AND o.symbol=" + T(symbol);
+}
 std::string OwnerIdentity(std::string const &kind, std::uint32_t entry,
 						  std::string const &realm, std::string const &package,
 						  std::string const &symbol,
 						  std::string const &snapshot) {
-	return "o.resource_kind=" + T(kind) + " AND o.entry=" + N(entry) +
-		   " AND o.realm_name=" + T(realm) +
-		   " AND o.package_key=" + T(package) + " AND o.symbol=" + T(symbol) +
+	return OwnerAllocation(kind, entry, realm, package, symbol) +
 		   " AND o.row_json=" + T(snapshot);
 }
 json CreatureObject(ResolvedCreatureTemplate const &r) {
@@ -124,6 +130,159 @@ std::string Kind(ResolvedGameObjectTemplate const &) {
 }
 std::string Kind(ResolvedCreatureSpawn const &) {
 	return "creature-spawn.guid";
+}
+std::string ManagedFields(ResolvedCreatureTemplate const &r) {
+	return "t.name=" + Q(r.name) + " AND t.subname=" + Q(r.subname) +
+		   " AND t.minlevel=" + N(r.minLevel) +
+		   " AND t.maxlevel=" + N(r.maxLevel) + " AND t.faction=" +
+		   N(r.faction) + " AND t.npcflag=" + N(r.npcFlags) +
+		   " AND t.speed_walk=" + F(r.speedWalk) +
+		   " AND t.speed_run=" + F(r.speedRun) +
+		   " AND t.`rank`=" + N(r.rank) +
+		   " AND t.dmgschool=" + N(r.damageSchool) +
+		   " AND t.BaseAttackTime=" + N(r.baseAttackTime) +
+		   " AND t.RangeAttackTime=" + N(r.rangeAttackTime) +
+		   " AND t.unit_class=" + N(r.unitClass) +
+		   " AND t.unit_flags=" + N(r.unitFlags) + " AND t.type=" + N(r.type) +
+		   " AND t.type_flags=" + N(r.typeFlags) +
+		   " AND t.RegenHealth=" + N(r.regenHealth) +
+		   " AND t.flags_extra=" + N(r.flagsExtra) +
+		   " AND t.AIName=" + Q(r.aiName) +
+		   " AND t.ScriptName=" + Q(r.scriptName);
+}
+std::string ManagedFields(ResolvedGameObjectTemplate const &r) {
+	std::string fields =
+		"t.type=" + N(r.type) + " AND t.displayId=" + N(r.displayId) +
+		" AND t.name=" + Q(r.name) + " AND t.IconName=" + Q(r.iconName) +
+		" AND t.castBarCaption=" + Q(r.castBarCaption) +
+		" AND t.unk1=" + Q(r.unk1) + " AND t.size=" + F(r.size);
+	for (unsigned i = 0; i < 24; ++i)
+		fields += " AND t.Data" + std::to_string(i) + "=" + N(r.data[i]);
+	return fields + " AND t.AIName=" + Q(r.aiName) +
+		   " AND t.ScriptName=" + Q(r.scriptName) +
+		   " AND t.VerifiedBuild=" + std::to_string(r.verifiedBuild);
+}
+std::string ManagedFields(ResolvedCreatureSpawn const &r) {
+	return "t.id=" + N(r.creatureEntry) + " AND t.map=" + N(r.map) +
+		   " AND t.spawnMask=" + N(r.spawnMask) +
+		   " AND t.phaseMask=" + N(r.phaseMask) +
+		   " AND t.position_x=" + F(r.x) + " AND t.position_y=" + F(r.y) +
+		   " AND t.position_z=" + F(r.z) +
+		   " AND t.orientation=" + F(r.orientation) +
+		   " AND t.spawntimesecs=" + N(r.respawnSeconds) +
+		   " AND t.wander_distance=" + F(r.wanderDistance) +
+		   " AND t.MovementType=" + N(r.movementType);
+}
+std::string DonorCondition(ResolvedCreatureTemplate const &r) {
+	return "EXISTS(SELECT 1 FROM creature_template WHERE entry=" +
+		   N(r.copyFrom) + ")";
+}
+std::string DonorCondition(ResolvedGameObjectTemplate const &r) {
+	return "EXISTS(SELECT 1 FROM gameobject_template WHERE entry=" +
+		   N(r.copyFrom) + ")";
+}
+std::string DonorCondition(ResolvedCreatureSpawn const &) { return "1"; }
+std::string TargetCondition(ResolvedCreatureTemplate const &r) {
+	return "EXISTS(SELECT 1 FROM creature_template WHERE entry=" + N(r.entry) +
+		   ")";
+}
+std::string TargetCondition(ResolvedGameObjectTemplate const &r) {
+	return "EXISTS(SELECT 1 FROM gameobject_template WHERE entry=" +
+		   N(r.entry) + ")";
+}
+std::string TargetCondition(ResolvedCreatureSpawn const &r) {
+	return "EXISTS(SELECT 1 FROM creature WHERE guid=" + N(r.guid) + ")";
+}
+std::string FieldsCondition(ResolvedCreatureTemplate const &r) {
+	return "EXISTS(SELECT 1 FROM creature_template t WHERE t.entry=" +
+		   N(r.entry) + " AND " + ManagedFields(r) + ")";
+}
+std::string FieldsCondition(ResolvedGameObjectTemplate const &r) {
+	return "EXISTS(SELECT 1 FROM gameobject_template t WHERE t.entry=" +
+		   N(r.entry) + " AND " + ManagedFields(r) + ")";
+}
+std::string FieldsCondition(ResolvedCreatureSpawn const &r) {
+	return "EXISTS(SELECT 1 FROM creature t WHERE t.guid=" + N(r.guid) +
+		   " AND " + ManagedFields(r) + ")";
+}
+template <class Row>
+std::string OwnerCondition(Row const &r) {
+	return "EXISTS(SELECT 1 FROM content_manager_server_resource_owner WHERE "
+		   "resource_kind=" +
+		   T(Kind(r)) + " AND entry=" + N(Entry(r)) + ")";
+}
+template <class Row>
+std::string OwnerAllocationCondition(Row const &r, std::string const &realm) {
+	return "EXISTS(SELECT 1 FROM content_manager_server_resource_owner o WHERE " +
+		   OwnerAllocation(Kind(r), Entry(r), realm, r.packageKey, r.symbol) +
+		   ")";
+}
+template <class Row>
+std::string OwnerSnapshotCondition(Row const &r) {
+	return "EXISTS(SELECT 1 FROM content_manager_server_resource_owner o WHERE "
+		   "o.resource_kind=" +
+		   T(Kind(r)) + " AND o.entry=" + N(Entry(r)) +
+		   " AND o.row_json=" + T(Snapshot(r)) + ")";
+}
+std::string TargetLabel(ResolvedCreatureTemplate const &r) {
+	return "entry=" + N(r.entry);
+}
+std::string TargetLabel(ResolvedGameObjectTemplate const &r) {
+	return "entry=" + N(r.entry);
+}
+std::string TargetLabel(ResolvedCreatureSpawn const &r) {
+	return "guid=" + N(r.guid);
+}
+std::string DonorLabel(ResolvedCreatureTemplate const &r) {
+	return " donor=" + N(r.copyFrom);
+}
+std::string DonorLabel(ResolvedGameObjectTemplate const &r) {
+	return " donor=" + N(r.copyFrom);
+}
+std::string DonorLabel(ResolvedCreatureSpawn const &r) {
+	return " creatureEntry=" + N(r.creatureEntry);
+}
+template <class Row>
+std::string ResourceLabel(Row const &r) {
+	return "Managed server resource kind=" + Kind(r) + " package=" +
+		   r.packageKey + " symbol=" + r.symbol + " " + TargetLabel(r) +
+		   DonorLabel(r);
+}
+std::string MissingDonorDetail(ResolvedCreatureTemplate const &r) {
+	return "donor creature_template entry " + N(r.copyFrom) + " is missing";
+}
+std::string MissingDonorDetail(ResolvedGameObjectTemplate const &r) {
+	return "donor gameobject_template entry " + N(r.copyFrom) + " is missing";
+}
+std::string MissingDonorDetail(ResolvedCreatureSpawn const &) { return {}; }
+template <class Row>
+std::string ExplainCheckFailure(Row const &r, std::string const &realm,
+							bool donor, bool target, bool owner, bool fields,
+							bool allocation, bool snapshot) {
+	std::vector<std::string> details;
+	if (!donor)
+		details.push_back(MissingDonorDetail(r));
+	if (target && !owner)
+		details.push_back("allocated " + TargetLabel(r) +
+						  " is occupied by an unowned target row");
+	if (!target && owner)
+		details.push_back("ownership row exists but the target row is missing");
+	if (owner && !allocation)
+		details.push_back("ownership row does not match realm=" + realm +
+						  " package=" + r.packageKey + " symbol=" + r.symbol);
+	if (target && owner && !fields)
+		details.push_back("managed target fields differ from the expected row");
+	if (owner && allocation && !snapshot)
+		details.push_back("ownership snapshot differs from the expected row");
+	if (details.empty())
+		details.push_back("conditions returned false for an unclassified state");
+	std::string result = ResourceLabel(r) + ": ";
+	for (std::size_t i = 0; i < details.size(); ++i) {
+		if (i)
+			result += "; ";
+		result += details[i];
+	}
+	return result;
 }
 
 ResolvedCreatureTemplate ParseCreature(json const &v) {
@@ -218,13 +377,38 @@ bool QueryCheck(Row const &r, std::string const &realm, bool &exists,
 		"SELECT CAST((" + ContentManagedServer::Condition(r, realm, false) +
 		") AS UNSIGNED),CAST((" +
 		ContentManagedServer::Condition(r, realm, true) + ") AS UNSIGNED)");
-	if (!q || (!q->Fetch()[0].template Get<std::uint64_t>() &&
-			   !q->Fetch()[1].template Get<std::uint64_t>())) {
-		error = "Managed server resource collision, missing donor, ownership "
-				"mismatch or drift";
+	if (!q) {
+		error = ResourceLabel(r) + ": condition SQL query failed";
 		return false;
 	}
-	exists = q->Fetch()[1].template Get<std::uint64_t>() != 0;
+	auto fields = q->Fetch();
+	bool const missing = fields[0].template Get<std::uint64_t>() != 0;
+	bool const existing = fields[1].template Get<std::uint64_t>() != 0;
+	if (!missing && !existing) {
+		auto diagnostic = WorldDatabase.Query(
+			"SELECT CAST((" + DonorCondition(r) +
+			") AS UNSIGNED),CAST((" + TargetCondition(r) +
+			") AS UNSIGNED),CAST((" + OwnerCondition(r) +
+			") AS UNSIGNED),CAST((" + FieldsCondition(r) +
+			") AS UNSIGNED),CAST((" + OwnerAllocationCondition(r, realm) +
+			") AS UNSIGNED),CAST((" + OwnerSnapshotCondition(r) +
+			") AS UNSIGNED)");
+		if (!diagnostic) {
+			error = ResourceLabel(r) +
+					": conditions returned false; diagnostic SQL query failed";
+			return false;
+		}
+		auto detail = diagnostic->Fetch();
+		error = ExplainCheckFailure(
+			r, realm, detail[0].template Get<std::uint64_t>() != 0,
+			detail[1].template Get<std::uint64_t>() != 0,
+			detail[2].template Get<std::uint64_t>() != 0,
+			detail[3].template Get<std::uint64_t>() != 0,
+			detail[4].template Get<std::uint64_t>() != 0,
+			detail[5].template Get<std::uint64_t>() != 0);
+		return false;
+	}
+	exists = existing;
 	return true;
 }
 template <class Row>
@@ -452,35 +636,14 @@ bool ContentManagedServer::Occupancy(
 std::string ContentManagedServer::Condition(ResolvedCreatureTemplate const &r,
 											std::string const &realm,
 											bool exists) {
-	auto fields =
-		"t.name=" + Q(r.name) + " AND t.subname=" + Q(r.subname) +
-		" AND t.minlevel=" + N(r.minLevel) +
-		" AND t.maxlevel=" + N(r.maxLevel) + " AND t.faction=" + N(r.faction) +
-		" AND t.npcflag=" + N(r.npcFlags) +
-		" AND t.speed_walk=" + F(r.speedWalk) +
-		" AND t.speed_run=" + F(r.speedRun) +
-		" AND t.`rank`=" + N(r.rank) + " AND t.dmgschool=" + N(r.damageSchool) +
-		" AND t.BaseAttackTime=" + N(r.baseAttackTime) +
-		" AND t.RangeAttackTime=" + N(r.rangeAttackTime) +
-		" AND t.unit_class=" + N(r.unitClass) +
-		" AND t.unit_flags=" + N(r.unitFlags) + " AND t.type=" + N(r.type) +
-		" AND t.type_flags=" + N(r.typeFlags) +
-		" AND t.RegenHealth=" + N(r.regenHealth) +
-		" AND t.flags_extra=" + N(r.flagsExtra) +
-		" AND t.AIName=" + Q(r.aiName) + " AND t.ScriptName=" + Q(r.scriptName);
 	if (!exists)
-		return "EXISTS(SELECT 1 FROM creature_template WHERE entry=" +
-			   N(r.copyFrom) +
-			   ") AND NOT EXISTS(SELECT 1 FROM creature_template WHERE entry=" +
-			   N(r.entry) +
-			   ") AND NOT EXISTS(SELECT 1 FROM "
-			   "content_manager_server_resource_owner WHERE resource_kind=" +
-			   T("creature-template.id") + " AND entry=" + N(r.entry) + ")";
+		return DonorCondition(r) + " AND NOT " + TargetCondition(r) +
+			   " AND NOT " + OwnerCondition(r);
 	return "EXISTS(SELECT 1 FROM creature_template t JOIN "
 		   "content_manager_server_resource_owner o ON o.entry=t.entry AND "
 		   "o.resource_kind=" +
 		   T("creature-template.id") + " WHERE t.entry=" + N(r.entry) +
-		   " AND " + fields + " AND " +
+		   " AND " + ManagedFields(r) + " AND " +
 		   OwnerIdentity("creature-template.id", r.entry, realm, r.packageKey,
 						 r.symbol, Snapshot(r)) +
 		   ")";
@@ -488,30 +651,14 @@ std::string ContentManagedServer::Condition(ResolvedCreatureTemplate const &r,
 std::string ContentManagedServer::Condition(ResolvedGameObjectTemplate const &r,
 											std::string const &realm,
 											bool exists) {
-	auto fields = "t.type=" + N(r.type) + " AND t.displayId=" + N(r.displayId) +
-				  " AND t.name=" + Q(r.name) +
-				  " AND t.IconName=" + Q(r.iconName) +
-				  " AND t.castBarCaption=" + Q(r.castBarCaption) +
-				  " AND t.unk1=" + Q(r.unk1) + " AND t.size=" + F(r.size);
-	for (unsigned i = 0; i < 24; ++i)
-		fields += " AND t.Data" + std::to_string(i) + "=" + N(r.data[i]);
-	fields += " AND t.AIName=" + Q(r.aiName) +
-			  " AND t.ScriptName=" + Q(r.scriptName) +
-			  " AND t.VerifiedBuild=" + std::to_string(r.verifiedBuild);
 	if (!exists)
-		return "EXISTS(SELECT 1 FROM gameobject_template WHERE entry=" +
-			   N(r.copyFrom) +
-			   ") AND NOT EXISTS(SELECT 1 FROM gameobject_template WHERE "
-			   "entry=" +
-			   N(r.entry) +
-			   ") AND NOT EXISTS(SELECT 1 FROM "
-			   "content_manager_server_resource_owner WHERE resource_kind=" +
-			   T("gameobject-template.id") + " AND entry=" + N(r.entry) + ")";
+		return DonorCondition(r) + " AND NOT " + TargetCondition(r) +
+			   " AND NOT " + OwnerCondition(r);
 	return "EXISTS(SELECT 1 FROM gameobject_template t JOIN "
 		   "content_manager_server_resource_owner o ON o.entry=t.entry AND "
 		   "o.resource_kind=" +
 		   T("gameobject-template.id") + " WHERE t.entry=" + N(r.entry) +
-		   " AND " + fields + " AND " +
+		   " AND " + ManagedFields(r) + " AND " +
 		   OwnerIdentity("gameobject-template.id", r.entry, realm, r.packageKey,
 						 r.symbol, Snapshot(r)) +
 		   ")";
@@ -519,25 +666,13 @@ std::string ContentManagedServer::Condition(ResolvedGameObjectTemplate const &r,
 std::string ContentManagedServer::Condition(ResolvedCreatureSpawn const &r,
 											std::string const &realm,
 											bool exists) {
-	auto fields =
-		"t.id=" + N(r.creatureEntry) + " AND t.map=" + N(r.map) +
-		" AND t.spawnMask=" + N(r.spawnMask) +
-		" AND t.phaseMask=" + N(r.phaseMask) + " AND t.position_x=" + F(r.x) +
-		" AND t.position_y=" + F(r.y) + " AND t.position_z=" + F(r.z) +
-		" AND t.orientation=" + F(r.orientation) +
-		" AND t.spawntimesecs=" + N(r.respawnSeconds) +
-		" AND t.wander_distance=" + F(r.wanderDistance) +
-		" AND t.MovementType=" + N(r.movementType);
 	if (!exists)
-		return "NOT EXISTS(SELECT 1 FROM creature WHERE guid=" + N(r.guid) +
-			   ") AND NOT EXISTS(SELECT 1 FROM "
-			   "content_manager_server_resource_owner WHERE resource_kind=" +
-			   T("creature-spawn.guid") + " AND entry=" + N(r.guid) + ")";
+		return "NOT " + TargetCondition(r) + " AND NOT " + OwnerCondition(r);
 	return "EXISTS(SELECT 1 FROM creature t JOIN "
 		   "content_manager_server_resource_owner o ON o.entry=t.guid AND "
 		   "o.resource_kind=" +
 		   T("creature-spawn.guid") + " WHERE t.guid=" + N(r.guid) + " AND " +
-		   fields + " AND " +
+		   ManagedFields(r) + " AND " +
 		   OwnerIdentity("creature-spawn.guid", r.guid, realm, r.packageKey,
 						 r.symbol, Snapshot(r)) +
 		   ")";
