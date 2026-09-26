@@ -24,7 +24,7 @@ test is unavailable.
 - `DbcDescriptor.cpp`
 - `ServerTableDescriptor.cpp`
 
-Run it with the private disposable MySQL socket as its only argument. It recreates only fixture tables in the existing `phase4_test` database. Coverage includes existing/missing donor validation, generated creature and gameobject rows, package ownership snapshots, symbolic spawn resolution, post-apply verification, and rollback of all managed rows after an injected transaction failure.
+Run it with the private disposable MySQL socket as its only argument. It recreates only fixture tables in the existing `phase4_test` database. Coverage includes one- and multi-model creature donors, rejection of donors without model rows, generated creature/model and gameobject rows, exact model-set verification (missing, extra, display-ID and FLOAT drift), package ownership snapshots, symbolic spawn resolution, post-apply verification, and rollback of all managed rows after an injected transaction failure. The standalone managed-server suite covers canonical model serialization, zero-model rejection, allocated `CreatureID` insert SQL, nullable `VerifiedBuild`, and `CAST(... AS FLOAT)` comparisons.
 
 The MySQL fixture is not a PTR or live-realm test. Do not point it at a realm database.
 

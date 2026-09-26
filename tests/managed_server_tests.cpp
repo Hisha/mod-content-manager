@@ -28,6 +28,8 @@ void Save(std::filesystem::path const &path, json const &manifest) {
 int main() {
 	auto hash =
 		ContentManagedServer::DescriptorFingerprint("creature-template.id");
+	assert(hash ==
+		   "6f8a44b7fa08e9130a48f886b3c8eacc05626fd8ec48818c3aaa079628ceaa6d");
 	auto policy = ContentResourceAllocator::CreatureTemplateIdPolicy();
 	std::vector<ResourceAllocationRequest> requests = {
 		{"package-a", "wolf", "creature-template.id"}};
@@ -80,6 +82,8 @@ int main() {
 	creature.unitClass = 1;
 	creature.type = 1;
 	creature.regenHealth = 1;
+	creature.models = {{0, 1859, 1.0f, 0.75f, 12340},
+					   {2, 1860, 0.875f, 0.25f, std::nullopt}};
 	ResolvedGameObjectTemplate object;
 	object.packageKey = "package-a";
 	object.packageVersion = "1";
@@ -106,11 +110,49 @@ int main() {
 		managed.at("creatureTemplates").at(0).at("fields");
 	assert(!creatureFields.contains("scale") &&
 		   !creatureFields.contains("InhabitType"));
+	auto const &creatureModels =
+		managed.at("creatureTemplates").at(0).at("models");
+	assert(creatureModels.size() == 2 &&
+		   creatureModels.at(0).at("CreatureID") == 3 &&
+		   creatureModels.at(0).at("CreatureDisplayID") == 1859 &&
+		   creatureModels.at(1).at("VerifiedBuild").is_null());
 	std::vector<ResolvedCreatureTemplate> creatures;
 	std::vector<ResolvedGameObjectTemplate> objects;
 	std::vector<ResolvedCreatureSpawn> spawns;
 	ContentManagedServer::Parse(managed, creatures, objects, spawns);
 	assert(creatures.size() == 1 && objects.size() == 1 && spawns.size() == 1);
+	assert(creatures[0].models.size() == 2 &&
+		   creatures[0].models[1].index == 2);
+	auto singleCreature = creature;
+	singleCreature.models.resize(1);
+	auto singleManaged =
+		ContentManagedServer::Objects({singleCreature}, {}, {});
+	ContentManagedServer::Parse(singleManaged, creatures, objects, spawns);
+	assert(creatures.size() == 1 && creatures[0].models.size() == 1 &&
+		   creatures[0].models[0].displayId == 1859);
+	ContentManagedServer::Parse(managed, creatures, objects, spawns);
+	auto condition =
+		ContentManagedServer::CreatureModelConditionSql(creature);
+	assert(condition.find("(SELECT COUNT(*) FROM creature_template_model") !=
+		   std::string::npos);
+	assert(condition.find("m.DisplayScale=CAST(") != std::string::npos &&
+		   condition.find("m.Probability=CAST(") != std::string::npos);
+	auto apply = ContentManagedServer::CreatureModelInsertSql(creature);
+	assert(apply.size() == 2);
+	assert(apply[0].find("creature_template_model") != std::string::npos &&
+		   apply[0].find("VALUES (3,0,1859") != std::string::npos);
+	assert(apply[1].find("VALUES (3,2,1860") != std::string::npos &&
+		   apply[1].find("NULL") != std::string::npos);
+	auto missingModels = managed;
+	missingModels["creatureTemplates"][0]["models"] = json::array();
+	bool invalidModels = false;
+	try {
+		ContentManagedServer::Parse(missingModels, creatures, objects, spawns);
+	} catch (std::runtime_error const &) {
+		invalidModels = true;
+	}
+	assert(invalidModels);
+	ContentManagedServer::Parse(managed, creatures, objects, spawns);
 	auto server = ContentServerBundle::ServerJson("Realm", {}, {}, {},
 												  creatures, objects, spawns);
 	std::vector<ResolvedServerItem> items;
@@ -118,6 +160,8 @@ int main() {
 	assert(ContentServerBundle::ParseServer(server, "Realm", items, error,
 											nullptr, nullptr, &creatures,
 											&objects, &spawns));
+	assert(creatures[0].models.size() == 2 &&
+		   creatures[0].models[0].displayId == 1859);
 	std::vector<ItemAllocation> leases = {
 		first[0],
 		{"Realm", "package-a", "marker", 4, "reserved", 1, 1,

@@ -22,7 +22,7 @@ int main(int argc, char **argv) {
 	WorldDatabase.Connect(argv[1]);
 	SQL("DROP TABLE IF EXISTS "
 		"content_manager_server_resource_owner,creature,gameobject_template,"
-		"creature_template");
+		"creature_template_model,creature_template");
 	SQL("CREATE TABLE creature_template(entry INT UNSIGNED PRIMARY KEY,name "
 		"VARCHAR(255) NOT NULL DEFAULT '',subname VARCHAR(255) NOT NULL "
 		"DEFAULT '',minlevel TINYINT UNSIGNED NOT NULL DEFAULT 1,maxlevel "
@@ -39,6 +39,11 @@ int main(int argc, char **argv) {
 		"1,flags_extra INT UNSIGNED NOT NULL DEFAULT 0,AIName VARCHAR(255) NOT "
 		"NULL DEFAULT '',ScriptName VARCHAR(255) NOT NULL DEFAULT '') "
 		"ENGINE=InnoDB");
+	SQL("CREATE TABLE creature_template_model(CreatureID INT UNSIGNED NOT "
+		"NULL,Idx SMALLINT UNSIGNED NOT NULL DEFAULT 0,CreatureDisplayID INT "
+		"UNSIGNED NOT NULL,DisplayScale FLOAT NOT NULL DEFAULT 1,Probability "
+		"FLOAT NOT NULL DEFAULT 0,VerifiedBuild INT DEFAULT NULL,PRIMARY "
+		"KEY(CreatureID,Idx),CHECK(Idx<=3)) ENGINE=InnoDB");
 	std::string go =
 		"CREATE TABLE gameobject_template(entry INT UNSIGNED PRIMARY KEY,type "
 		"INT UNSIGNED NOT NULL,displayId INT UNSIGNED NOT NULL,name "
@@ -69,7 +74,11 @@ int main(int argc, char **argv) {
 		"DEFAULT CHARSET=utf8mb4");
 	SQL("INSERT INTO "
 		"creature_template(entry,name,minlevel,maxlevel,faction,npcflag) "
-		"VALUES(100,'Donor',10,10,14,1)");
+		"VALUES(100,'Donor',10,10,14,1),(101,'Single Model',10,10,14,1),"
+		"(102,'Missing Model',10,10,14,1)");
+	SQL("INSERT INTO creature_template_model VALUES"
+		"(100,0,1859,1.0,0.75,12340),(100,2,1860,0.875,0.25,NULL),"
+		"(101,0,1900,1.0,1.0,12340)");
 	SQL("INSERT INTO gameobject_template(entry,type,displayId,name) "
 		"VALUES(200,5,300,'Donor Object')");
 	ContentCreatureTemplate c;
@@ -80,6 +89,21 @@ int main(int argc, char **argv) {
 	std::string error;
 	assert(ContentManagedServer::ResolveDonor(c, "package-a", "1", 1000,
 											  creature, error));
+	assert(creature.models.size() == 2 && creature.models[0].index == 0 &&
+		   creature.models[0].displayId == 1859 &&
+		   creature.models[1].index == 2 &&
+		   !creature.models[1].verifiedBuild);
+	c.copyFrom = 101;
+	ResolvedCreatureTemplate singleModel;
+	assert(ContentManagedServer::ResolveDonor(c, "package-a", "1", 1001,
+											  singleModel, error));
+	assert(singleModel.models.size() == 1 &&
+		   singleModel.models[0].displayId == 1900);
+	c.copyFrom = 102;
+	ResolvedCreatureTemplate missingModels;
+	assert(!ContentManagedServer::ResolveDonor(c, "package-a", "1", 1002,
+											   missingModels, error));
+	assert(Has(error, "has no creature_template_model rows"));
 	c.copyFrom = 999;
 	ResolvedCreatureTemplate missing;
 	assert(!ContentManagedServer::ResolveDonor(c, "package-a", "1", 1001,
@@ -168,6 +192,8 @@ int main(int argc, char **argv) {
 	WorldDatabase.DirectCommitTransaction(tx);
 	assert(Scalar("SELECT COUNT(*) FROM creature_template WHERE entry=1000") ==
 		   0);
+	assert(Scalar("SELECT COUNT(*) FROM creature_template_model WHERE "
+				  "CreatureID=1000") == 0);
 	assert(
 		Scalar("SELECT COUNT(*) FROM gameobject_template WHERE entry=2000") ==
 		0);
@@ -185,6 +211,32 @@ int main(int argc, char **argv) {
 	WorldDatabase.DirectCommitTransaction(tx);
 	assert(ContentManagedServer::Verify(creature, "Realm", 1,
 										std::string(64, 'a'), error));
+	assert(Scalar("SELECT COUNT(*) FROM creature_template_model WHERE "
+				  "CreatureID=1000") == 2);
+	SQL("DELETE FROM creature_template_model WHERE CreatureID=1000 AND Idx=2");
+	assert(!ContentManagedServer::Verify(creature, "Realm", 1,
+										 std::string(64, 'a'), error));
+	SQL("INSERT INTO creature_template_model VALUES"
+		"(1000,2,1860,0.875,0.25,NULL)");
+	SQL("UPDATE creature_template_model SET CreatureDisplayID=9999 WHERE "
+		"CreatureID=1000 AND Idx=0");
+	assert(!ContentManagedServer::Verify(creature, "Realm", 1,
+										 std::string(64, 'a'), error));
+	SQL("UPDATE creature_template_model SET CreatureDisplayID=1859 WHERE "
+		"CreatureID=1000 AND Idx=0");
+	SQL("UPDATE creature_template_model SET DisplayScale=0.5,Probability=0.5 "
+		"WHERE CreatureID=1000 AND Idx=0");
+	assert(!ContentManagedServer::Verify(creature, "Realm", 1,
+										 std::string(64, 'a'), error));
+	SQL("UPDATE creature_template_model SET DisplayScale=1.0,Probability=0.75 "
+		"WHERE CreatureID=1000 AND Idx=0");
+	assert(ContentManagedServer::Verify(creature, "Realm", 1,
+										std::string(64, 'a'), error));
+	SQL("INSERT INTO creature_template_model VALUES"
+		"(1000,1,1901,1.0,0.0,12340)");
+	assert(!ContentManagedServer::Verify(creature, "Realm", 1,
+										 std::string(64, 'a'), error));
+	SQL("DELETE FROM creature_template_model WHERE CreatureID=1000 AND Idx=1");
 	assert(ContentManagedServer::Verify(object, "Realm", 1,
 										std::string(64, 'a'), error));
 	assert(ContentManagedServer::Verify(spawn, "Realm", 1, std::string(64, 'a'),
@@ -215,6 +267,7 @@ int main(int argc, char **argv) {
 	assert(!ContentManagedServer::Check(spawn, "Realm", exists, error));
 	assert(Has(error, "kind=creature-spawn.guid") &&
 		   Has(error, "new-resource condition SQL query failed"));
-	std::cout << "PASS donor validation, managed representations, ownership, "
+	std::cout << "PASS donor/model validation, managed representations, exact "
+				 "child model verification, FLOAT-safe comparisons, ownership, "
 				 "spawn resolution, diagnostics and transactional rollback\n";
 }
