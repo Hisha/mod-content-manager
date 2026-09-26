@@ -43,6 +43,23 @@ std::string OwnerIdentity(std::string const &kind, std::uint32_t entry,
 	return OwnerAllocation(kind, entry, realm, package, symbol) +
 		   " AND o.row_json=" + T(snapshot);
 }
+json CreatureModelObject(ResolvedCreatureModel const &model,
+						 std::uint32_t entry) {
+	return {{"CreatureID", entry},
+			{"Idx", model.index},
+			{"CreatureDisplayID", model.displayId},
+			{"DisplayScale", model.displayScale},
+			{"Probability", model.probability},
+			{"VerifiedBuild", model.verifiedBuild
+							  ? json(*model.verifiedBuild)
+							  : json(nullptr)}};
+}
+json CreatureModels(ResolvedCreatureTemplate const &r) {
+	json models = json::array();
+	for (auto const &model : r.models)
+		models.push_back(CreatureModelObject(model, r.entry));
+	return models;
+}
 json CreatureObject(ResolvedCreatureTemplate const &r) {
 	return {{"resourceKind", "creature-template.id"},
 			{"package", r.packageKey},
@@ -50,6 +67,7 @@ json CreatureObject(ResolvedCreatureTemplate const &r) {
 			{"symbol", r.symbol},
 			{"entry", r.entry},
 			{"copyFrom", r.copyFrom},
+			{"models", CreatureModels(r)},
 			{"fields",
 			 {{"name", r.name},
 			  {"subname", r.subname},
@@ -187,8 +205,9 @@ std::string DonorCondition(ResolvedGameObjectTemplate const &r) {
 }
 std::string DonorCondition(ResolvedCreatureSpawn const &) { return "1"; }
 std::string TargetCondition(ResolvedCreatureTemplate const &r) {
-	return "EXISTS(SELECT 1 FROM creature_template WHERE entry=" + N(r.entry) +
-		   ")";
+	return "(EXISTS(SELECT 1 FROM creature_template WHERE entry=" + N(r.entry) +
+		   ") OR EXISTS(SELECT 1 FROM creature_template_model WHERE CreatureID=" +
+		   N(r.entry) + "))";
 }
 std::string TargetCondition(ResolvedGameObjectTemplate const &r) {
 	return "EXISTS(SELECT 1 FROM gameobject_template WHERE entry=" +
@@ -199,7 +218,8 @@ std::string TargetCondition(ResolvedCreatureSpawn const &r) {
 }
 std::string FieldsCondition(ResolvedCreatureTemplate const &r) {
 	return "EXISTS(SELECT 1 FROM creature_template t WHERE t.entry=" +
-		   N(r.entry) + " AND " + ManagedFields(r) + ")";
+		   N(r.entry) + " AND " + ManagedFields(r) + ") AND " +
+		   ContentManagedServer::CreatureModelConditionSql(r);
 }
 std::string FieldsCondition(ResolvedGameObjectTemplate const &r) {
 	return "EXISTS(SELECT 1 FROM gameobject_template t WHERE t.entry=" +
@@ -317,9 +337,31 @@ ResolvedCreatureTemplate ParseCreature(json const &v) {
 	r.flagsExtra = f.at("flags_extra");
 	r.aiName = f.at("AIName");
 	r.scriptName = f.at("ScriptName");
+	if (!v.at("models").is_array())
+		throw std::runtime_error("Invalid creature-template models");
+	std::uint32_t previous = 0;
+	bool first = true;
+	for (auto const &source : v.at("models")) {
+		ResolvedCreatureModel model;
+		if (source.at("CreatureID") != r.entry)
+			throw std::runtime_error("Creature model parent identity mismatch");
+		model.index = source.at("Idx");
+		model.displayId = source.at("CreatureDisplayID");
+		model.displayScale = source.at("DisplayScale");
+		model.probability = source.at("Probability");
+		if (!source.at("VerifiedBuild").is_null())
+			model.verifiedBuild = source.at("VerifiedBuild");
+		if (model.index > 3 || (!first && model.index <= previous) ||
+			!std::isfinite(model.displayScale) ||
+			!std::isfinite(model.probability))
+			throw std::runtime_error("Invalid creature-template model row");
+		first = false;
+		previous = model.index;
+		r.models.push_back(model);
+	}
 	if (v.at("resourceKind") != "creature-template.id" || !r.entry ||
 		!r.copyFrom || r.packageKey.empty() || r.packageVersion.empty() ||
-		r.symbol.empty())
+		r.symbol.empty() || r.models.empty() || r.models.size() > 4)
 		throw std::runtime_error("Invalid creature-template identity");
 	return r;
 }
@@ -451,8 +493,10 @@ bool ContentManagedServer::ResolveDonor(ContentCreatureTemplate const &d,
 		"name,subname,minlevel,maxlevel,faction,npcflag,speed_walk,speed_run,"
 		"`rank`,dmgschool,BaseAttackTime,RangeAttackTime,unit_class,unit_flags,"
 		"type,type_flags,RegenHealth,flags_extra,AIName,"
-		"ScriptName FROM creature_template WHERE entry=" +
-		N(d.copyFrom));
+		"ScriptName,m.Idx,m.CreatureDisplayID,m.DisplayScale,m.Probability,"
+		"m.VerifiedBuild FROM creature_template t LEFT JOIN "
+		"creature_template_model m ON m.CreatureID=t.entry WHERE t.entry=" +
+		N(d.copyFrom) + " ORDER BY m.Idx");
 	if (!q) {
 		error = "Creature template donor does not exist: " + N(d.copyFrom);
 		return false;
@@ -483,6 +527,28 @@ bool ContentManagedServer::ResolveDonor(ContentCreatureTemplate const &d,
 	r.flagsExtra = f[17].Get<std::uint32_t>();
 	r.aiName = f[18].Get<std::string>();
 	r.scriptName = f[19].Get<std::string>();
+	if (f[20].IsNull()) {
+		error = "Creature template donor has no creature_template_model rows: " +
+				N(d.copyFrom);
+		return false;
+	}
+	do {
+		f = q->Fetch();
+		ResolvedCreatureModel model;
+		model.index = f[20].Get<std::uint32_t>();
+		model.displayId = f[21].Get<std::uint32_t>();
+		model.displayScale = f[22].Get<float>();
+		model.probability = f[23].Get<float>();
+		if (!f[24].IsNull())
+			model.verifiedBuild = f[24].Get<std::int32_t>();
+		if (model.index > 3 || !std::isfinite(model.displayScale) ||
+			!std::isfinite(model.probability) || r.models.size() >= 4) {
+			error = "Creature template donor has invalid model rows: " +
+					N(d.copyFrom);
+			return false;
+		}
+		r.models.push_back(model);
+	} while (q->NextRow());
 	if (d.name)
 		r.name = *d.name;
 	if (d.subname)
@@ -656,6 +722,8 @@ std::string ContentManagedServer::Condition(ResolvedCreatureTemplate const &r,
 		   "o.resource_kind=" +
 		   T("creature-template.id") + " WHERE t.entry=" + N(r.entry) +
 		   " AND " + ManagedFields(r) + " AND " +
+		   ContentManagedServer::CreatureModelConditionSql(r) +
+		   " AND " +
 		   OwnerIdentity("creature-template.id", r.entry, realm, r.packageKey,
 						 r.symbol, Snapshot(r)) +
 		   ")";
@@ -728,14 +796,18 @@ ContentManagedServer::ApplySql(ResolvedCreatureTemplate const &r,
 		N(r.unitClass) + "," + N(r.unitFlags) + "," + N(r.type) + "," +
 		N(r.typeFlags) + "," + N(r.regenHealth) + "," +
 		N(r.flagsExtra) + "," + Q(r.aiName) + "," + Q(r.scriptName);
-	return {"INSERT INTO creature_template (" + columns + ") VALUES (" +
-				values + ")",
-			"INSERT INTO " + owner +
+	std::vector<std::string> sql = {
+		"INSERT INTO creature_template (" + columns + ") VALUES (" + values +
+			")"};
+	auto models = CreatureModelInsertSql(r);
+	sql.insert(sql.end(), models.begin(), models.end());
+	sql.push_back("INSERT INTO " + owner +
 				"(resource_kind,entry,realm_name,package_key,symbol,row_json,"
 				"applied_build,artifact_sha256) VALUES (" +
 				T("creature-template.id") + "," + N(r.entry) + "," + T(realm) +
 				"," + T(r.packageKey) + "," + T(r.symbol) + "," +
-				T(Snapshot(r)) + "," + N(build) + "," + T(hash) + ")"};
+				T(Snapshot(r)) + "," + N(build) + "," + T(hash) + ")");
+	return sql;
 }
 std::vector<std::string>
 ContentManagedServer::ApplySql(ResolvedGameObjectTemplate const &r,

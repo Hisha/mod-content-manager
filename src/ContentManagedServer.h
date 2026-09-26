@@ -6,9 +6,16 @@
 #include "third_party/json/json.hpp"
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
+
+struct ResolvedCreatureModel {
+	std::uint32_t index = 0, displayId = 0;
+	float displayScale = 1, probability = 0;
+	std::optional<std::int32_t> verifiedBuild;
+};
 
 struct ResolvedCreatureTemplate {
 	std::string packageKey, packageVersion, symbol;
@@ -20,6 +27,7 @@ struct ResolvedCreatureTemplate {
 				  flagsExtra = 0;
 	float speedWalk = 0, speedRun = 0;
 	std::string name, subname, aiName, scriptName;
+	std::vector<ResolvedCreatureModel> models;
 };
 
 struct ResolvedGameObjectTemplate {
@@ -43,6 +51,12 @@ class ContentManagedServer {
 public:
 	static constexpr std::uint32_t DescriptorVersion = 1;
 	static std::string DescriptorFingerprint(std::string const &kind);
+	// Internal SQL fragments for the subordinate creature model set. Kept
+	// separate so canonical descriptor tests exercise the exact production SQL.
+	static std::string
+	CreatureModelConditionSql(ResolvedCreatureTemplate const &);
+	static std::vector<std::string>
+	CreatureModelInsertSql(ResolvedCreatureTemplate const &);
 	static nlohmann::json
 	Objects(std::vector<ResolvedCreatureTemplate> creatures,
 			std::vector<ResolvedGameObjectTemplate> gameObjects,

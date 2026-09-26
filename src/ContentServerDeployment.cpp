@@ -703,6 +703,9 @@ bool ContentServerDeployment::Apply(
 					   std::to_string(creatureExists[i]
 										  ? creatures[i].entry
 										  : creatures[i].copyFrom));
+			tx->Append(
+				"UPDATE creature_template_model SET CreatureID=CreatureID WHERE "
+				"CreatureID=" + std::to_string(creatures[i].entry));
 			guard(ContentManagedServer::Condition(creatures[i], realm,
 												  creatureExists[i]));
 			for (auto const &sql : ContentManagedServer::ApplySql(

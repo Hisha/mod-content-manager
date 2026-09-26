@@ -1,11 +1,35 @@
 #include "ContentManagedServer.h"
 #include <algorithm>
 #include <cmath>
+#include <iomanip>
+#include <limits>
+#include <sstream>
 #include <set>
 #include <stdexcept>
 #include <tuple>
 using nlohmann::json;
 namespace {
+std::string FloatSql(float value) {
+	if (!std::isfinite(value))
+		throw std::runtime_error("Non-finite managed server value");
+	std::ostringstream out;
+	out << std::setprecision(std::numeric_limits<float>::max_digits10) << value;
+	return out.str();
+}
+json CreatureModels(ResolvedCreatureTemplate const &r) {
+	json models = json::array();
+	for (auto const &model : r.models)
+		models.push_back(
+			{{"CreatureID", r.entry},
+			 {"Idx", model.index},
+			 {"CreatureDisplayID", model.displayId},
+			 {"DisplayScale", model.displayScale},
+			 {"Probability", model.probability},
+			 {"VerifiedBuild", model.verifiedBuild
+							   ? json(*model.verifiedBuild)
+							   : json(nullptr)}});
+	return models;
+}
 json Creature(ResolvedCreatureTemplate const &r) {
 	return {{"resourceKind", "creature-template.id"},
 			{"package", r.packageKey},
@@ -13,6 +37,7 @@ json Creature(ResolvedCreatureTemplate const &r) {
 			{"symbol", r.symbol},
 			{"entry", r.entry},
 			{"copyFrom", r.copyFrom},
+			{"models", CreatureModels(r)},
 			{"fields",
 			 {{"name", r.name},
 			  {"subname", r.subname},
@@ -104,9 +129,31 @@ ResolvedCreatureTemplate ParseCreature(json const &v) {
 	r.flagsExtra = f.at("flags_extra");
 	r.aiName = f.at("AIName");
 	r.scriptName = f.at("ScriptName");
+	if (!v.at("models").is_array())
+		throw std::runtime_error("Invalid creature-template models");
+	std::uint32_t previous = 0;
+	bool first = true;
+	for (auto const &source : v.at("models")) {
+		ResolvedCreatureModel model;
+		if (source.at("CreatureID") != r.entry)
+			throw std::runtime_error("Creature model parent identity mismatch");
+		model.index = source.at("Idx");
+		model.displayId = source.at("CreatureDisplayID");
+		model.displayScale = source.at("DisplayScale");
+		model.probability = source.at("Probability");
+		if (!source.at("VerifiedBuild").is_null())
+			model.verifiedBuild = source.at("VerifiedBuild");
+		if (model.index > 3 || (!first && model.index <= previous) ||
+			!std::isfinite(model.displayScale) ||
+			!std::isfinite(model.probability))
+			throw std::runtime_error("Invalid creature-template model row");
+		first = false;
+		previous = model.index;
+		r.models.push_back(model);
+	}
 	if (v.at("resourceKind") != "creature-template.id" || !r.entry ||
 		!r.copyFrom || r.packageKey.empty() || r.packageVersion.empty() ||
-		r.symbol.empty())
+		r.symbol.empty() || r.models.empty() || r.models.size() > 4)
 		throw std::runtime_error("Invalid creature-template identity");
 	return r;
 }
@@ -162,6 +209,42 @@ ResolvedCreatureSpawn ParseSpawn(json const &v) {
 	return r;
 }
 } // namespace
+std::string ContentManagedServer::CreatureModelConditionSql(
+	ResolvedCreatureTemplate const &r) {
+	auto number = [](std::uint32_t value) { return std::to_string(value); };
+	std::string condition =
+		"(SELECT COUNT(*) FROM creature_template_model m WHERE "
+		"m.CreatureID=" + number(r.entry) + ")=" + number(r.models.size());
+	for (auto const &model : r.models) {
+		condition +=
+			" AND EXISTS(SELECT 1 FROM creature_template_model m WHERE "
+			"m.CreatureID=" + number(r.entry) + " AND m.Idx=" +
+			number(model.index) + " AND m.CreatureDisplayID=" +
+			number(model.displayId) + " AND m.DisplayScale=CAST(" +
+			FloatSql(model.displayScale) +
+			" AS FLOAT) AND m.Probability=CAST(" +
+			FloatSql(model.probability) + " AS FLOAT)" +
+			(model.verifiedBuild
+				 ? " AND m.VerifiedBuild=" +
+					   std::to_string(*model.verifiedBuild)
+				 : " AND m.VerifiedBuild IS NULL") + ")";
+	}
+	return condition;
+}
+std::vector<std::string> ContentManagedServer::CreatureModelInsertSql(
+	ResolvedCreatureTemplate const &r) {
+	std::vector<std::string> sql;
+	for (auto const &model : r.models)
+		sql.push_back(
+			"INSERT INTO creature_template_model (CreatureID,Idx,"
+			"CreatureDisplayID,DisplayScale,Probability,VerifiedBuild) VALUES (" +
+			std::to_string(r.entry) + "," + std::to_string(model.index) + "," +
+			std::to_string(model.displayId) + "," +
+			FloatSql(model.displayScale) + "," + FloatSql(model.probability) + "," +
+			(model.verifiedBuild ? std::to_string(*model.verifiedBuild) : "NULL") +
+			")");
+	return sql;
+}
 std::string
 ContentManagedServer::DescriptorFingerprint(std::string const &kind) {
 	if (kind == "creature-template.id")
