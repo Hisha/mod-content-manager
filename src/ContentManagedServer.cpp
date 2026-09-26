@@ -23,7 +23,7 @@ std::string F(float value) {
 	return out.str();
 }
 std::string Q(std::string const &value) {
-	return ContentServerBundle::SqlText(value);
+	return ContentServerBundle::SqlText(value) + " COLLATE utf8mb4_unicode_ci";
 }
 std::string OwnerAllocation(std::string const &kind, std::uint32_t entry,
 							std::string const &realm,
