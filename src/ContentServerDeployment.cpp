@@ -576,23 +576,35 @@ bool ContentServerDeployment::Apply(
             vendorExists.push_back(present);
         }
 		std::vector<bool> creatureExists, gameObjectExists, spawnExists;
+		std::vector<ResolvedCreatureTemplate> currentCreatures;
+		std::vector<ResolvedGameObjectTemplate> currentGameObjects;
+		std::vector<ResolvedCreatureSpawn> currentSpawns;
 		for (auto const &r : creatures) {
 			bool present = false;
-			Require(ContentManagedServer::Check(r, realm, present, error),
-					error);
+			ResolvedCreatureTemplate current;
+			Require(
+				ContentManagedServer::Check(r, realm, present, current, error),
+				error);
 			creatureExists.push_back(present);
+			currentCreatures.push_back(std::move(current));
 		}
 		for (auto const &r : gameObjects) {
 			bool present = false;
-			Require(ContentManagedServer::Check(r, realm, present, error),
-					error);
+			ResolvedGameObjectTemplate current;
+			Require(
+				ContentManagedServer::Check(r, realm, present, current, error),
+				error);
 			gameObjectExists.push_back(present);
+			currentGameObjects.push_back(std::move(current));
 		}
 		for (auto const &r : spawns) {
 			bool present = false;
-			Require(ContentManagedServer::Check(r, realm, present, error),
-					error);
+			ResolvedCreatureSpawn current;
+			Require(
+				ContentManagedServer::Check(r, realm, present, current, error),
+				error);
 			spawnExists.push_back(present);
+			currentSpawns.push_back(std::move(current));
 		}
 		struct Existing {
 			bool item = false;
@@ -706,11 +718,11 @@ bool ContentServerDeployment::Apply(
 			tx->Append(
 				"UPDATE creature_template_model SET CreatureID=CreatureID WHERE "
 				"CreatureID=" + std::to_string(creatures[i].entry));
-			guard(ContentManagedServer::Condition(creatures[i], realm,
-												  creatureExists[i]));
+			guard(ContentManagedServer::Condition(currentCreatures[i], realm,
+										  creatureExists[i]));
 			for (auto const &sql : ContentManagedServer::ApplySql(
-					 creatures[i], realm, creatureExists[i], build,
-					 status.bundleSha256))
+					 creatures[i], currentCreatures[i], realm, creatureExists[i],
+					 build, status.bundleSha256))
 				tx->Append(sql);
 		}
 		for (std::size_t i = 0; i < gameObjects.size(); ++i) {
@@ -718,10 +730,11 @@ bool ContentServerDeployment::Apply(
 				"UPDATE gameobject_template SET entry=entry WHERE entry=" +
 				std::to_string(gameObjectExists[i] ? gameObjects[i].entry
 												   : gameObjects[i].copyFrom));
-			guard(ContentManagedServer::Condition(gameObjects[i], realm,
-												  gameObjectExists[i]));
+			guard(ContentManagedServer::Condition(currentGameObjects[i], realm,
+										  gameObjectExists[i]));
 			for (auto const &sql : ContentManagedServer::ApplySql(
-					 gameObjects[i], realm, gameObjectExists[i], build,
+					 gameObjects[i], currentGameObjects[i], realm,
+					 gameObjectExists[i], build,
 					 status.bundleSha256))
 				tx->Append(sql);
 		}
@@ -806,10 +819,10 @@ bool ContentServerDeployment::Apply(
 		for (std::size_t i = 0; i < spawns.size(); ++i) {
 			tx->Append("UPDATE creature SET guid=guid WHERE guid=" +
 					   std::to_string(spawns[i].guid));
-			guard(ContentManagedServer::Condition(spawns[i], realm,
-												  spawnExists[i]));
+			guard(ContentManagedServer::Condition(currentSpawns[i], realm,
+										  spawnExists[i]));
 			for (auto const &sql : ContentManagedServer::ApplySql(
-					 spawns[i], realm, spawnExists[i], build,
+					 spawns[i], currentSpawns[i], realm, spawnExists[i], build,
 					 status.bundleSha256))
                 tx->Append(sql);
 		}

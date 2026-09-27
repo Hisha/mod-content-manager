@@ -416,9 +416,19 @@ ResolvedCreatureSpawn ParseSpawn(json const &v) {
 		throw std::runtime_error("Invalid creature-spawn identity");
 	return r;
 }
+void ParseSnapshot(json const &v, ResolvedCreatureTemplate &r) {
+	r = ParseCreature(v);
+}
+void ParseSnapshot(json const &v, ResolvedGameObjectTemplate &r) {
+	r = ParseGameObject(v);
+}
+void ParseSnapshot(json const &v, ResolvedCreatureSpawn &r) {
+	r = ParseSpawn(v);
+}
 template <class Row>
 bool QueryCheck(Row const &r, std::string const &realm, bool &exists,
-				std::string &error) {
+				Row &current, std::string &error) {
+	current = r;
 	auto missing = WorldDatabase.Query(
 		"SELECT CAST((" + ContentManagedServer::Condition(r, realm, false) +
 		") AS UNSIGNED)");
@@ -430,17 +440,56 @@ bool QueryCheck(Row const &r, std::string const &realm, bool &exists,
 		exists = false;
 		return true;
 	}
-	auto existing = WorldDatabase.Query(
-		"SELECT CAST((" + ContentManagedServer::Condition(r, realm, true) +
-		") AS UNSIGNED)");
-	if (!existing) {
-		error =
-			ResourceLabel(r) + ": existing-resource condition SQL query failed";
+	auto owner = WorldDatabase.Query(
+		"SELECT o.realm_name,o.package_key,o.symbol,o.row_json FROM (SELECT 1) "
+		"seed LEFT JOIN content_manager_server_resource_owner o ON "
+		"o.resource_kind=" + T(Kind(r)) + " AND o.entry=" + N(Entry(r)));
+	if (!owner) {
+		error = ResourceLabel(r) + ": ownership snapshot query failed";
 		return false;
 	}
-	if (existing->Fetch()[0].template Get<std::uint64_t>()) {
-		exists = true;
-		return true;
+	auto fields = owner->Fetch();
+	if (!fields[0].IsNull()) {
+		auto ownerRealm = fields[0].template Get<std::string>();
+		auto ownerPackage = fields[1].template Get<std::string>();
+		auto ownerSymbol = fields[2].template Get<std::string>();
+		if (ownerRealm != realm || ownerPackage != r.packageKey ||
+			ownerSymbol != r.symbol) {
+			error = ResourceLabel(r) +
+					": ownership row does not match realm=" + realm +
+					" package=" + r.packageKey + " symbol=" + r.symbol;
+			return false;
+		}
+		try {
+			ParseSnapshot(json::parse(fields[3].template Get<std::string>()),
+						  current);
+		} catch (std::exception const &e) {
+			error = ResourceLabel(r) + ": invalid recorded ownership snapshot: " +
+					e.what();
+			return false;
+		}
+		if (Entry(current) != Entry(r) || Kind(current) != Kind(r) ||
+			current.packageKey != r.packageKey || current.symbol != r.symbol) {
+			error = ResourceLabel(r) +
+					": recorded ownership snapshot identity mismatch";
+			return false;
+		}
+		auto existing = WorldDatabase.Query(
+			"SELECT CAST((" +
+			ContentManagedServer::Condition(current, realm, true) +
+			") AS UNSIGNED)");
+		if (!existing) {
+			error = ResourceLabel(r) +
+					": recorded-snapshot condition SQL query failed";
+			return false;
+		}
+		if (existing->Fetch()[0].template Get<std::uint64_t>()) {
+			exists = true;
+			return true;
+		}
+		error = ResourceLabel(r) +
+				": managed target differs from recorded ownership snapshot";
+		return false;
 	}
 	auto diagnostic = WorldDatabase.Query(
 		"SELECT CAST((" + DonorCondition(r) +
@@ -760,28 +809,46 @@ std::string ContentManagedServer::Condition(ResolvedCreatureSpawn const &r,
 bool ContentManagedServer::Check(ResolvedCreatureTemplate const &r,
 								 std::string const &realm, bool &exists,
 								 std::string &error) {
-	return QueryCheck(r, realm, exists, error);
+	ResolvedCreatureTemplate current;
+	return QueryCheck(r, realm, exists, current, error);
+}
+bool ContentManagedServer::Check(ResolvedCreatureTemplate const &r,
+								 std::string const &realm, bool &exists,
+								 ResolvedCreatureTemplate &current,
+								 std::string &error) {
+	return QueryCheck(r, realm, exists, current, error);
 }
 bool ContentManagedServer::Check(ResolvedGameObjectTemplate const &r,
 								 std::string const &realm, bool &exists,
 								 std::string &error) {
-	return QueryCheck(r, realm, exists, error);
+	ResolvedGameObjectTemplate current;
+	return QueryCheck(r, realm, exists, current, error);
+}
+bool ContentManagedServer::Check(ResolvedGameObjectTemplate const &r,
+								 std::string const &realm, bool &exists,
+								 ResolvedGameObjectTemplate &current,
+								 std::string &error) {
+	return QueryCheck(r, realm, exists, current, error);
 }
 bool ContentManagedServer::Check(ResolvedCreatureSpawn const &r,
 								 std::string const &realm, bool &exists,
 								 std::string &error) {
-	return QueryCheck(r, realm, exists, error);
+	ResolvedCreatureSpawn current;
+	return QueryCheck(r, realm, exists, current, error);
+}
+bool ContentManagedServer::Check(ResolvedCreatureSpawn const &r,
+								 std::string const &realm, bool &exists,
+								 ResolvedCreatureSpawn &current,
+								 std::string &error) {
+	return QueryCheck(r, realm, exists, current, error);
 }
 
 std::vector<std::string>
 ContentManagedServer::ApplySql(ResolvedCreatureTemplate const &r,
+							   ResolvedCreatureTemplate const &current,
 							   std::string const &realm, bool exists,
 							   std::uint32_t build, std::string const &hash) {
 	std::string const owner = "content_manager_server_resource_owner";
-	if (exists)
-		return {"UPDATE " + owner + " SET applied_build=" + N(build) +
-				",artifact_sha256=" + T(hash) + " WHERE resource_kind=" +
-				T("creature-template.id") + " AND entry=" + N(r.entry)};
 	std::string columns =
 		"entry,name,subname,minlevel,maxlevel,faction,npcflag,speed_walk,speed_"
 		"run,`rank`,dmgschool,BaseAttackTime,RangeAttackTime,unit_class,unit_flags,"
@@ -799,8 +866,33 @@ ContentManagedServer::ApplySql(ResolvedCreatureTemplate const &r,
 	std::vector<std::string> sql = {
 		"INSERT INTO creature_template (" + columns + ") VALUES (" + values +
 			")"};
+	if (exists) {
+		sql = {"UPDATE creature_template SET name=" + Q(r.name) +
+			   ",subname=" + Q(r.subname) + ",minlevel=" + N(r.minLevel) +
+			   ",maxlevel=" + N(r.maxLevel) + ",faction=" + N(r.faction) +
+			   ",npcflag=" + N(r.npcFlags) + ",speed_walk=" + F(r.speedWalk) +
+			   ",speed_run=" + F(r.speedRun) + ",`rank`=" + N(r.rank) +
+			   ",dmgschool=" + N(r.damageSchool) + ",BaseAttackTime=" +
+			   N(r.baseAttackTime) + ",RangeAttackTime=" +
+			   N(r.rangeAttackTime) + ",unit_class=" + N(r.unitClass) +
+			   ",unit_flags=" + N(r.unitFlags) + ",type=" + N(r.type) +
+			   ",type_flags=" + N(r.typeFlags) + ",RegenHealth=" +
+			   N(r.regenHealth) + ",flags_extra=" + N(r.flagsExtra) +
+			   ",AIName=" + Q(r.aiName) + ",ScriptName=" + Q(r.scriptName) +
+			   " WHERE entry=" + N(r.entry),
+			   "DELETE FROM creature_template_model WHERE CreatureID=" +
+				   N(r.entry)};
+	}
 	auto models = CreatureModelInsertSql(r);
 	sql.insert(sql.end(), models.begin(), models.end());
+	if (exists) {
+		sql.push_back("UPDATE " + owner + " o SET row_json=" + T(Snapshot(r)) +
+					  ",applied_build=" + N(build) + ",artifact_sha256=" +
+					  T(hash) + " WHERE " +
+					  OwnerIdentity("creature-template.id", r.entry, realm,
+									r.packageKey, r.symbol, Snapshot(current)));
+		return sql;
+	}
 	sql.push_back("INSERT INTO " + owner +
 				"(resource_kind,entry,realm_name,package_key,symbol,row_json,"
 				"applied_build,artifact_sha256) VALUES (" +
@@ -811,13 +903,10 @@ ContentManagedServer::ApplySql(ResolvedCreatureTemplate const &r,
 }
 std::vector<std::string>
 ContentManagedServer::ApplySql(ResolvedGameObjectTemplate const &r,
+							   ResolvedGameObjectTemplate const &current,
 							   std::string const &realm, bool exists,
 							   std::uint32_t build, std::string const &hash) {
 	std::string const owner = "content_manager_server_resource_owner";
-	if (exists)
-		return {"UPDATE " + owner + " SET applied_build=" + N(build) +
-				",artifact_sha256=" + T(hash) + " WHERE resource_kind=" +
-				T("gameobject-template.id") + " AND entry=" + N(r.entry)};
 	std::string
 		columns = "entry,type,displayId,name,IconName,castBarCaption,unk1,size",
 		values = N(r.entry) + "," + N(r.type) + "," + N(r.displayId) + "," +
@@ -830,6 +919,23 @@ ContentManagedServer::ApplySql(ResolvedGameObjectTemplate const &r,
 	columns += ",AIName,ScriptName,VerifiedBuild";
 	values += "," + Q(r.aiName) + "," + Q(r.scriptName) + "," +
 			  std::to_string(r.verifiedBuild);
+	if (exists) {
+		std::string set = "type=" + N(r.type) + ",displayId=" + N(r.displayId) +
+			",name=" + Q(r.name) + ",IconName=" + Q(r.iconName) +
+			",castBarCaption=" + Q(r.castBarCaption) + ",unk1=" + Q(r.unk1) +
+			",size=" + F(r.size);
+		for (unsigned i = 0; i < 24; ++i)
+			set += ",Data" + std::to_string(i) + "=" + N(r.data[i]);
+		set += ",AIName=" + Q(r.aiName) + ",ScriptName=" + Q(r.scriptName) +
+			   ",VerifiedBuild=" + std::to_string(r.verifiedBuild);
+		return {"UPDATE gameobject_template SET " + set +
+					" WHERE entry=" + N(r.entry),
+				"UPDATE " + owner + " o SET row_json=" + T(Snapshot(r)) +
+					",applied_build=" + N(build) + ",artifact_sha256=" + T(hash) +
+					" WHERE " +
+					OwnerIdentity("gameobject-template.id", r.entry, realm,
+								  r.packageKey, r.symbol, Snapshot(current))};
+	}
 	return {"INSERT INTO gameobject_template (" + columns + ") VALUES (" +
 				values + ")",
 			"INSERT INTO " + owner +
@@ -841,13 +947,10 @@ ContentManagedServer::ApplySql(ResolvedGameObjectTemplate const &r,
 }
 std::vector<std::string>
 ContentManagedServer::ApplySql(ResolvedCreatureSpawn const &r,
+							   ResolvedCreatureSpawn const &current,
 							   std::string const &realm, bool exists,
 							   std::uint32_t build, std::string const &hash) {
 	std::string const owner = "content_manager_server_resource_owner";
-	if (exists)
-		return {"UPDATE " + owner + " SET applied_build=" + N(build) +
-				",artifact_sha256=" + T(hash) + " WHERE resource_kind=" +
-				T("creature-spawn.guid") + " AND entry=" + N(r.guid)};
 	auto insert = "INSERT INTO "
 				  "creature(guid,id,map,spawnMask,phaseMask,position_x,"
 				  "position_y,position_z,orientation,spawntimesecs,wander_"
@@ -857,6 +960,20 @@ ContentManagedServer::ApplySql(ResolvedCreatureSpawn const &r,
 				  F(r.y) + "," + F(r.z) + "," + F(r.orientation) + "," +
 				  N(r.respawnSeconds) + "," + F(r.wanderDistance) + "," +
 				  N(r.movementType) + ")";
+	if (exists)
+		return {"UPDATE creature SET id=" + N(r.creatureEntry) +
+					",map=" + N(r.map) + ",spawnMask=" + N(r.spawnMask) +
+					",phaseMask=" + N(r.phaseMask) + ",position_x=" + F(r.x) +
+					",position_y=" + F(r.y) + ",position_z=" + F(r.z) +
+					",orientation=" + F(r.orientation) + ",spawntimesecs=" +
+					N(r.respawnSeconds) + ",wander_distance=" +
+					F(r.wanderDistance) + ",MovementType=" + N(r.movementType) +
+					" WHERE guid=" + N(r.guid),
+				"UPDATE " + owner + " o SET row_json=" + T(Snapshot(r)) +
+					",applied_build=" + N(build) + ",artifact_sha256=" + T(hash) +
+					" WHERE " +
+					OwnerIdentity("creature-spawn.guid", r.guid, realm,
+								  r.packageKey, r.symbol, Snapshot(current))};
 	return {insert, "INSERT INTO " + owner +
 						"(resource_kind,entry,realm_name,package_key,symbol,"
 						"row_json,applied_build,artifact_sha256) VALUES (" +

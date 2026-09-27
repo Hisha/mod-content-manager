@@ -89,6 +89,7 @@ int main(int argc, char **argv) {
 	std::string error;
 	assert(ContentManagedServer::ResolveDonor(c, "package-a", "1", 1000,
 											  creature, error));
+	creature.packageVersion = "2";
 	assert(creature.models.size() == 2 && creature.models[0].index == 0 &&
 		   creature.models[0].displayId == 1859 &&
 		   creature.models[1].index == 2 &&
@@ -176,13 +177,13 @@ int main(int argc, char **argv) {
 		   !exists);
 	auto tx = WorldDatabase.BeginTransaction();
 	for (auto const &sql : ContentManagedServer::ApplySql(
-			 creature, "Realm", false, 1, std::string(64, 'a')))
+			 creature, creature, "Realm", false, 1, std::string(64, 'a')))
 		tx->Append(sql);
 	for (auto const &sql : ContentManagedServer::ApplySql(
-			 object, "Realm", false, 1, std::string(64, 'a')))
+			 object, object, "Realm", false, 1, std::string(64, 'a')))
 		tx->Append(sql);
 	for (auto const &sql : ContentManagedServer::ApplySql(
-			 spawn, "Realm", false, 1, std::string(64, 'a')))
+			 spawn, spawn, "Realm", false, 1, std::string(64, 'a')))
 		tx->Append(sql);
 	tx->Append(
 		"INSERT INTO "
@@ -200,13 +201,13 @@ int main(int argc, char **argv) {
 	assert(Scalar("SELECT COUNT(*) FROM creature WHERE guid=3000") == 0);
 	tx = WorldDatabase.BeginTransaction();
 	for (auto const &sql : ContentManagedServer::ApplySql(
-			 creature, "Realm", false, 1, std::string(64, 'a')))
+			 creature, creature, "Realm", false, 1, std::string(64, 'a')))
 		tx->Append(sql);
 	for (auto const &sql : ContentManagedServer::ApplySql(
-			 object, "Realm", false, 1, std::string(64, 'a')))
+			 object, object, "Realm", false, 1, std::string(64, 'a')))
 		tx->Append(sql);
 	for (auto const &sql : ContentManagedServer::ApplySql(
-			 spawn, "Realm", false, 1, std::string(64, 'a')))
+			 spawn, spawn, "Realm", false, 1, std::string(64, 'a')))
 		tx->Append(sql);
 	WorldDatabase.DirectCommitTransaction(tx);
 	assert(ContentManagedServer::Verify(creature, "Realm", 1,
@@ -241,13 +242,54 @@ int main(int argc, char **argv) {
 										std::string(64, 'a'), error));
 	assert(ContentManagedServer::Verify(spawn, "Realm", 1, std::string(64, 'a'),
 										error));
-	assert(ContentManagedServer::Check(creature, "Realm", exists, error) &&
-		   exists); // A false new condition evaluates the existing-owned path.
+	ResolvedCreatureTemplate recorded;
+	assert(ContentManagedServer::Check(creature, "Realm", exists, recorded,
+									 error) &&
+		   exists && recorded.entry == creature.entry &&
+		   recorded.name == creature.name &&
+		   recorded.models.size() == creature.models.size());
+	// A changed descriptor is legitimate when the live parent and complete child
+	// set still match the ownership snapshot recorded by the prior package.
+	auto evolved = creature;
+	evolved.packageVersion = "3";
+	evolved.name = "Managed Creature v3";
+	evolved.models[1].displayId = 2860;
+	assert(ContentManagedServer::Check(evolved, "Realm", exists, recorded,
+									 error) &&
+		   exists && recorded.entry == creature.entry &&
+		   recorded.name == creature.name && recorded.models[1].displayId == 1860);
+	tx = WorldDatabase.BeginTransaction();
+	for (auto const &sql : ContentManagedServer::ApplySql(
+			 evolved, recorded, "Realm", true, 2, std::string(64, 'b')))
+		tx->Append(sql);
+	WorldDatabase.DirectCommitTransaction(tx);
+	assert(ContentManagedServer::Verify(evolved, "Realm", 2,
+									std::string(64, 'b'), error));
+	assert(Scalar("SELECT COUNT(*) FROM creature_template WHERE entry=1000 AND "
+				  "name='Managed Creature v3'") == 1);
+	assert(Scalar("SELECT COUNT(*) FROM creature_template_model WHERE "
+				  "CreatureID=1000 AND Idx=2 AND CreatureDisplayID=2860") == 1);
+	assert(Scalar("SELECT COUNT(*) FROM content_manager_server_resource_owner "
+				  "WHERE resource_kind='creature-template.id' AND entry=1000 AND "
+				  "realm_name='Realm' AND package_key='package-a' AND "
+				  "symbol='managed-creature'") == 1);
+	// The allocation identity is retained: evolution updates entry 1000 in
+	// place and neither creates nor takes ownership of another entry.
+	assert(Scalar("SELECT COUNT(*) FROM creature_template WHERE entry<>1000 AND "
+				  "name='Managed Creature v3'") == 0);
+	creature = evolved;
 	SQL("UPDATE creature_template SET name='Drifted' WHERE entry=1000");
 	assert(!ContentManagedServer::Check(creature, "Realm", exists, error));
 	assert(Has(error, "kind=creature-template.id") &&
-		   Has(error, "managed target fields differ from the expected row"));
-	SQL("UPDATE creature_template SET name='Managed Creature' WHERE entry=1000");
+		   Has(error, "managed target differs from recorded ownership snapshot"));
+	SQL("UPDATE creature_template SET name='Managed Creature v3' WHERE "
+		"entry=1000");
+	SQL("UPDATE creature_template_model SET CreatureDisplayID=9999 WHERE "
+		"CreatureID=1000 AND Idx=2");
+	assert(!ContentManagedServer::Check(creature, "Realm", exists, error));
+	assert(Has(error, "managed target differs from recorded ownership snapshot"));
+	SQL("UPDATE creature_template_model SET CreatureDisplayID=2860 WHERE "
+		"CreatureID=1000 AND Idx=2");
 	SQL("UPDATE content_manager_server_resource_owner SET package_key='wrong' "
 		"WHERE resource_kind='creature-template.id' AND entry=1000");
 	assert(!ContentManagedServer::Check(creature, "Realm", exists, error));
@@ -255,19 +297,21 @@ int main(int argc, char **argv) {
 				  "symbol=managed-creature"));
 	SQL("UPDATE content_manager_server_resource_owner SET package_key='package-a' "
 		"WHERE resource_kind='creature-template.id' AND entry=1000");
-	SQL("UPDATE content_manager_server_resource_owner SET row_json='{}' WHERE "
-		"resource_kind='creature-template.id' AND entry=1000");
-	assert(!ContentManagedServer::Check(creature, "Realm", exists, error));
-	assert(Has(error, "ownership snapshot differs from the expected row"));
 	SQL("ALTER TABLE creature_template DROP COLUMN `rank`");
 	assert(!ContentManagedServer::Check(creature, "Realm", exists, error));
 	assert(Has(error, "kind=creature-template.id") &&
-		   Has(error, "existing-resource condition SQL query failed"));
+		   Has(error, "recorded-snapshot condition SQL query failed"));
+	SQL("UPDATE content_manager_server_resource_owner SET row_json='{}' WHERE "
+		"resource_kind='creature-template.id' AND entry=1000");
+	assert(!ContentManagedServer::Check(creature, "Realm", exists, error));
+	assert(Has(error, "invalid recorded ownership snapshot"));
 	SQL("DROP TABLE creature");
 	assert(!ContentManagedServer::Check(spawn, "Realm", exists, error));
 	assert(Has(error, "kind=creature-spawn.guid") &&
 		   Has(error, "new-resource condition SQL query failed"));
-	std::cout << "PASS donor/model validation, managed representations, exact "
-				 "child model verification, FLOAT-safe comparisons, ownership, "
-				 "spawn resolution, diagnostics and transactional rollback\n";
+	std::cout << "PASS donor/model validation, managed representations, "
+				 "unchanged resources, v2-to-v3 evolution, retained allocation "
+				 "identity, parent/child drift rejection, FLOAT-safe comparisons, "
+				 "ownership, spawn resolution, diagnostics and transactional "
+				 "rollback\n";
 }

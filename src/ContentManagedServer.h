@@ -80,11 +80,20 @@ public:
 	static bool Check(ResolvedCreatureTemplate const &,
 					  std::string const &realm, bool &exists,
 					  std::string &error);
+	static bool Check(ResolvedCreatureTemplate const &,
+					  std::string const &realm, bool &exists,
+					  ResolvedCreatureTemplate &current, std::string &error);
 	static bool Check(ResolvedGameObjectTemplate const &,
 					  std::string const &realm, bool &exists,
 					  std::string &error);
+	static bool Check(ResolvedGameObjectTemplate const &,
+					  std::string const &realm, bool &exists,
+					  ResolvedGameObjectTemplate &current, std::string &error);
 	static bool Check(ResolvedCreatureSpawn const &, std::string const &realm,
 					  bool &exists, std::string &error);
+	static bool Check(ResolvedCreatureSpawn const &, std::string const &realm,
+					  bool &exists, ResolvedCreatureSpawn &current,
+					  std::string &error);
 	static std::string Condition(ResolvedCreatureTemplate const &,
 								 std::string const &realm, bool exists);
 	static std::string Condition(ResolvedGameObjectTemplate const &,
@@ -92,17 +101,20 @@ public:
 	static std::string Condition(ResolvedCreatureSpawn const &,
 								 std::string const &realm, bool exists);
 	static std::vector<std::string> ApplySql(ResolvedCreatureTemplate const &,
-											 std::string const &realm,
-											 bool exists, std::uint32_t build,
-											 std::string const &hash);
+										 ResolvedCreatureTemplate const &current,
+										 std::string const &realm, bool exists,
+										 std::uint32_t build,
+										 std::string const &hash);
 	static std::vector<std::string> ApplySql(ResolvedGameObjectTemplate const &,
-											 std::string const &realm,
-											 bool exists, std::uint32_t build,
-											 std::string const &hash);
+										 ResolvedGameObjectTemplate const &current,
+										 std::string const &realm, bool exists,
+										 std::uint32_t build,
+										 std::string const &hash);
 	static std::vector<std::string> ApplySql(ResolvedCreatureSpawn const &,
-											 std::string const &realm,
-											 bool exists, std::uint32_t build,
-											 std::string const &hash);
+										 ResolvedCreatureSpawn const &current,
+										 std::string const &realm, bool exists,
+										 std::uint32_t build,
+										 std::string const &hash);
 	static bool Verify(ResolvedCreatureTemplate const &,
 					   std::string const &realm, std::uint32_t build,
 					   std::string const &hash, std::string &error);
