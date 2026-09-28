@@ -31,6 +31,23 @@ reagents, totems, equipment and stance requirements, family masks, mechanics,
 and combat targets. All four localized groups—name, rank/subtext, description,
 and aura description—are serialized in their exact build-12340 positions.
 
+The one nonzero neutral requirement sentinel is `EquippedItemClass`: its raw DBC
+word is `0xFFFFFFFF`, which AzerothCore loads as signed `-1`. `Spell::CheckItems`
+calls `Player::HasItemFitToSpellRequirements`; a class of zero is a real item
+class requirement, while a negative class disables that requirement. The
+subclass and inventory-type masks remain zero and are ignored with class `-1`.
+The server SQL projection writes the same canonical word as signed `-1`.
+
+A bounded audit of the remaining normalized restriction/effect fields found no
+other nonzero neutral sentinel. AzerothCore skips reagent entries `<= 0`; zero
+totem and totem-category IDs, spell focus, aura-state/spell, creature-type,
+stance/form, area-group, level, category and cooldown fields impose no
+requirement; zero proc fields disable proc behavior. The only enabled effect is
+the permanent self-target dummy aura, so its zero signed die/base/misc values,
+zero radius/chain/item/trigger fields, and zero secondary effects add no combat
+or item behavior. These values are normalized explicitly and are never copied
+from either donor.
+
 The exact descriptor is 234 32-bit fields (936 bytes): 16 float words, 64
 localized string-offset words, and the remaining integer/opaque words. The
 composer preserves baseline records and strings byte-for-byte, appends managed

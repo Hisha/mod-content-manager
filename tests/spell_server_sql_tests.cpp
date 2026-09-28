@@ -48,6 +48,7 @@ int main()
 	spell.copyFrom = 1243;
 	spell.iconCopyFromSpell = 1243;
 	spell.words[0] = spell.id;
+	spell.words[68] = 0xFFFFFFFFu;
 	spell.localized[0][0] = "CM Managed Aura Test";
 	spell.localized[0][3] = "Aura g\xC3\xA9" "r\xC3\xA9" "e";
 	spell.localized[2][0] =
@@ -77,6 +78,8 @@ int main()
 	assert(condition.find(" USING utf8mb4) AND") == std::string::npos);
 	assert(condition.find("utf8mb4_0900_ai_ci") == std::string::npos);
 	assert(insert.find("utf8mb4_0900_ai_ci") == std::string::npos);
+	assert(insert.find(",-1,") != std::string::npos);
+	assert(insert.find(",4294967295,") == std::string::npos);
 	assert(condition.find("o.row_json=CONVERT(X'") != std::string::npos);
 	assert(condition.find(" USING utf8mb4) COLLATE utf8mb4_bin") !=
 		std::string::npos);

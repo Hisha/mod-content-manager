@@ -15,6 +15,7 @@ constexpr std::size_t ID=0, ATTR=4, DURATION=40, CAST=28, RANGE=46,
 	NAME=136, RANK=153, DESCRIPTION=170, AURA_DESCRIPTION=187,
 	MANA_PCT=204, FAMILY=208, FAMILY_MASK=209, MAX_TARGETS=212,
 	CHAIN_AMPLITUDE=216, SCHOOL=225, RUNE=226, BONUS=229;
+constexpr std::size_t EQUIPPED_ITEM_CLASS=68;
 std::array<std::pair<char const*,std::size_t>, 9> const Locales={{{"enUS",0},{"koKR",2},{"frFR",3},{"deDE",4},{"zhCN",6},{"zhTW",8},{"esES",9},{"esMX",10},{"ruRU",11}}};
 void ValidateText(std::map<std::string,std::string> const& values, bool required,
 	std::size_t maximum)
@@ -60,8 +61,8 @@ void SpellDbcComposer::ValidateDeclaration(ContentSpellRow const& r)
 bool SpellDbcComposer::BehaviorMatches(ResolvedSpell const& r)
 {
 	auto const&w=r.words;
-	if(!r.id||w[ID]!=r.id||w[CAST]!=1||w[DURATION]!=PermanentDuration||w[RANGE]!=1||w[EFFECT]!=6||w[TARGET_A]!=1||w[AURA]!=4||w[ACTIVE_ICON]!=0||!w[ICON]||w[SCHOOL]!=1) return false;
-	for(std::size_t i=0;i<w.size();++i)if(w[i]&&i!=ID&&i!=CAST&&i!=DURATION&&i!=RANGE&&i!=EFFECT&&i!=TARGET_A&&i!=AURA&&i!=ICON&&i!=152&&i!=169&&i!=186&&i!=203&&i!=SCHOOL)return false;
+	if(!r.id||w[ID]!=r.id||w[CAST]!=1||w[DURATION]!=PermanentDuration||w[RANGE]!=1||w[EQUIPPED_ITEM_CLASS]!=std::numeric_limits<std::uint32_t>::max()||w[EFFECT]!=6||w[TARGET_A]!=1||w[AURA]!=4||w[ACTIVE_ICON]!=0||!w[ICON]||w[SCHOOL]!=1) return false;
+	for(std::size_t i=0;i<w.size();++i)if(w[i]&&i!=ID&&i!=CAST&&i!=DURATION&&i!=RANGE&&i!=EQUIPPED_ITEM_CLASS&&i!=EFFECT&&i!=TARGET_A&&i!=AURA&&i!=ICON&&i!=152&&i!=169&&i!=186&&i!=203&&i!=SCHOOL)return false;
 	return true;
 }
 ResolvedSpell SpellDbcComposer::Resolve(DbcDocument const& d,ContentSpellRow const& a,std::string const&p,std::string const&v,std::uint32_t id)
@@ -74,7 +75,7 @@ ResolvedSpell SpellDbcComposer::Resolve(DbcDocument const& d,ContentSpellRow con
 	// then deliberately normalize every field. Only locale flag words and a
 	// verified stock icon survive donor selection.
 	r.words.fill(0);
-	r.words[ID]=id; r.words[CAST]=1; r.words[DURATION]=PermanentDuration; r.words[RANGE]=1; r.words[EFFECT]=6; r.words[TARGET_A]=1; r.words[AURA]=4;
+	r.words[ID]=id; r.words[CAST]=1; r.words[DURATION]=PermanentDuration; r.words[RANGE]=1; r.words[EQUIPPED_ITEM_CLASS]=std::numeric_limits<std::uint32_t>::max(); r.words[EFFECT]=6; r.words[TARGET_A]=1; r.words[AURA]=4;
 	r.words[ICON]=d.words[iconDonor*FieldCount+ICON]; r.words[152]=d.words[donor*FieldCount+152];r.words[169]=d.words[donor*FieldCount+169];r.words[186]=d.words[donor*FieldCount+186];r.words[203]=d.words[donor*FieldCount+203]; r.words[SCHOOL]=1;
 	if(!r.words[ICON])throw std::runtime_error("Managed spell icon donor has no stock SpellIconID");
 	auto fill=[&](std::map<std::string,std::string> const&m,std::array<std::string,16>&out){auto fallback=m.count("enUS")?m.at("enUS"):std::string();for(auto const& [locale,index]:Locales){auto f=m.find(locale);out[index]=f==m.end()?fallback:f->second;}};

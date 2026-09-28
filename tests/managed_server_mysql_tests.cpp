@@ -137,6 +137,7 @@ int main(int argc, char **argv) {
 	spell.words[28] = 1;
 	spell.words[40] = SpellDbcComposer::PermanentDuration;
 	spell.words[46] = 1;
+	spell.words[68] = 0xFFFFFFFFu;
 	spell.words[71] = 6;
 	spell.words[86] = 1;
 	spell.words[95] = 4;
@@ -154,6 +155,7 @@ int main(int argc, char **argv) {
 			 spell, spell, "Realm", false, 44, std::string(64, 's')))
 		spellTx->Append(sql);
 	WorldDatabase.DirectCommitTransaction(spellTx);
+	assert(Scalar("SELECT EquippedItemClass+1 FROM spell_dbc WHERE ID=80865") == 0);
 	assert(Scalar("SELECT CAST((" +
 		ContentSpellServer::Condition(spell, "Realm", true) +
 		") AS UNSIGNED)") == 1);

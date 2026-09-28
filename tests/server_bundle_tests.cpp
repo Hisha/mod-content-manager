@@ -109,7 +109,7 @@ int main()
     spell.symbol="informational";spell.profile=SpellDbcComposer::Profile;
     spell.id=80865;spell.copyFrom=19;spell.iconCopyFromSpell=19;
     spell.words[0]=spell.id;spell.words[28]=1;spell.words[40]=21;
-    spell.words[46]=1;spell.words[71]=6;spell.words[86]=1;
+    spell.words[46]=1;spell.words[68]=0xFFFFFFFFu;spell.words[71]=6;spell.words[86]=1;
     spell.words[95]=4;spell.words[133]=25;spell.words[225]=1;
     spell.localized[0][0]="Informational";
     assert(SpellDbcComposer::BehaviorMatches(spell));
