@@ -2,6 +2,7 @@
 #include "ContentServerOwnership.h"
 #include "ContentBuildHash.h"
 #include "ServerTableDescriptor.h"
+#include "third_party/json/json.hpp"
 #include <cassert>
 #include <string>
 
@@ -126,8 +127,46 @@ int main()
         "","",hash,hash,"","",{},{spellBaseline},"",{},{},{},{},{},{spell},hash);
     assert(ContentServerBundle::VerifyParity(spellParity,"Eitrigg",8,"",hash,hash,
         {},{spellLease},error,{},{},{},{},{},{spell}));
+	// Historical canonical bundles remain readable even when their Spell row no
+	// longer satisfies the current composer policy.
+	auto historical = spell;
+	historical.packageVersion = "1";
+	historical.words[68] = 0;
+	assert(!SpellDbcComposer::BehaviorMatches(historical));
+	bool rejectedHistoricalGeneration = false;
+	try {
+		(void)ContentServerBundle::ServerJson(
+			"Eitrigg", {}, {}, {}, {}, {}, {}, {historical});
+	} catch (std::exception const&) {
+		rejectedHistoricalGeneration = true;
+	}
+	assert(rejectedHistoricalGeneration);
+	auto historicalBundleObject = nlohmann::json::parse(spellBundle);
+	historicalBundleObject["spells"][0]["packageVersion"] = "1";
+	historicalBundleObject["spells"][0]["words"][68] = 0;
+	auto historicalBundle = historicalBundleObject.dump(2) + "\n";
+	parsedSpells.clear();
+	assert(ContentServerBundle::ParseServer(historicalBundle, "Eitrigg", parsed,
+		error, nullptr, nullptr, nullptr, nullptr, nullptr, &parsedSpells));
+	assert(parsedSpells.size() == 1 && parsedSpells[0].id == spell.id &&
+		parsedSpells[0].words[68] == 0);
+	auto historicalParityObject = nlohmann::json::parse(spellParity);
+	historicalParityObject["spells"][0]["packageVersion"] = "1";
+	historicalParityObject["spells"][0]["words"][68] = 0;
+	auto historicalParity = historicalParityObject.dump(2) + "\n";
+	assert(ContentServerBundle::VerifyParity(historicalParity, "Eitrigg", 8,
+		"", hash, hash, {}, {spellLease}, error, {}, {}, {}, {}, {},
+		{historical}));
     auto changed=spell;changed.words[34]=1;
     assert(!SpellDbcComposer::BehaviorMatches(changed));
+	bool rejectedInvalidGeneration = false;
+	try {
+		(void)ContentServerBundle::ServerJson(
+			"Eitrigg", {}, {}, {}, {}, {}, {}, {changed});
+	} catch (std::exception const&) {
+		rejectedInvalidGeneration = true;
+	}
+	assert(rejectedInvalidGeneration);
     assert(!ContentServerBundle::VerifyParity(spellParity,"Eitrigg",8,"",hash,hash,
         {},{},error,{},{},{},{},{},{spell})); // retained spell lease is mandatory
 }

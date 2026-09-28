@@ -1,4 +1,5 @@
 #include "ContentManagedServer.h"
+#include "ContentServerBundle.h"
 #include "ContentSpellServer.h"
 #include "DatabaseEnv.h"
 #include <cassert>
@@ -156,15 +157,40 @@ int main(int argc, char **argv) {
 		spellTx->Append(sql);
 	WorldDatabase.DirectCommitTransaction(spellTx);
 	assert(Scalar("SELECT EquippedItemClass+1 FROM spell_dbc WHERE ID=80865") == 0);
-	assert(Scalar("SELECT CAST((" +
-		ContentSpellServer::Condition(spell, "Realm", true) +
-		") AS UNSIGNED)") == 1);
+	// Establish historical state X: Build 44 stored raw zero and recorded that
+	// exact representation as its ownership snapshot.
+	auto historicalSpell = spell;
+	historicalSpell.words[68] = 0;
+	SQL("UPDATE spell_dbc SET EquippedItemClass=0 WHERE ID=80865");
+	SQL("UPDATE content_manager_server_resource_owner SET row_json=" +
+		ContentServerBundle::SqlText(
+			ContentSpellServer::Snapshot(historicalSpell)) +
+		" WHERE resource_kind='spell.id' AND entry=80865");
 	std::string spellError;
+	bool spellExists = false;
+	ResolvedSpell currentSpell;
+	assert(ContentSpellServer::Check(spell, "Realm", spellExists, currentSpell,
+		spellError));
+	assert(spellExists && currentSpell.id == spell.id &&
+		currentSpell.words[68] == 0);
+	SQL("UPDATE spell_dbc SET EquippedItemSubclass=1 WHERE ID=80865");
+	assert(!ContentSpellServer::Check(spell, "Realm", spellExists, currentSpell,
+		spellError));
+	SQL("UPDATE spell_dbc SET EquippedItemSubclass=0 WHERE ID=80865");
+	assert(ContentSpellServer::Check(spell, "Realm", spellExists, currentSpell,
+		spellError));
+	auto upgradeTx = WorldDatabase.BeginTransaction();
+	for (auto const &sql : ContentSpellServer::ApplySql(
+			 spell, currentSpell, "Realm", true, 45, std::string(64, 't')))
+		upgradeTx->Append(sql);
+	WorldDatabase.DirectCommitTransaction(upgradeTx);
+	assert(Scalar("SELECT COUNT(*) FROM spell_dbc WHERE ID=80865") == 1);
+	assert(Scalar("SELECT EquippedItemClass+1 FROM spell_dbc WHERE ID=80865") == 0);
 	assert(ContentSpellServer::Verify(
-		spell, "Realm", 44, std::string(64, 's'), spellError));
+		spell, "Realm", 45, std::string(64, 't'), spellError));
 	SQL("UPDATE spell_dbc SET Name_Lang_frFR='D\xC3\xA9rive' WHERE ID=80865");
 	assert(!ContentSpellServer::Verify(
-		spell, "Realm", 44, std::string(64, 's'), spellError));
+		spell, "Realm", 45, std::string(64, 't'), spellError));
 	SQL("DELETE FROM content_manager_server_resource_owner WHERE "
 		"resource_kind='spell.id' AND entry=80865");
 	SQL("DROP TABLE spell_dbc");

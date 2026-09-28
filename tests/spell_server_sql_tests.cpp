@@ -1,6 +1,7 @@
 #include "ContentServerBundle.h"
 #include "ContentSpellServer.h"
 #include "DatabaseEnv.h"
+#include "third_party/json/json.hpp"
 
 #include <cassert>
 #include <iostream>
@@ -10,9 +11,9 @@ std::array<std::size_t, 64> SpellDbcComposer::StringFields()
 	return {};
 }
 
-bool SpellDbcComposer::BehaviorMatches(ResolvedSpell const&)
+bool SpellDbcComposer::BehaviorMatches(ResolvedSpell const& spell)
 {
-	return true;
+	return spell.words[68] == 0xFFFFFFFFu;
 }
 
 QueryResult TestDatabase::Query(std::string_view)
@@ -55,12 +56,41 @@ int main()
 		"Disposable PTR validation spell for Content Manager.";
 	spell.localized[3][0] =
 		"Informational aura with no gameplay effect.";
+	auto historical = spell;
+	historical.packageVersion = "0.9.0";
+	historical.words[68] = 0;
+	auto parsedHistorical = ContentSpellServer::ParseOwnershipSnapshot(
+		ContentSpellServer::Snapshot(historical));
+	assert(parsedHistorical.id == spell.id);
+	assert(parsedHistorical.words[68] == 0);
+	assert(!SpellDbcComposer::BehaviorMatches(parsedHistorical));
+	auto invalidIdentity = nlohmann::json::parse(
+		ContentSpellServer::Snapshot(historical));
+	invalidIdentity["resourceKind"] = "item.id";
+	bool rejectedInvalidIdentity = false;
+	try {
+		(void)ContentSpellServer::ParseOwnershipSnapshot(
+			invalidIdentity.dump());
+	} catch (std::exception const&) {
+		rejectedInvalidIdentity = true;
+	}
+	assert(rejectedInvalidIdentity);
+	bool rejectedHistoricalApplyTarget = false;
+	try {
+		(void)ContentSpellServer::ApplySql(
+			historical, historical, "PTR", true, 45, std::string(64, 'a'));
+	} catch (std::exception const&) {
+		rejectedHistoricalApplyTarget = true;
+	}
+	assert(rejectedHistoricalApplyTarget);
 
 	auto condition = ContentSpellServer::Condition(spell, "PTR", true);
+	auto historicalCondition =
+		ContentSpellServer::Condition(historical, "PTR", true);
 	auto insert = ContentSpellServer::ApplySql(
 		spell, spell, "PTR", false, 44, std::string(64, 'a')).front();
 	auto update = ContentSpellServer::ApplySql(
-		spell, spell, "PTR", true, 44, std::string(64, 'a')).back();
+		spell, historical, "PTR", true, 45, std::string(64, 'a')).back();
 	auto verification = ContentSpellServer::VerificationSql(
 		spell, "PTR", 44, std::string(64, 'a'));
 
@@ -86,9 +116,22 @@ int main()
 
 	assert(condition.find("content_manager_server_resource_owner o") !=
 		std::string::npos);
+	assert(historicalCondition.find("t.`EquippedItemClass`=0") !=
+		std::string::npos);
+	assert(historicalCondition.find(
+		ContentServerBundle::SqlIdentityText(
+			ContentSpellServer::Snapshot(historical))) != std::string::npos);
 	assert(condition.find("o.resource_kind=") != std::string::npos);
 	assert(update.find("UPDATE content_manager_server_resource_owner o") == 0);
 	assert(update.find(" WHERE o.resource_kind=") != std::string::npos);
+	auto desiredOwner = ContentServerBundle::SqlIdentityText(
+		ContentSpellServer::Snapshot(spell));
+	auto historicalGuard = ContentServerBundle::SqlIdentityText(
+		ContentSpellServer::Snapshot(historical));
+	assert(update.find(" SET row_json=" + desiredOwner) != std::string::npos);
+	assert(update.find(historicalGuard, update.find(" WHERE ")) !=
+		std::string::npos);
+	assert(update.find("entry=80865") != std::string::npos);
 	assert(verification.find(
 		"FROM content_manager_server_resource_owner WHERE resource_kind=") !=
 		std::string::npos);

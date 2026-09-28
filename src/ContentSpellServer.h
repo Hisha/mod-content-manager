@@ -10,6 +10,7 @@ class ContentSpellServer {
 public:
 	static std::vector<std::string> Columns();
 	static std::string Snapshot(ResolvedSpell const&);
+	static ResolvedSpell ParseOwnershipSnapshot(std::string const&);
 	static bool ValidateSchema(std::string& error);
 	static bool Occupancy(std::string const& realm,
 		std::vector<ItemAllocation> const& retained,

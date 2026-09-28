@@ -381,6 +381,9 @@ bool ContentServerDeployment::Activate(
 					"publication: " + error;
 			return false;
 		}
+		Require(std::all_of(spells.begin(), spells.end(), [](auto const &spell) {
+			return SpellDbcComposer::BehaviorMatches(spell);
+		}), "Activation spell representation violates current policy");
 		result.hasManagedServerContent =
 			!rows.empty() || !costs.empty() || !vendors.empty() ||
 			!creatures.empty() || !gameObjects.empty() || !spawns.empty();
@@ -472,6 +475,9 @@ bool ContentServerDeployment::Apply(
 											  &costs, &vendors, &creatures,
 											  &gameObjects, &spawns, &spells))
 			return false;
+		Require(std::all_of(spells.begin(), spells.end(), [](auto const &spell) {
+			return SpellDbcComposer::BehaviorMatches(spell);
+		}), "Server apply spell representation violates current policy");
 		Require(!rows.empty() || !costs.empty() || !vendors.empty() ||
 					!creatures.empty() || !gameObjects.empty() ||
 					!spawns.empty() || !spells.empty(),

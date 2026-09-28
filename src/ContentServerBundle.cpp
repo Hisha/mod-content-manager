@@ -173,18 +173,23 @@ json ResourceObject(ItemAllocation const &allocation,
     return resource;
 }
 
-json SpellObjects(std::vector<ResolvedSpell> spells)
+void ValidateSpellStructure(ResolvedSpell const&s)
+{
+	if(s.packageKey.empty()||s.packageVersion.empty()||s.symbol.empty()||s.profile.empty()||!s.id||!s.copyFrom||!s.iconCopyFromSpell||s.words[0]!=s.id)
+		throw std::runtime_error("Invalid managed spell identity");
+}
+json SpellObjects(std::vector<ResolvedSpell> spells,bool validateCurrentPolicy=true)
 {
 	std::sort(spells.begin(),spells.end(),[](auto const&a,auto const&b){return std::tie(a.packageKey,a.symbol)<std::tie(b.packageKey,b.symbol);});
 	json out=json::array(); std::set<std::uint32_t> ids;std::set<std::pair<std::string,std::string>> identities;
-	for(auto const&s:spells){if(!SpellDbcComposer::BehaviorMatches(s)||!ids.insert(s.id).second||!identities.emplace(s.packageKey,s.symbol).second)throw std::runtime_error("Invalid managed spell artifact");out.push_back({{"package",s.packageKey},{"packageVersion",s.packageVersion},{"symbol",s.symbol},{"resourceKind","spell.id"},{"id",s.id},{"copyFrom",s.copyFrom},{"iconCopyFromSpell",s.iconCopyFromSpell},{"profile",s.profile},{"words",s.words},{"localized",s.localized}});}
+	for(auto const&s:spells){ValidateSpellStructure(s);if((validateCurrentPolicy&&!SpellDbcComposer::BehaviorMatches(s))||!ids.insert(s.id).second||!identities.emplace(s.packageKey,s.symbol).second)throw std::runtime_error("Invalid managed spell artifact");out.push_back({{"package",s.packageKey},{"packageVersion",s.packageVersion},{"symbol",s.symbol},{"resourceKind","spell.id"},{"id",s.id},{"copyFrom",s.copyFrom},{"iconCopyFromSpell",s.iconCopyFromSpell},{"profile",s.profile},{"words",s.words},{"localized",s.localized}});}
 	return out;
 }
 std::vector<ResolvedSpell> ParseSpells(json const& source)
 {
 	if(!source.is_array()||source.empty())throw std::runtime_error("Empty/invalid managed spell artifact");std::vector<ResolvedSpell> out;
-	for(auto const&v:source){ResolvedSpell s;s.packageKey=v.at("package");s.packageVersion=v.at("packageVersion");s.symbol=v.at("symbol");s.profile=v.at("profile");s.id=v.at("id");s.copyFrom=v.at("copyFrom");s.iconCopyFromSpell=v.at("iconCopyFromSpell");s.words=v.at("words").get<std::array<std::uint32_t,234>>();s.localized=v.at("localized").get<std::array<std::array<std::string,16>,4>>();if(v.at("resourceKind")!="spell.id"||!SpellDbcComposer::BehaviorMatches(s))throw std::runtime_error("Invalid managed spell row");out.push_back(std::move(s));}
-	if(SpellObjects(out)!=source)throw std::runtime_error("Noncanonical managed spell definitions");return out;
+	for(auto const&v:source){ResolvedSpell s;s.packageKey=v.at("package");s.packageVersion=v.at("packageVersion");s.symbol=v.at("symbol");s.profile=v.at("profile");s.id=v.at("id");s.copyFrom=v.at("copyFrom");s.iconCopyFromSpell=v.at("iconCopyFromSpell");s.words=v.at("words").get<std::array<std::uint32_t,234>>();s.localized=v.at("localized").get<std::array<std::array<std::string,16>,4>>();if(v.at("resourceKind")!="spell.id")throw std::runtime_error("Invalid managed spell row");ValidateSpellStructure(s);out.push_back(std::move(s));}
+	if(SpellObjects(out,false)!=source)throw std::runtime_error("Noncanonical managed spell definitions");return out;
 }
 } // namespace
 
@@ -214,7 +219,7 @@ std::string ContentServerBundle::ServerJson(
 	std::vector<ResolvedCreatureTemplate> creatures,
 	std::vector<ResolvedGameObjectTemplate> gameObjects,
 	std::vector<ResolvedCreatureSpawn> spawns,
-	std::vector<ResolvedSpell> spells) {
+	std::vector<ResolvedSpell> spells, bool validateCurrentSpellPolicy) {
     std::sort(rows.begin(), rows.end(), LessRow);
 	json artifact = {{"format", 1},
 					 {"realm", realm},
@@ -256,7 +261,7 @@ std::string ContentServerBundle::ServerJson(
 		artifact["managedServer"] =
 			ContentManagedServer::Objects(creatures, gameObjects, spawns);
     }
-	if (!spells.empty()) { artifact["format"] = 7; artifact["spells"] = SpellObjects(spells); }
+	if (!spells.empty()) { artifact["format"] = 7; artifact["spells"] = SpellObjects(spells,validateCurrentSpellPolicy); }
     return artifact.dump(2) + "\n";
 }
 
@@ -275,7 +280,8 @@ std::string ContentServerBundle::ParityJson(
 	std::vector<ResolvedCreatureTemplate> creatures,
 	std::vector<ResolvedGameObjectTemplate> gameObjects,
 	std::vector<ResolvedCreatureSpawn> spawns,
-	std::vector<ResolvedSpell> spells, std::string const& spellDbcSha256) {
+	std::vector<ResolvedSpell> spells, std::string const& spellDbcSha256,
+	bool validateCurrentSpellPolicy) {
     auto sorted = allocations;
     std::sort(sorted.begin(), sorted.end(), [](auto const& a, auto const& b) {
 		return std::tie(a.packageKey, a.symbol) <
@@ -365,7 +371,7 @@ std::string ContentServerBundle::ParityJson(
 	if (!spells.empty()) {
 		if (!ContentBuildHash::Valid(spellDbcSha256)) throw std::runtime_error("Invalid composed Spell.dbc hash");
 		artifact["format"] = 7; artifact["spellDbcSha256"] = spellDbcSha256;
-		artifact["spells"] = SpellObjects(spells);
+		artifact["spells"] = SpellObjects(spells,validateCurrentSpellPolicy);
 	}
     return artifact.dump(2) + "\n";
 }
@@ -547,7 +553,7 @@ bool ContentServerBundle::ParseServer(
 				throw std::runtime_error(
 					"Vendor cost relationship is unresolved");
 		if (ServerJson(realm, rows, parsedCosts, parsedVendors, parsedCreatures,
-					   parsedGameObjects, parsedSpawns, parsedSpells) != text)
+					   parsedGameObjects, parsedSpawns, parsedSpells, false) != text)
 			throw std::runtime_error(
 				"server bundle is not in canonical generated form");
 		if (costs)
@@ -585,7 +591,7 @@ bool ContentServerBundle::VerifyParity(
         auto actual = json::parse(text);
 		auto spellSha=actual.value("spellDbcSha256",std::string());
 		if(spells.empty()!=spellSha.empty()||(!spells.empty()&&!ContentBuildHash::Valid(spellSha)))throw std::runtime_error("Spell DBC hash missing or invalid");
-		for(auto const&s:spells){if(!SpellDbcComposer::BehaviorMatches(s))throw std::runtime_error("Invalid spell profile in parity");auto lease=std::find_if(allocations.begin(),allocations.end(),[&](auto const&a){return a.resourceKind=="spell.id"&&a.packageKey==s.packageKey&&a.symbol==s.symbol&&a.value==s.id;});if(lease==allocations.end()||!ContentBuildHash::Valid(lease->baselineSha256))throw std::runtime_error("Managed spell lease missing");}
+		for(auto const&s:spells){ValidateSpellStructure(s);auto lease=std::find_if(allocations.begin(),allocations.end(),[&](auto const&a){return a.resourceKind=="spell.id"&&a.packageKey==s.packageKey&&a.symbol==s.symbol&&a.value==s.id;});if(lease==allocations.end()||!ContentBuildHash::Valid(lease->baselineSha256))throw std::runtime_error("Managed spell lease missing");}
 		for(auto const&a:allocations)if(a.resourceKind=="spell.id"&&std::none_of(spells.begin(),spells.end(),[&](auto const&s){return s.packageKey==a.packageKey&&s.symbol==a.symbol&&s.id==a.value;}))throw std::runtime_error("Orphan managed spell lease");
         auto itemSha = actual.at("itemDbcSha256").get<std::string>();
         auto costSha = actual.value("extendedCostDbcSha256", std::string());
@@ -806,7 +812,8 @@ bool ContentServerBundle::VerifyParity(
 						  realm, build, allocations, rows, baselineSha256,
 						  itemSha, clientMpqSha256, serverSha256, currencySha,
 						  categorySha, categories, baselines, costSha, costs,
-						  vendors, creatures, gameObjects, spawns, spells, spellSha)))
+						  vendors, creatures, gameObjects, spawns, spells, spellSha,
+						  false)))
 			throw std::runtime_error("manifest values differ from build, "
 									 "allocation, or server bundle");
         return true;
