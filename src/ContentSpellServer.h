@@ -21,6 +21,9 @@ public:
 	static std::vector<std::string> ApplySql(ResolvedSpell const& desired,
 		ResolvedSpell const& current, std::string const& realm, bool exists,
 		std::uint32_t build, std::string const& artifactHash);
+	static std::string VerificationSql(ResolvedSpell const&,
+		std::string const& realm, std::uint32_t build,
+		std::string const& artifactHash);
 	static bool Verify(ResolvedSpell const&, std::string const& realm,
 		std::uint32_t build, std::string const& artifactHash, std::string& error);
 };
