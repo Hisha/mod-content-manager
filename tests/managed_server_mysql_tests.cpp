@@ -1,4 +1,5 @@
 #include "ContentManagedServer.h"
+#include "ContentSpellServer.h"
 #include "DatabaseEnv.h"
 #include <cassert>
 #include <iostream>
@@ -16,12 +17,45 @@ unsigned Scalar(std::string const &sql) {
 bool Has(std::string const &value, std::string const &part) {
 	return value.find(part) != std::string::npos;
 }
+bool SpellString(std::size_t i, std::size_t &group, std::size_t &locale) {
+	for (std::size_t g = 0; g < 4; ++g) {
+		auto base = std::array<std::size_t, 4>{136, 153, 170, 187}[g];
+		if (i >= base && i < base + 16) {
+			group = g;
+			locale = i - base;
+			return true;
+		}
+	}
+	return false;
+}
+std::string SpellColumnType(std::size_t i) {
+	std::size_t group = 0, locale = 0;
+	if (SpellString(i, group, locale)) {
+		if (group == 2)
+			return "TEXT";
+		if (group == 3 && locale != 15)
+			return "VARCHAR(550)";
+		return "VARCHAR(100)";
+	}
+	if (i == 12 || i == 14)
+		return "BIGINT UNSIGNED";
+	if (i == 47 || (i >= 77 && i <= 79) || (i >= 101 && i <= 103) ||
+		(i >= 119 && i <= 121) || (i >= 216 && i <= 218) ||
+		(i >= 229 && i <= 231))
+		return "FLOAT";
+	if (i == 0 || i == 13 || i == 15 || i == 41 ||
+		(i >= 52 && i <= 70) || (i >= 74 && i <= 76) ||
+		(i >= 80 && i <= 82) || (i >= 110 && i <= 115) || i == 224 ||
+		i == 228)
+		return "INT";
+	return "INT UNSIGNED";
+}
 } // namespace
 int main(int argc, char **argv) {
 	assert(argc == 2);
 	WorldDatabase.Connect(argv[1]);
 	SQL("DROP TABLE IF EXISTS "
-		"content_manager_server_resource_owner,creature,gameobject_template,"
+		"content_manager_server_resource_owner,spell_dbc,creature,gameobject_template,"
 		"creature_template_model,creature_template");
 	SQL("CREATE TABLE creature_template(entry INT UNSIGNED PRIMARY KEY,name "
 		"VARCHAR(255) NOT NULL DEFAULT '',subname VARCHAR(255) NOT NULL "
@@ -72,6 +106,66 @@ int main(int argc, char **argv) {
 		"COLLATE utf8mb4_bin NOT NULL,PRIMARY KEY(resource_kind,entry),UNIQUE "
 		"KEY(realm_name,package_key,symbol,resource_kind)) ENGINE=InnoDB "
 		"DEFAULT CHARSET=utf8mb4");
+	std::string spellTable = "CREATE TABLE spell_dbc(";
+	auto spellColumns = ContentSpellServer::Columns();
+	for (std::size_t i = 0; i < spellColumns.size(); ++i) {
+		std::size_t group = 0, locale = 0;
+		if (i)
+			spellTable += ',';
+		spellTable += '`' + spellColumns[i] + "` " + SpellColumnType(i);
+		if (SpellString(i, group, locale))
+			spellTable +=
+				" CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL";
+		else
+			spellTable += " NOT NULL";
+	}
+	spellTable += ",PRIMARY KEY(ID)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 "
+				  "COLLATE=utf8mb4_unicode_ci";
+	SQL(spellTable);
+	// Reproduce the PTR mismatch: expressions default to 0900 while every
+	// localized spell_dbc column remains utf8mb4_unicode_ci.
+	SQL("SET NAMES utf8mb4 COLLATE utf8mb4_0900_ai_ci");
+	ResolvedSpell spell;
+	spell.packageKey = "cm-managed-spell-ptr-test";
+	spell.packageVersion = "1.0.0";
+	spell.symbol = "managed-aura-test";
+	spell.profile = SpellDbcComposer::Profile;
+	spell.id = 80865;
+	spell.copyFrom = 1243;
+	spell.iconCopyFromSpell = 1243;
+	spell.words[0] = spell.id;
+	spell.words[28] = 1;
+	spell.words[40] = SpellDbcComposer::PermanentDuration;
+	spell.words[46] = 1;
+	spell.words[71] = 6;
+	spell.words[86] = 1;
+	spell.words[95] = 4;
+	spell.words[133] = 685;
+	spell.words[225] = 1;
+	for (auto &locale : spell.localized[0])
+		locale = "CM Managed Aura Test";
+	spell.localized[0][3] = "Aura g\xC3\xA9" "r\xC3\xA9" "e";
+	for (auto &locale : spell.localized[2])
+		locale = "Disposable PTR validation spell for Content Manager.";
+	for (auto &locale : spell.localized[3])
+		locale = "Informational aura with no gameplay effect.";
+	auto spellTx = WorldDatabase.BeginTransaction();
+	for (auto const &sql : ContentSpellServer::ApplySql(
+			 spell, spell, "Realm", false, 44, std::string(64, 's')))
+		spellTx->Append(sql);
+	WorldDatabase.DirectCommitTransaction(spellTx);
+	assert(Scalar("SELECT CAST((" +
+		ContentSpellServer::Condition(spell, "Realm", true) +
+		") AS UNSIGNED)") == 1);
+	std::string spellError;
+	assert(ContentSpellServer::Verify(
+		spell, "Realm", 44, std::string(64, 's'), spellError));
+	SQL("UPDATE spell_dbc SET Name_Lang_frFR='D\xC3\xA9rive' WHERE ID=80865");
+	assert(!ContentSpellServer::Verify(
+		spell, "Realm", 44, std::string(64, 's'), spellError));
+	SQL("DELETE FROM content_manager_server_resource_owner WHERE "
+		"resource_kind='spell.id' AND entry=80865");
+	SQL("DROP TABLE spell_dbc");
 	SQL("INSERT INTO "
 		"creature_template(entry,name,minlevel,maxlevel,faction,npcflag) "
 		"VALUES(100,'Donor',10,10,14,1),(101,'Single Model',10,10,14,1),"

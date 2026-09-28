@@ -14,6 +14,7 @@ test is unavailable.
 `managed_server_mysql_tests.cpp` follows the existing disposable-MySQL strategy. Compile it with `tests/mysql_adapter` before `src`, the MySQL client headers/library, C++17, and these production units:
 
 - `ContentManagedServer.cpp`
+- `ContentSpellServer.cpp`
 - `ContentManagedServerDescriptor.cpp`
 - `ContentServerBundle.cpp`
 - `ContentVendorRow.cpp`
@@ -24,7 +25,7 @@ test is unavailable.
 - `DbcDescriptor.cpp`
 - `ServerTableDescriptor.cpp`
 
-Run it with the private disposable MySQL socket as its only argument. It recreates only fixture tables in the existing `phase4_test` database. Coverage includes one- and multi-model creature donors, rejection of donors without model rows, generated creature/model and gameobject rows, exact model-set verification (missing, extra, display-ID and FLOAT drift), package ownership snapshots, symbolic spawn resolution, post-apply verification, and rollback of all managed rows after an injected transaction failure. The standalone managed-server suite covers canonical model serialization, zero-model rejection, allocated `CreatureID` insert SQL, nullable `VerifiedBuild`, and `CAST(... AS FLOAT)` comparisons.
+Run it with the private disposable MySQL socket as its only argument. It recreates only fixture tables in the existing `phase4_test` database. Coverage includes one- and multi-model creature donors, rejection of donors without model rows, generated creature/model and gameobject rows, exact model-set verification (missing, extra, display-ID and FLOAT drift), package ownership snapshots, symbolic spawn resolution, managed Spell localized-field comparison with a `utf8mb4_0900_ai_ci` connection and `utf8mb4_unicode_ci` target columns, post-apply verification, and rollback of all managed rows after an injected transaction failure. The standalone managed-server suite covers canonical model serialization, zero-model rejection, allocated `CreatureID` insert SQL, nullable `VerifiedBuild`, and `CAST(... AS FLOAT)` comparisons.
 
 The MySQL fixture is not a PTR or live-realm test. Do not point it at a realm database.
 

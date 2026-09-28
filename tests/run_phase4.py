@@ -24,6 +24,20 @@ subprocess.run([
     str(root / 'src/ContentBuildRegistry.cpp')
 ], check=True)
 print('managed_server_core_compile: PASS', flush=True)
+
+with tempfile.TemporaryDirectory(prefix='content-spell-sql-test-') as directory:
+    binary = Path(directory) / 'spell_server_sql'
+    subprocess.run([
+        compiler, '-std=c++17', '-O0', '-g', '-ffunction-sections',
+        '-fdata-sections', '-DCONTENT_MANAGER_COMPILE_ONLY',
+        '-I' + str(root / 'tests/mysql_adapter'), '-I' + str(root / 'src'),
+        str(root / 'tests/spell_server_sql_tests.cpp'),
+        str(root / 'src/ContentSpellServer.cpp'),
+        '-Wl,--gc-sections', '-o', str(binary)
+    ], check=True)
+    subprocess.run([str(binary)], check=True)
+    print('spell_server_sql: PASS', flush=True)
+
 tests = {
     'dbc_reader': ['DbcReader', 'DbcDescriptor'],
     'package_lifecycle': [],
