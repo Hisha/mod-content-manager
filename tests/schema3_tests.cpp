@@ -121,6 +121,30 @@ int main()
         assert(validation.error.find("clientRequirements require Schema 3") != std::string::npos);
     }
 
+    // Managed Spell declarations are available to typed schema 2/3 packages,
+    // expose only the constrained profile, and remain unavailable to schema 1.
+    json spell = {{"symbol","informational-aura"},{"copyFrom",19},
+        {"profile","informational-self-aura-v1"},
+        {"name",{{"enUS","Informational Aura"},{"frFR","Aura informative"}}},
+        {"description",{{"enUS","No gameplay effect."}}},
+        {"auraDescription",{{"enUS","Informational only."}}},
+        {"iconCopyFromSpell",19}};
+    for (int schema : {2, 3}) {
+        auto typed = schema3; typed["schema"] = schema;
+        typed["spells"] = json::array({spell});
+        Save(path, typed, true);
+        auto validation = ContentPackage(path).Validate();
+        assert(validation.valid && validation.manifest.spells.size() == 1);
+    }
+    auto spellSchema1 = schema1; spellSchema1["spells"] = json::array({spell});
+    Save(path, spellSchema1, true); assert(!ContentPackage(path).Validate().valid);
+    auto unsupportedSpell = schema3; unsupportedSpell["spells"] = json::array({spell});
+    unsupportedSpell["spells"][0]["profile"] = "arbitrary-spell-v1";
+    Save(path, unsupportedSpell, true); assert(!ContentPackage(path).Validate().valid);
+    auto arbitrarySpell = schema3; arbitrarySpell["spells"] = json::array({spell});
+    arbitrarySpell["spells"][0]["Effect_1"] = 2;
+    Save(path, arbitrarySpell, true); assert(!ContentPackage(path).Validate().valid);
+
     // Malformed clientRequirements forms are rejected.
     for (auto const& malformed : std::vector<json>{"protected-framexml", json::array({1}),
         json::array({true}), json::array({ProtectedFrameXml, 2})})

@@ -1,5 +1,6 @@
 #include "ContentServerDeployment.h"
 #include "ContentAllocationRegistry.h"
+#include "ContentResourceAllocator.h"
 #include "ContentBuildHash.h"
 #include "ContentBuildPaths.h"
 #include "ContentBuildRegistry.h"
@@ -7,6 +8,7 @@
 #include "ContentExtendedCostServer.h"
 #include "ContentServerBundle.h"
 #include "ContentServerOwnership.h"
+#include "ContentSpellServer.h"
 #include "DatabaseEnv.h"
 #include "Field.h"
 #include "QueryResult.h"
@@ -143,14 +145,15 @@ ManifestAllocations(json const &parity,
 			 kind != "item-extended-cost.id" &&
 			 kind != "creature-template.id" &&
 			 kind != "gameobject-template.id" &&
-			 kind != "creature-spawn.guid") ||
+			 kind != "creature-spawn.guid" && kind != "spell.id") ||
 			((kind == "currency-category.id" ||
 			  kind == "item-extended-cost.id") &&
 			 value > 65535) ||
 			((kind == "creature-template.id" ||
 			  kind == "gameobject-template.id") &&
 			 value > 0x00ffffff) ||
-			(kind == "currency.known-bit" && value > 64) ||
+			 (kind == "currency.known-bit" && value > 64) ||
+			 (kind == "spell.id" && value > ContentResourceAllocator::SpellIdPolicy({1}).lastCandidate) ||
 			!ContentBuildHash::Valid(baseline) ||
 			!identities.emplace(package, symbol, kind).second)
             throw std::runtime_error("invalid parity allocation");
@@ -204,7 +207,8 @@ bool ContentServerDeployment::Inspect(
 	std::vector<ResolvedVendorRow> *outVendors,
 	std::vector<ResolvedCreatureTemplate> *outCreatures,
 	std::vector<ResolvedGameObjectTemplate> *outGameObjects,
-	std::vector<ResolvedCreatureSpawn> *outSpawns) {
+	std::vector<ResolvedCreatureSpawn> *outSpawns,
+	std::vector<ResolvedSpell> *outSpells) {
 	try {
         std::optional<ContentBuildRecord> record;
 		if (!ContentBuildRegistry().GetBuild(build, record, error))
@@ -231,9 +235,10 @@ bool ContentServerDeployment::Inspect(
 		std::vector<ResolvedCreatureTemplate> creatures;
 		std::vector<ResolvedGameObjectTemplate> gameObjects;
 		std::vector<ResolvedCreatureSpawn> spawns;
+		std::vector<ResolvedSpell> spells;
 		if (!ContentServerBundle::ParseServer(contents, realm, rows, error,
 											  &costs, &vendors, &creatures,
-											  &gameObjects, &spawns))
+										  &gameObjects, &spawns, &spells))
 			return false;
 		if (status.state == "APPLIED")
 			for (auto const &r : creatures)
@@ -250,6 +255,7 @@ bool ContentServerDeployment::Inspect(
 				if (!ContentManagedServer::Verify(r, realm, build,
 												  status.bundleSha256, error))
 					return false;
+		if(status.state=="APPLIED")for(auto const&s:spells)if(!ContentSpellServer::Verify(s,realm,build,status.bundleSha256,error))return false;
         if (status.state == "APPLIED")
             for (auto const& vendor : vendors)
 				if (!ContentVendorServer::Verify(vendor, realm, build,
@@ -306,7 +312,7 @@ bool ContentServerDeployment::Inspect(
 		Require(ContentServerBundle::VerifyParity(
 					parity, realm, build, parityObject.at("baselineSha256"),
 					record->sha256, status.bundleSha256, rows, allocations,
-					error, costs, vendors, creatures, gameObjects, spawns),
+									 error, costs, vendors, creatures, gameObjects, spawns, spells),
 				error);
         if(parityObject.contains("baselines"))
 			for (auto const &snapshot : parityObject.at("baselines")) {
@@ -331,6 +337,7 @@ bool ContentServerDeployment::Inspect(
 			*outGameObjects = gameObjects;
 		if (outSpawns)
 			*outSpawns = spawns;
+		if(outSpells)*outSpells=spells;
         return true;
 	} catch (std::exception const &exception) {
 		error = exception.what();
@@ -367,8 +374,9 @@ bool ContentServerDeployment::Activate(
 		std::vector<ResolvedCreatureTemplate> creatures;
 		std::vector<ResolvedGameObjectTemplate> gameObjects;
 		std::vector<ResolvedCreatureSpawn> spawns;
+		std::vector<ResolvedSpell> spells;
 		if (!Inspect(build, realm, outputDirectory, status, rows, error, &costs,
-					 &vendors, &creatures, &gameObjects, &spawns)) {
+					 &vendors, &creatures, &gameObjects, &spawns, &spells)) {
 			error = "Activation prerequisite validation failed before client "
 					"publication: " + error;
 			return false;
@@ -376,6 +384,7 @@ bool ContentServerDeployment::Activate(
 		result.hasManagedServerContent =
 			!rows.empty() || !costs.empty() || !vendors.empty() ||
 			!creatures.empty() || !gameObjects.empty() || !spawns.empty();
+		result.hasManagedServerContent = result.hasManagedServerContent || !spells.empty();
 		if (result.hasManagedServerContent) {
 			Require(status.state == "STAGED" || status.state == "APPLIED",
 					"Unknown server deployment state");
@@ -458,13 +467,14 @@ bool ContentServerDeployment::Apply(
 		std::vector<ResolvedCreatureTemplate> creatures;
 		std::vector<ResolvedGameObjectTemplate> gameObjects;
 		std::vector<ResolvedCreatureSpawn> spawns;
+		std::vector<ResolvedSpell> spells;
 		if (!ContentServerBundle::ParseServer(bundle, realm, rows, error,
 											  &costs, &vendors, &creatures,
-											  &gameObjects, &spawns))
+											  &gameObjects, &spawns, &spells))
 			return false;
 		Require(!rows.empty() || !costs.empty() || !vendors.empty() ||
 					!creatures.empty() || !gameObjects.empty() ||
-					!spawns.empty(),
+					!spawns.empty() || !spells.empty(),
 				"Server bundle has no managed rows to apply");
         auto parityObject = json::parse(parity);
         std::vector<ItemAllocation> retained;
@@ -478,7 +488,7 @@ bool ContentServerDeployment::Apply(
 		if (!ContentServerBundle::VerifyParity(
 				parity, realm, build, baseline, record->sha256,
 				status.bundleSha256, rows, allocations, error, costs, vendors,
-				creatures, gameObjects, spawns))
+				creatures, gameObjects, spawns, spells))
 			return false;
         std::vector<std::string> provenanceGuards;
         if (parityObject.contains("baselines"))
@@ -526,6 +536,7 @@ bool ContentServerDeployment::Apply(
 		}
 		if (!rows.empty() && !ValidateItemSchema(error))
 			return false;
+		if(!spells.empty()&&!ContentSpellServer::ValidateSchema(error))return false;
 		bool hasCurrency =
 			std::any_of(rows.begin(), rows.end(), [](auto const &row) {
 				return row.currency.itemId != 0;
@@ -579,6 +590,8 @@ bool ContentServerDeployment::Apply(
 		std::vector<ResolvedCreatureTemplate> currentCreatures;
 		std::vector<ResolvedGameObjectTemplate> currentGameObjects;
 		std::vector<ResolvedCreatureSpawn> currentSpawns;
+		std::vector<bool> spellExists; std::vector<ResolvedSpell> currentSpells;
+		for(auto const&s:spells){bool present=false;ResolvedSpell current;Require(ContentSpellServer::Check(s,realm,present,current,error),error);spellExists.push_back(present);currentSpells.push_back(std::move(current));}
 		for (auto const &r : creatures) {
 			bool present = false;
 			ResolvedCreatureTemplate current;
@@ -663,9 +676,10 @@ bool ContentServerDeployment::Apply(
 			for (auto const &r : spawns)
 				Require(ContentManagedServer::Verify(
 							r, realm, build, status.bundleSha256, error),
-						error);
+							error);
+			for(auto const&s:spells)Require(ContentSpellServer::Verify(s,realm,build,status.bundleSha256,error),error);
 			summary = "Server content already APPLIED and verified. Restart "
-					  "worldserver for item-template visibility.";
+					  "worldserver for item-template and spell_dbc visibility.";
             return true;
         }
         auto tx = WorldDatabase.BeginTransaction();
@@ -725,6 +739,7 @@ bool ContentServerDeployment::Apply(
 					 build, status.bundleSha256))
 				tx->Append(sql);
 		}
+		for(std::size_t i=0;i<spells.size();++i){tx->Append("UPDATE spell_dbc SET ID=ID WHERE ID="+std::to_string(spells[i].id));guard(ContentSpellServer::Condition(currentSpells[i],realm,spellExists[i]));for(auto const&sql:ContentSpellServer::ApplySql(spells[i],currentSpells[i],realm,spellExists[i],build,status.bundleSha256))tx->Append(sql);}
 		for (std::size_t i = 0; i < gameObjects.size(); ++i) {
 			tx->Append(
 				"UPDATE gameobject_template SET entry=entry WHERE entry=" +
@@ -914,7 +929,8 @@ bool ContentServerDeployment::Apply(
 		for (auto const &r : gameObjects)
 			guard(ContentManagedServer::Condition(r, realm, true));
 		for (auto const &r : spawns)
-			guard(ContentManagedServer::Condition(r, realm, true));
+		    guard(ContentManagedServer::Condition(r, realm, true));
+		for(auto const&s:spells)guard(ContentSpellServer::Condition(s,realm,true));
         guard("1=1" + condition);
 		tx->Append("UPDATE content_manager_server_build SET "
 				   "server_state='APPLIED',applied_at=NOW() "
@@ -973,9 +989,10 @@ bool ContentServerDeployment::Apply(
 		for (auto const &r : spawns)
 			Require(ContentManagedServer::Verify(r, realm, build,
 												 status.bundleSha256, error),
-					error);
+											 error);
+		for(auto const&s:spells)Require(ContentSpellServer::Verify(s,realm,build,status.bundleSha256,error),error);
 		summary = "Server content APPLIED for build " + std::to_string(build) +
-				  ". Restart worldserver to load item_template, "
+				  ". Restart worldserver to load item_template, spell_dbc, "
 				  "currencytypes_dbc and itemextendedcost_dbc before testing; "
 				  "client patch remains unactivated.";
         return true;

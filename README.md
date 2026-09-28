@@ -468,6 +468,34 @@ See [Phase 5 handoff and inspection-only Eitrigg gate](docs/PHASE5_ITEM_EXTENDED
 and [focused tests](tests/PHASE5_TESTS.md). Do not create/build live extended-cost content until
 the actual Eitrigg inspection output has been reviewed.
 
+## Managed informational Spells
+
+Schema 2 and 3 packages may declare retained `spell.id` resources. Content Manager
+composes the client `Spell.dbc` row and the matching complete server `spell_dbc`
+overlay from one canonical representation. Phase A supports only the constrained
+`informational-self-aura-v1` profile and stock Spell icons; arbitrary Spell fields,
+custom SpellIcon rows, procs, periodic effects, triggers, and gameplay modifiers are
+not authorable. Schema 1 rejects `spells`.
+
+The verified build-12340 baseline has SHA-256
+`d5cce1a83550dcfa9eb2f0251dbb11fd24c272534b2b1a9b230924a44d817ab3`,
+49,839 unique records, 234 fields, 936-byte records, and maximum ID 80,864.
+This verified identity is also the compiled Spell baseline pin and still goes
+through the normal baseline registry workflow; a local reference file is not
+trusted merely because it exists.
+
+Spell IDs begin above the accepted baseline maximum and skip SQL occupancy and every
+retained lease. The upper bound is 4,194,303, budgeting 64 MiB for the two dense
+pointer arrays used by DBC storage and SpellInfo on a 64-bit server. Applying the
+server artifact validates the exact build-12340 `spell_dbc` schema and changes the
+row plus generic ownership provenance in one guarded InnoDB transaction. External
+rows and drift fail closed.
+
+After activation, distribute/install the generated client patch and restart both the
+client and worldserver. A newly applied Spell remains unresolved until the restarted
+worldserver has loaded matching behavior-critical `SpellInfo`. See
+[managed Spell capability](docs/MANAGED_SPELLS.md) for EPF syntax and the lifecycle.
+
 ## Schema 3 client requirements
 
 Schema 3 is backward compatible: it accepts every Schema 1/2 EPF unchanged and the

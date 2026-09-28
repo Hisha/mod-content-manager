@@ -103,4 +103,31 @@ int main()
         owner.rowJson) == Decision::Conflict);
     assert(ContentServerOwnership::Classify(true, true, owner, "Eitrigg", "mod-hunts", "seal",
         "drift") == Decision::Conflict);
+
+    // Spell client/server artifacts share one canonical row and lease.
+    ResolvedSpell spell; spell.packageKey="generic";spell.packageVersion="2";
+    spell.symbol="informational";spell.profile=SpellDbcComposer::Profile;
+    spell.id=80865;spell.copyFrom=19;spell.iconCopyFromSpell=19;
+    spell.words[0]=spell.id;spell.words[28]=1;spell.words[40]=21;
+    spell.words[46]=1;spell.words[71]=6;spell.words[86]=1;
+    spell.words[95]=4;spell.words[133]=25;spell.words[225]=1;
+    spell.localized[0][0]="Informational";
+    assert(SpellDbcComposer::BehaviorMatches(spell));
+    ItemAllocation spellLease{"Eitrigg","generic","informational",spell.id,
+        "reserved",1,8,hash,"spell.id"};
+    auto spellBundle=ContentServerBundle::ServerJson("Eitrigg",{},{},{},{},{},{},{spell});
+    std::vector<ResolvedSpell> parsedSpells;
+    assert(ContentServerBundle::ParseServer(spellBundle,"Eitrigg",parsed,error,
+        nullptr,nullptr,nullptr,nullptr,nullptr,&parsedSpells));
+    assert(parsed.empty()&&parsedSpells.size()==1&&parsedSpells[0].words==spell.words);
+    ContentBaseline spellBaseline;spellBaseline.table="Spell";
+    spellBaseline.clientBuild=12340;spellBaseline.descriptorVersion=1;spellBaseline.hash=hash;
+    auto spellParity=ContentServerBundle::ParityJson("Eitrigg",8,{spellLease},{},
+        "","",hash,hash,"","",{},{spellBaseline},"",{},{},{},{},{},{spell},hash);
+    assert(ContentServerBundle::VerifyParity(spellParity,"Eitrigg",8,"",hash,hash,
+        {},{spellLease},error,{},{},{},{},{},{spell}));
+    auto changed=spell;changed.words[34]=1;
+    assert(!SpellDbcComposer::BehaviorMatches(changed));
+    assert(!ContentServerBundle::VerifyParity(spellParity,"Eitrigg",8,"",hash,hash,
+        {},{},error,{},{},{},{},{},{spell})); // retained spell lease is mandatory
 }

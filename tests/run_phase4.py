@@ -18,6 +18,7 @@ subprocess.run([
     '-I' + str(root / 'tests/mysql_adapter'), '-I' + str(root / 'src'),
     str(root / 'src/ContentServerDeployment.cpp'),
     str(root / 'src/ContentManagedServer.cpp'),
+    str(root / 'src/ContentSpellServer.cpp'),
     str(root / 'tests/currency_mysql_tests.cpp'),
     str(root / 'tests/managed_server_mysql_tests.cpp'),
     str(root / 'src/ContentBuildRegistry.cpp')
@@ -44,6 +45,9 @@ tests['extended_cost'] = ['ItemExtendedCostDbc', 'ContentResourceAllocator', 'Co
 tests['managed_server'] = ['ContentResourceAllocator', 'ContentPackage', 'ContentServerBundle', 'ContentVendorRow',
                            'ContentManagedServerDescriptor', 'ServerTableDescriptor', 'CurrencyCategoryDbcComposer',
                            'CurrencyDbcComposer', 'ItemExtendedCostDbc', 'DbcReader', 'DbcDescriptor']
+tests['spell'] = ['SpellDbcComposer','ContentResourceAllocator','DbcReader','DbcDescriptor']
+for name in ['server_bundle','schema2','schema3','extended_cost','managed_server','currency']:
+    if 'SpellDbcComposer' not in tests[name]: tests[name].append('SpellDbcComposer')
 with tempfile.TemporaryDirectory(prefix='content-phase4-tests-') as directory:
     for name, units in tests.items():
         binary = Path(directory) / name
@@ -60,5 +64,7 @@ with tempfile.TemporaryDirectory(prefix='content-phase4-tests-') as directory:
             inputs.append(str(args.hunts_epf.resolve()))
         if name == 'extended_cost' and args.extended_cost_dbc:
             inputs.append(str(args.extended_cost_dbc.resolve()))
+        if name == 'spell':
+            inputs.append(str((root / 'reference/dbc/Spell.dbc').resolve()))
         subprocess.run([str(binary), *inputs], check=True)
         print(name + ': PASS', flush=True)

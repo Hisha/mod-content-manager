@@ -22,6 +22,7 @@
 #include "ContentBaselineRegistry.h"
 #include "ContentExtendedCostServer.h"
 #include "ContentServerDeployment.h"
+#include "SpellDbcComposer.h"
 
 #include <algorithm>
 #include <set>
@@ -303,7 +304,7 @@ public:
         }
         if (!IsKnownDbcTable(table))
         {
-            handler->PSendSysMessage("Unsupported DBC table '{}'. Registered tables: Item, CurrencyTypes, CurrencyCategory, ItemExtendedCost.", table);
+            handler->PSendSysMessage("Unsupported DBC table '{}'. Registered tables: Item, CurrencyTypes, CurrencyCategory, ItemExtendedCost, Spell.", table);
             return true;
         }
         auto build = sContentManager.GetClientBuild();
@@ -381,6 +382,12 @@ public:
                 ReportIds(handler,"npc_vendor.ExtendedCost references",costReferences.vendors);
                 ReportIds(handler,"game_event_npc_vendor.ExtendedCost references",costReferences.events);
                 ReportIds(handler,"item_refund_instance.paidExtendedCost references",costReferences.refunds);
+            }
+            if (table == "Spell")
+            {
+                auto ids = SpellDbcComposer::Inspect(parsed.document);
+                handler->PSendSysMessage("Build-12340 Spell descriptor: 234 fields / 936 bytes; unique IDs: {}; minimum: {}; maximum: {}.",
+                    ids.size(), ids.empty() ? 0 : *ids.begin(), ids.empty() ? 0 : *ids.rbegin());
             }
             std::string registryStatus, registryError;
             if (ContentBaselineRegistry::Status(inspected, registryStatus, registryError))

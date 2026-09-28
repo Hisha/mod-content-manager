@@ -36,8 +36,9 @@ public:
         std::vector<ResolvedServerItem>& rows, std::string& error,
         std::vector<ResolvedExtendedCost>* costs = nullptr, std::vector<ResolvedVendorRow>* vendors = nullptr,
         std::vector<ResolvedCreatureTemplate>* creatures = nullptr,
-        std::vector<ResolvedGameObjectTemplate>* gameObjects = nullptr,
-        std::vector<ResolvedCreatureSpawn>* spawns = nullptr);
+		std::vector<ResolvedGameObjectTemplate>* gameObjects = nullptr,
+		std::vector<ResolvedCreatureSpawn>* spawns = nullptr,
+		std::vector<ResolvedSpell>* spells = nullptr);
     static bool Apply(std::uint32_t build, std::string const& realm,
         std::filesystem::path const& outputDirectory, std::string& summary, std::string& error);
     // Activation orchestration only: managed server content is applied or

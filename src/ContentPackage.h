@@ -152,6 +152,22 @@ struct ContentCreatureSpawn {
 	}
 };
 
+struct ContentSpellRow {
+	std::string symbol;
+	std::uint32_t copyFrom = 0;
+	std::uint32_t iconCopyFromSpell = 0;
+	std::string profile;
+	std::map<std::string, std::string> names;
+	std::map<std::string, std::string> descriptions;
+	std::map<std::string, std::string> auraDescriptions;
+	bool operator==(ContentSpellRow const &o) const {
+		return symbol == o.symbol && copyFrom == o.copyFrom &&
+			   iconCopyFromSpell == o.iconCopyFromSpell && profile == o.profile &&
+			   names == o.names && descriptions == o.descriptions &&
+			   auraDescriptions == o.auraDescriptions;
+	}
+};
+
 struct ContentPackageManifest {
     uint32_t schema = 0;
     std::string packageKey;
@@ -172,6 +188,7 @@ struct ContentPackageManifest {
 	std::vector<ContentCreatureTemplate> creatureTemplates;
 	std::vector<ContentGameObjectTemplate> gameObjectTemplates;
 	std::vector<ContentCreatureSpawn> creatureSpawns;
+	std::vector<ContentSpellRow> spells;
 };
 
 struct ContentPackageStageResult {

@@ -22,6 +22,17 @@ ResourceAllocationPolicy ContentResourceAllocator::ItemIdPolicy(std::set<std::ui
     return {"item.id", static_cast<std::uint32_t>(stockMax + 1), static_cast<std::uint32_t>(last)};
 }
 
+ResourceAllocationPolicy ContentResourceAllocator::SpellIdPolicy(std::set<std::uint32_t> const& baselineIDs)
+{
+	if (baselineIDs.empty()) throw std::runtime_error("Cannot allocate spell.id without validated baseline Spell IDs");
+	constexpr std::uint64_t budget=64ULL*1024*1024;
+	auto pointerBytes=std::max<std::size_t>(sizeof(void*),8);
+	auto last=std::min<std::uint64_t>(std::numeric_limits<std::uint32_t>::max()-1ULL,budget/(2*pointerBytes)-1ULL);
+	auto stockMax=*baselineIDs.rbegin();
+	if(stockMax>=last)throw std::runtime_error("Baseline Spell ID exceeds safe dual dense-index policy");
+	return {"spell.id",static_cast<std::uint32_t>(stockMax+1),static_cast<std::uint32_t>(last)};
+}
+
 std::vector<ItemAllocation> ContentResourceAllocator::Plan(std::string const& realm,
     ResourceAllocationPolicy const& policy, std::vector<ResourceAllocationRequest> const& requests,
     std::vector<ItemAllocation> const& retained, std::set<std::uint32_t> const& occupiedExternal,

@@ -37,6 +37,9 @@ public:
     static ResourceAllocationPolicy GameObjectTemplateIdPolicy() { return {"gameobject-template.id", 1, 0x00ffffff}; }
     static ResourceAllocationPolicy CreatureSpawnGuidPolicy() { return {"creature-spawn.guid", 1, 0xffffffff}; }
     static ResourceAllocationPolicy ItemIdPolicy(std::set<std::uint32_t> const& baselineIDs);
+    // Spell.dbc and SpellMgr each allocate a dense pointer index. Policy v1
+    // budgets 64 MiB for both indexes together on a 64-bit process.
+    static ResourceAllocationPolicy SpellIdPolicy(std::set<std::uint32_t> const& baselineIDs);
     static std::vector<ItemAllocation> Plan(std::string const& realm,
         ResourceAllocationPolicy const& policy,
         std::vector<ResourceAllocationRequest> const& requests,

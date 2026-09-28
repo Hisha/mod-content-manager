@@ -128,6 +128,8 @@ std::vector<ResolvedExtendedCost> ParseCosts(json const &source) {
 
 json ResourceObject(ItemAllocation const &allocation,
 					std::vector<ResolvedServerItem> const &rows) {
+	if (allocation.resourceKind == "spell.id")
+		return {{"package",allocation.packageKey},{"symbol",allocation.symbol},{"resourceKind",allocation.resourceKind},{"value",allocation.value},{"baselineSha256",allocation.baselineSha256},{"allocationPolicyVersion",allocation.policyVersion},{"dbcDescriptorVersion",1},{"serverDescriptorVersion",1}};
 	if (allocation.resourceKind == "currency.known-bit" ||
 		allocation.resourceKind == "currency-category.id" ||
 		allocation.resourceKind == "item-extended-cost.id")
@@ -170,6 +172,20 @@ json ResourceObject(ItemAllocation const &allocation,
 		resource["packageVersion"] = found->packageVersion;
     return resource;
 }
+
+json SpellObjects(std::vector<ResolvedSpell> spells)
+{
+	std::sort(spells.begin(),spells.end(),[](auto const&a,auto const&b){return std::tie(a.packageKey,a.symbol)<std::tie(b.packageKey,b.symbol);});
+	json out=json::array(); std::set<std::uint32_t> ids;std::set<std::pair<std::string,std::string>> identities;
+	for(auto const&s:spells){if(!SpellDbcComposer::BehaviorMatches(s)||!ids.insert(s.id).second||!identities.emplace(s.packageKey,s.symbol).second)throw std::runtime_error("Invalid managed spell artifact");out.push_back({{"package",s.packageKey},{"packageVersion",s.packageVersion},{"symbol",s.symbol},{"resourceKind","spell.id"},{"id",s.id},{"copyFrom",s.copyFrom},{"iconCopyFromSpell",s.iconCopyFromSpell},{"profile",s.profile},{"words",s.words},{"localized",s.localized}});}
+	return out;
+}
+std::vector<ResolvedSpell> ParseSpells(json const& source)
+{
+	if(!source.is_array()||source.empty())throw std::runtime_error("Empty/invalid managed spell artifact");std::vector<ResolvedSpell> out;
+	for(auto const&v:source){ResolvedSpell s;s.packageKey=v.at("package");s.packageVersion=v.at("packageVersion");s.symbol=v.at("symbol");s.profile=v.at("profile");s.id=v.at("id");s.copyFrom=v.at("copyFrom");s.iconCopyFromSpell=v.at("iconCopyFromSpell");s.words=v.at("words").get<std::array<std::uint32_t,234>>();s.localized=v.at("localized").get<std::array<std::array<std::string,16>,4>>();if(v.at("resourceKind")!="spell.id"||!SpellDbcComposer::BehaviorMatches(s))throw std::runtime_error("Invalid managed spell row");out.push_back(std::move(s));}
+	if(SpellObjects(out)!=source)throw std::runtime_error("Noncanonical managed spell definitions");return out;
+}
 } // namespace
 
 std::string ContentServerBundle::SqlText(std::string const &value) {
@@ -197,7 +213,8 @@ std::string ContentServerBundle::ServerJson(
 	std::vector<ResolvedVendorRow> vendors,
 	std::vector<ResolvedCreatureTemplate> creatures,
 	std::vector<ResolvedGameObjectTemplate> gameObjects,
-	std::vector<ResolvedCreatureSpawn> spawns) {
+	std::vector<ResolvedCreatureSpawn> spawns,
+	std::vector<ResolvedSpell> spells) {
     std::sort(rows.begin(), rows.end(), LessRow);
 	json artifact = {{"format", 1},
 					 {"realm", realm},
@@ -239,6 +256,7 @@ std::string ContentServerBundle::ServerJson(
 		artifact["managedServer"] =
 			ContentManagedServer::Objects(creatures, gameObjects, spawns);
     }
+	if (!spells.empty()) { artifact["format"] = 7; artifact["spells"] = SpellObjects(spells); }
     return artifact.dump(2) + "\n";
 }
 
@@ -256,7 +274,8 @@ std::string ContentServerBundle::ParityJson(
 	std::vector<ResolvedVendorRow> vendors,
 	std::vector<ResolvedCreatureTemplate> creatures,
 	std::vector<ResolvedGameObjectTemplate> gameObjects,
-	std::vector<ResolvedCreatureSpawn> spawns) {
+	std::vector<ResolvedCreatureSpawn> spawns,
+	std::vector<ResolvedSpell> spells, std::string const& spellDbcSha256) {
     auto sorted = allocations;
     std::sort(sorted.begin(), sorted.end(), [](auto const& a, auto const& b) {
 		return std::tie(a.packageKey, a.symbol) <
@@ -343,6 +362,11 @@ std::string ContentServerBundle::ParityJson(
 		artifact["managedServer"] =
 			ContentManagedServer::Objects(creatures, gameObjects, spawns);
 	}
+	if (!spells.empty()) {
+		if (!ContentBuildHash::Valid(spellDbcSha256)) throw std::runtime_error("Invalid composed Spell.dbc hash");
+		artifact["format"] = 7; artifact["spellDbcSha256"] = spellDbcSha256;
+		artifact["spells"] = SpellObjects(spells);
+	}
     return artifact.dump(2) + "\n";
 }
 
@@ -353,7 +377,8 @@ bool ContentServerBundle::ParseServer(
 	std::vector<ResolvedVendorRow> *vendors,
 	std::vector<ResolvedCreatureTemplate> *creatures,
 	std::vector<ResolvedGameObjectTemplate> *gameObjects,
-	std::vector<ResolvedCreatureSpawn> *spawns) {
+	std::vector<ResolvedCreatureSpawn> *spawns,
+	std::vector<ResolvedSpell> *spells) {
 	if (costs)
 		costs->clear();
 	if (vendors)
@@ -364,11 +389,12 @@ bool ContentServerBundle::ParseServer(
 		gameObjects->clear();
 	if (spawns)
 		spawns->clear();
+	if (spells) spells->clear();
     rows.clear();
 	try {
         auto artifact = json::parse(text);
 		auto format = artifact.value("format", 0);
-		if (!artifact.is_object() || (format < 1 || format > 6) ||
+		if (!artifact.is_object() || (format < 1 || format > 7) ||
 			artifact.at("realm") != realm ||
 			artifact.at("table") != "item_template" ||
 			artifact.at("descriptorVersion") != 1 ||
@@ -377,13 +403,14 @@ bool ContentServerBundle::ParseServer(
 				"server bundle header or descriptor mismatch");
 		static std::set<std::string> const allowed = {
 			"format", "realm",		   "table",		 "descriptorVersion",
-			"rows",	  "extendedCosts", "vendorRows", "managedServer"};
+			"rows",	  "extendedCosts", "vendorRows", "managedServer", "spells"};
 		for (auto it = artifact.begin(); it != artifact.end(); ++it)
 			if (!allowed.count(it.key()))
 				throw std::runtime_error("unknown server bundle key");
 		if ((artifact.contains("extendedCosts") && format < 4) ||
 			(artifact.contains("vendorRows") && format < 5) ||
-			(artifact.contains("managedServer") && format != 6))
+			(artifact.contains("managedServer") && format < 6) ||
+			(artifact.contains("spells") && format != 7))
 			throw std::runtime_error("server bundle feature/format mismatch");
         std::set<std::pair<std::string, std::string>> identities;
         std::set<std::uint32_t> ids;
@@ -506,6 +533,7 @@ bool ContentServerBundle::ParseServer(
 		std::vector<ResolvedCreatureTemplate> parsedCreatures;
 		std::vector<ResolvedGameObjectTemplate> parsedGameObjects;
 		std::vector<ResolvedCreatureSpawn> parsedSpawns;
+		auto parsedSpells = artifact.contains("spells") ? ParseSpells(artifact.at("spells")) : std::vector<ResolvedSpell>{};
 		if (artifact.contains("managedServer"))
 			ContentManagedServer::Parse(artifact.at("managedServer"),
 										parsedCreatures, parsedGameObjects,
@@ -519,7 +547,7 @@ bool ContentServerBundle::ParseServer(
 				throw std::runtime_error(
 					"Vendor cost relationship is unresolved");
 		if (ServerJson(realm, rows, parsedCosts, parsedVendors, parsedCreatures,
-					   parsedGameObjects, parsedSpawns) != text)
+					   parsedGameObjects, parsedSpawns, parsedSpells) != text)
 			throw std::runtime_error(
 				"server bundle is not in canonical generated form");
 		if (costs)
@@ -532,6 +560,7 @@ bool ContentServerBundle::ParseServer(
 			*gameObjects = std::move(parsedGameObjects);
 		if (spawns)
 			*spawns = std::move(parsedSpawns);
+		if (spells) *spells = std::move(parsedSpells);
         return true;
 	} catch (std::exception const &exception) {
 		error = std::string("Invalid server bundle: ") + exception.what();
@@ -550,14 +579,19 @@ bool ContentServerBundle::VerifyParity(
 	std::vector<ResolvedVendorRow> const &vendors,
 	std::vector<ResolvedCreatureTemplate> const &creatures,
 	std::vector<ResolvedGameObjectTemplate> const &gameObjects,
-	std::vector<ResolvedCreatureSpawn> const &spawns) {
+	std::vector<ResolvedCreatureSpawn> const &spawns,
+	std::vector<ResolvedSpell> const &spells) {
 	try {
         auto actual = json::parse(text);
+		auto spellSha=actual.value("spellDbcSha256",std::string());
+		if(spells.empty()!=spellSha.empty()||(!spells.empty()&&!ContentBuildHash::Valid(spellSha)))throw std::runtime_error("Spell DBC hash missing or invalid");
+		for(auto const&s:spells){if(!SpellDbcComposer::BehaviorMatches(s))throw std::runtime_error("Invalid spell profile in parity");auto lease=std::find_if(allocations.begin(),allocations.end(),[&](auto const&a){return a.resourceKind=="spell.id"&&a.packageKey==s.packageKey&&a.symbol==s.symbol&&a.value==s.id;});if(lease==allocations.end()||!ContentBuildHash::Valid(lease->baselineSha256))throw std::runtime_error("Managed spell lease missing");}
+		for(auto const&a:allocations)if(a.resourceKind=="spell.id"&&std::none_of(spells.begin(),spells.end(),[&](auto const&s){return s.packageKey==a.packageKey&&s.symbol==a.symbol&&s.id==a.value;}))throw std::runtime_error("Orphan managed spell lease");
         auto itemSha = actual.at("itemDbcSha256").get<std::string>();
         auto costSha = actual.value("extendedCostDbcSha256", std::string());
-        if (!costs.empty() && !actual.contains("baselines"))
+		if ((!costs.empty() || !spells.empty()) && !actual.contains("baselines"))
 			throw std::runtime_error(
-				"Extended costs require accepted baseline snapshots");
+				"Managed DBC resources require accepted baseline snapshots");
 		if (costs.empty() != costSha.empty() ||
 			(!costs.empty() && !ContentBuildHash::Valid(costSha)))
             throw std::runtime_error("Extended-cost hash missing or invalid");
@@ -750,15 +784,21 @@ bool ContentServerBundle::VerifyParity(
 					throw std::runtime_error("Item baseline snapshot mismatch");
                 baselines.push_back(b);
             }
-            std::set<std::string> expected{"Item"};
+			std::set<std::string> expected;
+			if (!rows.empty()) expected.insert("Item");
 			if (currencyRows)
 				expected.insert("CurrencyTypes");
 			if (!categories.empty())
 				expected.insert("CurrencyCategory");
 			if (!costs.empty())
 				expected.insert("ItemExtendedCost");
+			if (!spells.empty()) expected.insert("Spell");
 			if (tables != expected)
 				throw std::runtime_error("Baseline snapshot set mismatch");
+			if(!spells.empty()){
+				auto baseline=std::find_if(baselines.begin(),baselines.end(),[](auto const&b){return b.table=="Spell";});
+				if(baseline==baselines.end()||std::any_of(allocations.begin(),allocations.end(),[&](auto const&a){return a.resourceKind=="spell.id"&&a.baselineSha256!=baseline->hash;}))throw std::runtime_error("Spell lease/baseline provenance mismatch");
+			}
 		}
 		if ((!rows.empty() && !ContentBuildHash::Valid(itemSha)) ||
 			(rows.empty() && !itemSha.empty()) ||
@@ -766,7 +806,7 @@ bool ContentServerBundle::VerifyParity(
 						  realm, build, allocations, rows, baselineSha256,
 						  itemSha, clientMpqSha256, serverSha256, currencySha,
 						  categorySha, categories, baselines, costSha, costs,
-						  vendors, creatures, gameObjects, spawns)))
+						  vendors, creatures, gameObjects, spawns, spells, spellSha)))
 			throw std::runtime_error("manifest values differ from build, "
 									 "allocation, or server bundle");
         return true;

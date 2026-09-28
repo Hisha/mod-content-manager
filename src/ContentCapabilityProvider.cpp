@@ -10,6 +10,8 @@
 #include "ObjectMgr.h"
 #include "Log.h"
 #include "DBCStores.h"
+#include "SpellMgr.h"
+#include "SpellInfo.h"
 #include "World.h"
 #include <algorithm>
 #include <optional>
@@ -25,7 +27,8 @@ ContentResourcesV1::Result ContentCapabilityProvider::ResolveResource(std::strin
     auto currentRealm=realmResult->Fetch()[0].Get<std::string>();if(active->realmName!=currentRealm){reason="Active content belongs to another realm";return R::Invalid;}
     ContentServerStatus status;std::vector<ResolvedServerItem> items;std::vector<ResolvedExtendedCost> costs;std::vector<ResolvedVendorRow> vendors;
     std::vector<ResolvedCreatureTemplate> creatures;std::vector<ResolvedGameObjectTemplate> gameObjects;std::vector<ResolvedCreatureSpawn> spawns;
-    if(!ContentServerDeployment::Inspect(active->buildNumber,active->realmName,sContentManager.GetOutputDirectory(),status,items,reason,&costs,&vendors,&creatures,&gameObjects,&spawns))return R::Invalid;
+	std::vector<ResolvedSpell> spells;
+	if(!ContentServerDeployment::Inspect(active->buildNumber,active->realmName,sContentManager.GetOutputDirectory(),status,items,reason,&costs,&vendors,&creatures,&gameObjects,&spawns,&spells))return R::Invalid;
     if(status.state!="APPLIED"){reason="Active native content is not server APPLIED";return R::Invalid;}
     bool declared=false;
     if(kind=="item.id")declared=std::any_of(items.begin(),items.end(),[&](auto const& r){return r.packageKey==package&&r.symbol==symbol;});
@@ -35,11 +38,17 @@ ContentResourcesV1::Result ContentCapabilityProvider::ResolveResource(std::strin
     else if(kind=="creature-template.id")declared=std::any_of(creatures.begin(),creatures.end(),[&](auto const& r){return r.packageKey==package&&r.symbol==symbol;});
     else if(kind=="gameobject-template.id")declared=std::any_of(gameObjects.begin(),gameObjects.end(),[&](auto const& r){return r.packageKey==package&&r.symbol==symbol;});
     else if(kind=="creature-spawn.guid")declared=std::any_of(spawns.begin(),spawns.end(),[&](auto const& r){return r.packageKey==package&&r.symbol==symbol;});
+	else if(kind=="spell.id")declared=std::any_of(spells.begin(),spells.end(),[&](auto const&r){return r.packageKey==package&&r.symbol==symbol;});
     else {reason="Unsupported resource kind";return R::Invalid;}
     if(!declared){reason="Resource is not declared by the ACTIVE/APPLIED build";return R::Inactive;}
     std::vector<ItemAllocation> leases;if(!ContentAllocationRegistry().Read(active->realmName,leases,reason))return R::Invalid;
     auto lease=std::find_if(leases.begin(),leases.end(),[&](auto const& a){return a.packageKey==package&&a.symbol==symbol&&a.resourceKind==kind;});
-    if(lease==leases.end()){reason="Declared resource lacks retained allocation";return R::Invalid;}
+	if(lease==leases.end()){reason="Declared resource lacks retained allocation";return R::Invalid;}
+	if(kind=="spell.id"){
+		auto definition=std::find_if(spells.begin(),spells.end(),[&](auto const&r){return r.packageKey==package&&r.symbol==symbol&&r.id==lease->value;});
+		auto loaded=sSpellMgr->GetSpellInfo(lease->value);
+		if(definition==spells.end()||!loaded||loaded->IsPassive()||!loaded->IsPositive()||loaded->DurationEntry!=sSpellDurationStore.LookupEntry(21)||loaded->ProcFlags||loaded->ProcChance||loaded->ProcCharges||loaded->GetCategory()||loaded->RecoveryTime||loaded->CategoryRecoveryTime||loaded->Attributes||loaded->AttributesEx||loaded->AttributesEx2||loaded->AttributesEx3||loaded->AttributesEx4||loaded->AttributesEx5||loaded->AttributesEx6||loaded->AttributesEx7||loaded->SpellIconID!=definition->words[133]||loaded->ActiveIconID||loaded->SpellFamilyName||loaded->Effects[0].Effect!=6||loaded->Effects[0].ApplyAuraName!=4||loaded->Effects[0].TargetA.GetTarget()!=1||loaded->Effects[0].Amplitude||loaded->Effects[0].TriggerSpell||loaded->Effects[1].Effect||loaded->Effects[2].Effect){reason="Managed spell is APPLIED but not loaded with expected behavior; restart worldserver";return R::Invalid;}
+	}
     value=lease->value;reason="Validated ACTIVE/APPLIED managed resource";return R::Ready;
 }
 using namespace ContentCapabilitiesV1;

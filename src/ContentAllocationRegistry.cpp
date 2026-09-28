@@ -6,6 +6,7 @@
 #include "ContentItemOccupancy.h"
 #include "ContentManagedServer.h"
 #include "ContentServerOwnership.h"
+#include "ContentSpellServer.h"
 #include "DatabaseEnv.h"
 #include "Field.h"
 #include "QueryResult.h"
@@ -167,7 +168,8 @@ bool ContentAllocationRegistry::CommitComposed(
 			 row.resourceKind != "item-extended-cost.id" &&
 			 row.resourceKind != "creature-template.id" &&
 			 row.resourceKind != "gameobject-template.id" &&
-			 row.resourceKind != "creature-spawn.guid") ||
+			 row.resourceKind != "creature-spawn.guid" &&
+			 row.resourceKind != "spell.id") ||
 			row.policyVersion != 1 || !row.value ||
 			!ContentBuildHash::Valid(row.baselineSha256)) {
 			error = "Invalid allocation plan";
@@ -265,6 +267,13 @@ bool ContentAllocationRegistry::CommitComposed(
 					return false;
 				}
     }
+	if(std::any_of(plan.begin(),plan.end(),[](auto const&a){return a.resourceKind=="spell.id";})){
+		std::set<std::uint32_t> spellIds;
+		if(!ContentSpellServer::Occupancy(build.realmName,before,spellIds,error))return false;
+		for(auto const&row:plan)if(row.resourceKind=="spell.id"&&spellIds.count(row.value)){
+			error="Planned Spell ID became externally occupied: "+std::to_string(row.value);return false;
+		}
+	}
     std::vector<std::string> costGuards;
 	auto costLeaseCount =
 		std::count_if(plan.begin(), plan.end(), [](auto const &a) {

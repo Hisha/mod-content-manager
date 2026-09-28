@@ -15,12 +15,14 @@
 #include "ContentResourceAllocator.h"
 #include "ContentServerBundle.h"
 #include "ContentServerOwnership.h"
+#include "ContentSpellServer.h"
 #include "CurrencyCategoryDbcComposer.h"
 #include "CurrencyDbcComposer.h"
 #include "DbcDescriptor.h"
 #include "DbcReader.h"
 #include "ItemDbcComposer.h"
 #include "MpqBuilder.h"
+#include "SpellDbcComposer.h"
 
 #include <algorithm>
 #include <fstream>
@@ -164,7 +166,7 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 				costRequests.push_back({source.validation.manifest.packageKey,
 										row.symbol, "item-extended-cost.id"});
 		std::vector<ResourceAllocationRequest> creatureRequests,
-			gameObjectRequests, spawnRequests;
+			gameObjectRequests, spawnRequests, spellRequests;
 		for (auto const &source : selected) {
 			auto const &m = source.validation.manifest;
 			for (auto const &row : m.creatureTemplates)
@@ -176,7 +178,11 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 			for (auto const &row : m.creatureSpawns)
 				spawnRequests.push_back(
 					{m.packageKey, row.symbol, "creature-spawn.guid"});
+			for (auto const &row : m.spells)
+				spellRequests.push_back({m.packageKey,row.symbol,"spell.id"});
 		}
+		bool composingSpell=!spellRequests.empty();
+		if(composingSpell){auto key=Fold("DBFilesClient/Spell.dbc");Require(!owners.count(key),"Raw Spell.dbc conflicts with semantic composition");owners.emplace(key,"Spell composer");}
         bool composingCost = !costRequests.empty();
 		if (composingCost) {
             auto key = Fold("DBFilesClient/ItemExtendedCost.dbc");
@@ -268,6 +274,10 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
         std::vector<ResolvedExtendedCost> costs;
         std::vector<std::uint8_t> composedCostBytes;
         std::string costHash;
+		std::vector<ResolvedSpell> spells;
+		std::vector<std::uint8_t> composedSpellBytes;
+		std::string spellHash;
+		std::uint32_t expectedSpellRecords=0;
 		std::vector<ResolvedCreatureTemplate> creatureTemplates;
 		std::vector<ResolvedGameObjectTemplate> gameObjectTemplates;
 		std::vector<ResolvedCreatureSpawn> creatureSpawns;
@@ -317,6 +327,18 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 		auto spawnPlan = planManaged(
 			"creature-spawn.guid",
 			ContentResourceAllocator::CreatureSpawnGuidPolicy(), spawnRequests);
+		if(composingSpell){
+			auto baseline=loadBaseline("Spell",SpellDbcComposer::VerifiedBaselineSha256);
+			auto baselineIds=SpellDbcComposer::Inspect(baseline.document);
+			std::vector<ItemAllocation> retained;Require(ContentAllocationRegistry().Read(realmName,retained,error),error);
+			std::set<std::uint32_t> occupied;
+			Require(ContentSpellServer::Occupancy(realmName,retained,occupied,error),error);
+			occupied.insert(baselineIds.begin(),baselineIds.end());
+			auto plan=ContentResourceAllocator::Plan(realmName,ContentResourceAllocator::SpellIdPolicy(baselineIds),spellRequests,retained,occupied,result.buildNumber,baseline.hash,acceptedHistory["Spell"]);
+			allocationPlan.insert(allocationPlan.end(),plan.begin(),plan.end());
+			for(auto const&source:selected)for(auto const&d:source.validation.manifest.spells){auto lease=std::find_if(plan.begin(),plan.end(),[&](auto const&a){return a.packageKey==source.validation.manifest.packageKey&&a.symbol==d.symbol;});Require(lease!=plan.end(),"Spell allocation missing");spells.push_back(SpellDbcComposer::Resolve(baseline.document,d,source.validation.manifest.packageKey,source.validation.manifest.version,lease->value));report("Planned spell.id: "+lease->packageKey+"/"+lease->symbol+" = "+std::to_string(lease->value));}
+			composedSpellBytes=SpellDbcComposer::Compose(baseline.document,spells);expectedSpellRecords=baseline.document.recordCount+static_cast<std::uint32_t>(spells.size());
+		}
 		for (auto const &source : selected) {
 			auto const &m = source.validation.manifest;
 			for (auto const &d : m.creatureTemplates) {
@@ -788,7 +810,7 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
         }
 		Require(result.fileCount + (composingItem ? 1 : 0) +
 						(composingCurrency ? 1 : 0) +
-						(composingCategory ? 1 : 0) + (composingCost ? 1 : 0) ==
+						(composingCategory ? 1 : 0) + (composingCost ? 1 : 0) + (composingSpell ? 1 : 0) ==
 					owners.size(),
             "Staged file count does not match the declared cumulative set");
 		if (composingItem) {
@@ -931,7 +953,7 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 					reinterpret_cast<char const *>(composedCostBytes.data()),
 					composedCostBytes.size());
                 Require(out.good(), "Cannot write ItemExtendedCost.dbc");
-            }
+		}
 			auto parsed = DbcReader::Read(
 				target, *FindDbcDescriptor(manager.GetClientBuild(),
 										   "ItemExtendedCost"));
@@ -957,6 +979,11 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
             ++result.fileCount;
             report("Composed ItemExtendedCost.dbc SHA-256: " + costHash);
         }
+		if(composingSpell){
+			auto target=result.workspace/"DBFilesClient"/"Spell.dbc";RejectLinks(target);fs::create_directories(target.parent_path());Require(!fs::exists(fs::symlink_status(target)),"Spell target already exists");
+			{std::ofstream out(target,std::ios::binary);Require(out.is_open(),"Cannot create Spell.dbc");out.write(reinterpret_cast<char const*>(composedSpellBytes.data()),static_cast<std::streamsize>(composedSpellBytes.size()));Require(out.good(),"Cannot write Spell.dbc");}
+			auto parsed=DbcReader::Read(target,*FindDbcDescriptor(12340,"Spell"));Require(parsed.valid&&parsed.document.recordCount==expectedSpellRecords,"Spell.dbc disk readback failed: "+parsed.error);Require(ContentBuildHash::Calculate(target,spellHash,error),error);++result.fileCount;report("Composed Spell.dbc SHA-256: "+spellHash);
+		}
 		// Recheck every accepted snapshot immediately before artifact assembly.
 		// The commit also guards registry identities.
 		for (auto const &baseline : baselines) {
@@ -997,7 +1024,7 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 			writeSidecar(serverPath, ContentServerBundle::ServerJson(
 										 realmName, resolvedServerRows, costs,
 										 vendors, creatureTemplates,
-										 gameObjectTemplates, creatureSpawns));
+										 gameObjectTemplates, creatureSpawns, spells));
             serverRecord.bundleFilename = serverPath.filename().string();
 			Require(ContentBuildHash::Calculate(
 						serverPath, serverRecord.bundleSha256, error),
@@ -1009,7 +1036,7 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 							 hash, serverRecord.bundleSha256, currencyHash,
 							 categoryHash, categories, baselines, costHash,
 							 costs, vendors, creatureTemplates,
-							 gameObjectTemplates, creatureSpawns));
+							 gameObjectTemplates, creatureSpawns, spells, spellHash));
             serverRecord.parityFilename = parityPath.filename().string();
 			Require(ContentBuildHash::Calculate(
 						parityPath, serverRecord.paritySha256, error),

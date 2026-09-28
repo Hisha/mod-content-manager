@@ -2,6 +2,7 @@
 #include "ContentBuildPaths.h"
 #include "CurrencyCategoryDbcComposer.h"
 #include "ItemExtendedCostDbc.h"
+#include "SpellDbcComposer.h"
 #include "ServerTableDescriptor.h"
 
 #include "third_party/json/json.hpp"
@@ -165,7 +166,7 @@ ContentPackageValidationResult ContentPackage::Validate() const {
 		 manifest.contains("vendorRows") ||
 		 manifest.contains("creatureTemplates") ||
 		 manifest.contains("gameobjectTemplates") ||
-		 manifest.contains("creatureSpawns"))) {
+		 manifest.contains("creatureSpawns") || manifest.contains("spells"))) {
 		result.error = "serverRows require Schema 2";
 		return result;
 	}
@@ -931,6 +932,32 @@ ContentPackageValidationResult ContentPackage::Validate() const {
 				result.manifest.creatureSpawns.push_back(std::move(row));
 			}
 		}
+		if (manifest.contains("spells")) {
+			if (!manifest["spells"].is_array()) {
+				result.error = "spells must be an array";
+				return result;
+			}
+			for (auto const& d : manifest["spells"]) {
+				static std::set<std::string> const allowed = {"symbol","copyFrom","profile","name","description","auraDescription","iconCopyFromSpell"};
+				if (!d.is_object()) { result.error="Managed spell must be an object"; return result; }
+				for (auto it=d.begin();it!=d.end();++it) if(!allowed.count(it.key())) { result.error="Unsupported managed spell field: "+it.key(); return result; }
+				if(!d.contains("symbol")||!d["symbol"].is_string()||!ValidSymbol(d["symbol"].get<std::string>())||
+				   !symbols.insert(d["symbol"].get<std::string>()).second||!d.contains("copyFrom")||!d["copyFrom"].is_number_unsigned()||
+				   !d["copyFrom"].get<std::uint64_t>()||d["copyFrom"].get<std::uint64_t>()>0xffffffffULL||
+				   !d.contains("profile")||!d["profile"].is_string()||!d.contains("name")||!d["name"].is_object()) {
+					result.error="Managed spell requires unique symbol, stock copyFrom, profile and localized name"; return result;
+				}
+				ContentSpellRow row; row.symbol=d["symbol"].get<std::string>(); row.copyFrom=d["copyFrom"].get<std::uint32_t>(); row.profile=d["profile"].get<std::string>();
+				try {
+					row.names=d["name"].get<std::map<std::string,std::string>>();
+					if(d.contains("description")){if(!d["description"].is_object())throw std::runtime_error("description must be localized object");row.descriptions=d["description"].get<std::map<std::string,std::string>>();}
+					if(d.contains("auraDescription")){if(!d["auraDescription"].is_object())throw std::runtime_error("auraDescription must be localized object");row.auraDescriptions=d["auraDescription"].get<std::map<std::string,std::string>>();}
+					if(d.contains("iconCopyFromSpell")){if(!d["iconCopyFromSpell"].is_number_unsigned()||!d["iconCopyFromSpell"].get<std::uint64_t>()||d["iconCopyFromSpell"].get<std::uint64_t>()>0xffffffffULL)throw std::runtime_error("invalid iconCopyFromSpell");row.iconCopyFromSpell=d["iconCopyFromSpell"].get<std::uint32_t>();}
+					SpellDbcComposer::ValidateDeclaration(row);
+				} catch(std::exception const&e){result.error=e.what();return result;}
+				result.manifest.spells.push_back(std::move(row));
+			}
+		}
 		if (manifest.contains("extendedCosts")) {
 			if (!ValidSymbol(result.manifest.packageKey) ||
 				!manifest["extendedCosts"].is_array()) {
@@ -1119,7 +1146,8 @@ ContentPackageValidationResult ContentPackage::Validate() const {
 			result.manifest.itemRows.empty() &&
 			result.manifest.extendedCosts.empty() &&
 			result.manifest.creatureTemplates.empty() &&
-			result.manifest.gameObjectTemplates.empty()) {
+			result.manifest.gameObjectTemplates.empty() &&
+			result.manifest.spells.empty()) {
 			result.error = "Schema 2 or newer needs content or a typed "
 						   "resource declaration";
 			return result;

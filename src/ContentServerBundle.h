@@ -8,6 +8,7 @@
 #include "CurrencyCategoryDbcComposer.h"
 #include "ContentAllocationRegistry.h"
 #include "ContentManagedServer.h"
+#include "SpellDbcComposer.h"
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -28,7 +29,7 @@ class ContentServerBundle
 {
 public:
     static std::string ServerJson(std::string const& realm, std::vector<ResolvedServerItem> rows, std::vector<ResolvedExtendedCost> costs = {}, std::vector<ResolvedVendorRow> vendors = {},
-        std::vector<ResolvedCreatureTemplate> creatures = {}, std::vector<ResolvedGameObjectTemplate> gameObjects = {}, std::vector<ResolvedCreatureSpawn> spawns = {});
+		std::vector<ResolvedCreatureTemplate> creatures = {}, std::vector<ResolvedGameObjectTemplate> gameObjects = {}, std::vector<ResolvedCreatureSpawn> spawns = {}, std::vector<ResolvedSpell> spells = {});
     static std::string ParityJson(std::string const& realm, std::uint32_t build,
         std::vector<ItemAllocation> const& allocations,
         std::vector<ResolvedServerItem> const& rows, std::string const& baselineSha256,
@@ -37,16 +38,16 @@ public:
         std::string const& categoryDbcSha256 = "", std::vector<ResolvedCurrencyCategory> categories = {},
         std::vector<ContentBaseline> baselines = {}, std::string const& extendedCostDbcSha256 = "",
         std::vector<ResolvedExtendedCost> costs = {}, std::vector<ResolvedVendorRow> vendors = {},
-        std::vector<ResolvedCreatureTemplate> creatures = {}, std::vector<ResolvedGameObjectTemplate> gameObjects = {}, std::vector<ResolvedCreatureSpawn> spawns = {});
+		std::vector<ResolvedCreatureTemplate> creatures = {}, std::vector<ResolvedGameObjectTemplate> gameObjects = {}, std::vector<ResolvedCreatureSpawn> spawns = {}, std::vector<ResolvedSpell> spells = {}, std::string const& spellDbcSha256 = "");
     static bool ParseServer(std::string const& text, std::string const& realm,
         std::vector<ResolvedServerItem>& rows, std::string& error, std::vector<ResolvedExtendedCost>* costs = nullptr, std::vector<ResolvedVendorRow>* vendors = nullptr,
-        std::vector<ResolvedCreatureTemplate>* creatures = nullptr, std::vector<ResolvedGameObjectTemplate>* gameObjects = nullptr, std::vector<ResolvedCreatureSpawn>* spawns = nullptr);
+		std::vector<ResolvedCreatureTemplate>* creatures = nullptr, std::vector<ResolvedGameObjectTemplate>* gameObjects = nullptr, std::vector<ResolvedCreatureSpawn>* spawns = nullptr, std::vector<ResolvedSpell>* spells = nullptr);
     static bool VerifyParity(std::string const& text, std::string const& realm,
         std::uint32_t build, std::string const& baselineSha256, std::string const& clientMpqSha256,
         std::string const& serverSha256, std::vector<ResolvedServerItem> const& rows,
         std::vector<ItemAllocation> const& allocations, std::string& error,
         std::vector<ResolvedExtendedCost> const& costs = {}, std::vector<ResolvedVendorRow> const& vendors = {},
-        std::vector<ResolvedCreatureTemplate> const& creatures = {}, std::vector<ResolvedGameObjectTemplate> const& gameObjects = {}, std::vector<ResolvedCreatureSpawn> const& spawns = {});
+		std::vector<ResolvedCreatureTemplate> const& creatures = {}, std::vector<ResolvedGameObjectTemplate> const& gameObjects = {}, std::vector<ResolvedCreatureSpawn> const& spawns = {}, std::vector<ResolvedSpell> const& spells = {});
     static std::string RowJson(ResolvedServerItem const& row);
     static std::string SqlText(std::string const& value);
     static std::string SqlIdentityText(std::string const& value);
