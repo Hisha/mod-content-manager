@@ -44,6 +44,37 @@ std::vector<ResolvedWorldMap> Ordered(std::vector<ResolvedWorldMap> const& maps)
 }
 }
 
+void WorldMapDbcComposer::AppendRequests(std::string const& packageKey,
+    std::vector<ContentWorldMap> const& maps,
+    std::map<std::string, std::vector<ResourceAllocationRequest>>& out)
+{
+    // Symbols are derived from the manifest position, which is stable for a
+    // fixed EPF and independent of database row order. Each authored row is
+    // requested exactly once: a duplicate request for one row would be a
+    // different symbol claiming an ID the package already holds, which PlanFixed
+    // must keep rejecting rather than silently deduplicate.
+    std::size_t mapIndex = 0;
+    for (auto const& map : maps) {
+        auto const prefix = "worldmap/" + std::to_string(mapIndex) + "/";
+        out["WorldMapTransforms"].push_back({packageKey, prefix + "transform",
+            ResourceKind("WorldMapTransforms"), map.transform.id});
+        for (auto const& area : map.areas) {
+            auto const areaPrefix = prefix + "area/" + std::to_string(area.id) + "/";
+            out["WorldMapArea"].push_back({packageKey, prefix + "area/" +
+                std::to_string(area.id), ResourceKind("WorldMapArea"), area.id});
+            // A DungeonMap row belongs to the area that declares the floor, so
+            // the floor is requested here and nowhere else.
+            for (auto const& floor : area.floors)
+                out["DungeonMap"].push_back({packageKey, areaPrefix + "floor/" +
+                    std::to_string(floor.id), ResourceKind("DungeonMap"), floor.id});
+            for (auto const& chunk : area.chunks)
+                out["DungeonMapChunk"].push_back({packageKey, areaPrefix + "chunk/" +
+                    std::to_string(chunk.id), ResourceKind("DungeonMapChunk"), chunk.id});
+        }
+        ++mapIndex;
+    }
+}
+
 std::string const& WorldMapDbcComposer::VerifiedBaselineSha256(std::string const& table)
 {
     static std::map<std::string, std::string> const pins = {

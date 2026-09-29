@@ -184,46 +184,15 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 		}
 		// World-map rows keep the client-baked identity the stock client already
 		// uses, so each table reserves the exact declared ID instead of searching
-		// for a free one. Symbols are derived from the manifest position, which
-		// is stable for a fixed EPF and independent of database row order.
+		// for a free one. The request set is built by the composer so the build
+		// and the acceptance tests plan exactly the same identities.
 		std::map<std::string, std::vector<ResourceAllocationRequest>> worldMapRequests;
 		std::size_t worldMapCount = 0;
 		for (auto const &source : selected) {
 			auto const& m = source.validation.manifest;
-			std::size_t mapIndex = 0;
-			for (auto const &map : m.worldMaps) {
-				++worldMapCount;
-				auto prefix = "worldmap/" + std::to_string(mapIndex) + "/";
-				for (auto const &area : map.areas)
-					for (auto const &dungeonFloor : area.floors)
-						worldMapRequests["DungeonMap"].push_back(
-							{m.packageKey, prefix + "dungeonmap/" + std::to_string(dungeonFloor.id),
-							 WorldMapDbcComposer::ResourceKind("DungeonMap"), dungeonFloor.id});
-				worldMapRequests["WorldMapTransforms"].push_back(
-					{m.packageKey, prefix + "transform",
-					 WorldMapDbcComposer::ResourceKind("WorldMapTransforms"),
-					 map.transform.id});
-				for (auto const &area : map.areas) {
-					worldMapRequests["WorldMapArea"].push_back(
-						{m.packageKey, prefix + "area/" + std::to_string(area.id),
-						 WorldMapDbcComposer::ResourceKind("WorldMapArea"), area.id});
-					for (auto const &dungeonFloor : area.floors)
-						worldMapRequests["DungeonMap"].push_back(
-							{m.packageKey,
-							 prefix + "area/" + std::to_string(area.id) + "/floor/"
-								+ std::to_string(dungeonFloor.id),
-							 WorldMapDbcComposer::ResourceKind("DungeonMap"),
-							 dungeonFloor.id});
-					for (auto const &chunk : area.chunks)
-						worldMapRequests["DungeonMapChunk"].push_back(
-							{m.packageKey,
-							 prefix + "area/" + std::to_string(area.id) + "/chunk/"
-								+ std::to_string(chunk.id),
-							 WorldMapDbcComposer::ResourceKind("DungeonMapChunk"),
-							 chunk.id});
-				}
-				++mapIndex;
-			}
+			worldMapCount += m.worldMaps.size();
+			WorldMapDbcComposer::AppendRequests(m.packageKey, m.worldMaps,
+				worldMapRequests);
 		}
 		std::map<std::string, bool> composingWorldMap;
 		for (auto const& table : WorldMapDbcTables())

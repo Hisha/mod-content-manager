@@ -162,6 +162,9 @@ std::vector<ItemAllocation> ContentResourceAllocator::PlanFixed(std::string cons
             plan.push_back(std::move(lease));
             continue;
         }
+        // Reached only by a genuinely new identity (the retained-identity case
+        // returned above), so an existing byValue entry with a different symbol
+        // is a request-construction fault, not a concurrent lease.
         auto owner = byValue.find({request.packageKey, request.fixedValue});
         if (owner != byValue.end() && owner->second != request.symbol)
             throw std::runtime_error("Package '" + request.packageKey + "' already owns "

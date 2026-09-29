@@ -1,6 +1,7 @@
 #ifndef CONTENT_WORLD_MAP_DBC_COMPOSER_H
 #define CONTENT_WORLD_MAP_DBC_COMPOSER_H
 #include "ContentPackage.h"
+#include "ContentResourceAllocator.h"
 #include "DbcReader.h"
 #include <cstdint>
 #include <filesystem>
@@ -46,6 +47,15 @@ public:
     // SHA-256 of the verified stock 3.3.5a build-12340 DBC files. The build
     // refuses any other baseline, so a stock row can never be edited in place.
     static std::string const& VerifiedBaselineSha256(std::string const& table);
+    // Appends one fixed-ID lease request per authored row of every world map in
+    // `maps`, keyed by table, in declaration order. This is the single source of
+    // the request set the build service plans, so the planner and its tests
+    // cannot drift apart. A row is requested exactly once: a DungeonMap row is
+    // owned by the area that declares the floor, so its symbol carries the area
+    // and there is never a second, area-less alias competing for the same ID.
+    static void AppendRequests(std::string const& packageKey,
+        std::vector<ContentWorldMap> const& maps,
+        std::map<std::string, std::vector<ResourceAllocationRequest>>& out);
     // Validates the stock baseline dimensions for `table` and returns its row IDs.
     static std::set<std::uint32_t> Inspect(std::string const& table, DbcDocument const& baseline);
     // Contributed row IDs for `table`, in deterministic composition order.

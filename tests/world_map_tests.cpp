@@ -493,6 +493,113 @@ static void AllocationTests()
 	std::cout << "  world-map fixed-ID allocation: PASS\n";
 }
 
+// Regression: the first real build of a world-map package used to fail planning.
+// The build service emitted two requests for every DungeonMap row -- one keyed by
+// the floor alone and one keyed by the area that declares it -- so PlanFixed saw
+// the package claiming its own ID under a second symbol and rejected the build.
+// Planning is exercised here through the composer, which is the same request
+// builder the build service calls, so the two can no longer drift apart.
+static void FirstBuildPlanningTests()
+{
+	auto const fixture = fs::path(__FILE__).parent_path() / "fixtures" / "deadmines";
+	json const authored = json::parse(ReadAll(fixture / "manifest.json"));
+	auto content = BaseManifest();
+	for (auto const &key : {"package", "name", "version"})
+		content[key] = authored.at(key);
+	content["worldMaps"] = authored.at("worldMaps");
+	auto const scratch = fs::temp_directory_path() / "deadmines-planning-test.epf";
+	fs::remove(scratch);
+	Save(scratch, content);
+	auto const validated = ContentPackage(scratch).Validate();
+	if (!validated.valid) std::cerr << "  deadmines manifest rejected: " << validated.error << "\n";
+	assert(validated.valid);
+	auto const &maps = validated.manifest.worldMaps;
+	assert(maps.size() == 1 && maps[0].areas.size() == 1);
+	auto const &area = maps[0].areas[0];
+	assert(area.floors.size() == 2 && area.chunks.size() == 29);
+
+	std::map<std::string, std::vector<ResourceAllocationRequest>> requests;
+	WorldMapDbcComposer::AppendRequests(validated.manifest.packageKey, maps, requests);
+	// Exactly one request per authored row, and no other table is touched.
+	assert(requests.size() == WorldMapDbcTables().size());
+	for (auto const& table : WorldMapDbcTables())
+		assert(requests.count(table));
+	assert(requests.at("DungeonMap").size() == area.floors.size());
+	assert(requests.at("DungeonMapChunk").size() == area.chunks.size());
+	assert(requests.at("WorldMapArea").size() == maps[0].areas.size());
+	assert(requests.at("WorldMapTransforms").size() == maps.size());
+	// A DungeonMap row belongs to the area that declares the floor, so its
+	// symbol carries that area and no area-less alias exists for the same ID.
+	for (auto const& request : requests.at("DungeonMap"))
+		assert(request.symbol.find("dungeonmap/") == std::string::npos);
+	assert(requests.at("DungeonMap")[0].symbol ==
+		"worldmap/0/area/" + std::to_string(area.id) + "/floor/166");
+	// No row ID is claimed twice under two different symbols of one package:
+	// that is exactly what the planner rejects.
+	for (auto const& table : WorldMapDbcTables()) {
+		std::set<std::string> identities;
+		for (auto const& request : requests.at(table)) {
+			assert(request.packageKey == validated.manifest.packageKey);
+			assert(request.resourceKind ==
+				WorldMapDbcComposer::ResourceKind(table));
+			assert(identities.insert(request.packageKey + "/" +
+				std::to_string(request.fixedValue)).second);
+		}
+	}
+
+	// The first build: nothing retained, nothing occupied by another package.
+	for (auto const& table : WorldMapDbcTables()) {
+		auto const kind = WorldMapDbcComposer::ResourceKind(table);
+		auto const plan = ContentResourceAllocator::PlanFixed("realm",
+			ContentResourceAllocator::FixedRowIdPolicy(kind), requests.at(table), {},
+			{}, 1, WorldMapDbcComposer::VerifiedBaselineSha256(table));
+		assert(plan.size() == requests.at(table).size());
+		for (auto const& lease : plan) {
+			assert(lease.value != 0);
+			assert(lease.state == "reserved" && lease.firstBuild == 1);
+			assert(lease.baselineSha256 ==
+				WorldMapDbcComposer::VerifiedBaselineSha256(table));
+		}
+	}
+	// The second build reuses the same leases and adds nothing.
+	for (auto const& table : WorldMapDbcTables()) {
+		auto const kind = WorldMapDbcComposer::ResourceKind(table);
+		auto const first = ContentResourceAllocator::PlanFixed("realm",
+			ContentResourceAllocator::FixedRowIdPolicy(kind), requests.at(table), {},
+			{}, 1, WorldMapDbcComposer::VerifiedBaselineSha256(table));
+		auto const second = ContentResourceAllocator::PlanFixed("realm",
+			ContentResourceAllocator::FixedRowIdPolicy(kind), requests.at(table), first,
+			{}, 2, WorldMapDbcComposer::VerifiedBaselineSha256(table));
+		assert(second.size() == first.size());
+		for (auto i = 0u; i < first.size(); ++i) {
+			assert(second[i].value == first[i].value);
+			assert(second[i].symbol == first[i].symbol);
+			assert(second[i].lastBuild == 2);
+		}
+	}
+	// The area-less alias that caused the failure is still refused, so the fix
+	// removes the duplicate request instead of weakening the collision rule.
+	auto const dungeonMapPolicy = ContentResourceAllocator::FixedRowIdPolicy(
+		WorldMapDbcComposer::ResourceKind("DungeonMap"));
+	auto alias = requests.at("DungeonMap");
+	alias.push_back({validated.manifest.packageKey, "worldmap/0/dungeonmap/166",
+		WorldMapDbcComposer::ResourceKind("DungeonMap"), 166});
+	assert(Throws([&] {
+		(void)ContentResourceAllocator::PlanFixed("realm", dungeonMapPolicy, alias,
+			{}, {}, 1, kHash);
+	}));
+	// The real stock IDs stay rejected for the real request set.
+	auto stock = ContentResourceAllocator::PlanFixed("realm", dungeonMapPolicy,
+		requests.at("DungeonMap"), {}, {}, 1, kHash);
+	for (auto const& lease : stock)
+		assert(Throws([&] {
+			(void)ContentResourceAllocator::PlanFixed("realm", dungeonMapPolicy,
+				{{"other-package", "x", lease.resourceKind, lease.value}}, stock, {}, 2,
+				kHash);
+		}));
+	std::cout << "  world-map first-build planning: PASS\n";
+}
+
 static void PackageTests(fs::path const &scratch)
 {
 	auto const manifest = WorldMapManifest();
@@ -903,6 +1010,7 @@ int main(int argc, char **argv)
 {
 	DescriptorTests();
 	AllocationTests();
+	FirstBuildPlanningTests();
 	auto const scratch = Scratch();
 	auto const stockDirectory = fs::path(argc > 1 && argv[1][0] ? argv[1] : "");
 	if (!stockDirectory.empty() && fs::is_directory(stockDirectory)) {
