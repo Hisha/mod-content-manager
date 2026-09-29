@@ -1,6 +1,7 @@
 #include "ContentServerBundle.h"
 #include "ContentBuildHash.h"
 #include "ServerTableDescriptor.h"
+#include "WorldMapDbcComposer.h"
 #include "third_party/json/json.hpp"
 #include <algorithm>
 #include <array>
@@ -151,6 +152,18 @@ json ResourceObject(ItemAllocation const &allocation,
 				{"allocationPolicyVersion", allocation.policyVersion},
 				{"serverDescriptorVersion",
 				 ContentManagedServer::DescriptorVersion}};
+	for (auto const& table : WorldMapDbcTables())
+		if (allocation.resourceKind == WorldMapDbcComposer::ResourceKind(table))
+			// A native world map row is client-only: the lease plus the composed
+			// file hash is the whole durable record, so there is no server row to
+			// mirror.
+			return {{"package", allocation.packageKey},
+					{"symbol", allocation.symbol},
+					{"resourceKind", allocation.resourceKind},
+					{"value", allocation.value},
+					{"baselineSha256", allocation.baselineSha256},
+					{"allocationPolicyVersion", allocation.policyVersion},
+					{"dbcDescriptorVersion", 1}};
 	if (allocation.resourceKind != "item.id")
 		throw std::runtime_error("Unknown parity resource");
     auto found = std::find_if(rows.begin(), rows.end(), [&](auto const& row) {
@@ -280,8 +293,9 @@ std::string ContentServerBundle::ParityJson(
 	std::vector<ResolvedCreatureTemplate> creatures,
 	std::vector<ResolvedGameObjectTemplate> gameObjects,
 	std::vector<ResolvedCreatureSpawn> spawns,
-	std::vector<ResolvedSpell> spells, std::string const& spellDbcSha256,
-	bool validateCurrentSpellPolicy) {
+    std::vector<ResolvedSpell> spells, std::string const& spellDbcSha256,
+	bool validateCurrentSpellPolicy,
+	std::map<std::string, std::string> const& worldMapDbcSha256) {
     auto sorted = allocations;
     std::sort(sorted.begin(), sorted.end(), [](auto const& a, auto const& b) {
 		return std::tie(a.packageKey, a.symbol) <
@@ -372,6 +386,18 @@ std::string ContentServerBundle::ParityJson(
 		if (!ContentBuildHash::Valid(spellDbcSha256)) throw std::runtime_error("Invalid composed Spell.dbc hash");
 		artifact["format"] = 7; artifact["spellDbcSha256"] = spellDbcSha256;
 		artifact["spells"] = SpellObjects(spells,validateCurrentSpellPolicy);
+	}
+	if (!worldMapDbcSha256.empty()) {
+		// A native world map is a client-only contribution, so its only durable
+		// record is the lease plus the composed file hash. Recording both keeps a
+		// rebuild or reinstall auditable without a world-database row.
+		artifact["format"] = 8;
+		artifact["worldMapDbcSha256"] = json::object();
+		for (auto const& entry : worldMapDbcSha256) {
+			if (!ContentBuildHash::Valid(entry.second))
+				throw std::runtime_error("Invalid composed " + entry.first + ".dbc hash");
+			artifact["worldMapDbcSha256"][entry.first] = entry.second;
+		}
 	}
     return artifact.dump(2) + "\n";
 }
@@ -585,8 +611,9 @@ bool ContentServerBundle::VerifyParity(
 	std::vector<ResolvedVendorRow> const &vendors,
 	std::vector<ResolvedCreatureTemplate> const &creatures,
 	std::vector<ResolvedGameObjectTemplate> const &gameObjects,
-	std::vector<ResolvedCreatureSpawn> const &spawns,
-	std::vector<ResolvedSpell> const &spells) {
+        std::vector<ResolvedCreatureSpawn> const &spawns,
+	std::vector<ResolvedSpell> const &spells,
+	std::map<std::string, std::string> const &expectedWorldMapDbcSha256) {
 	try {
         auto actual = json::parse(text);
 		auto spellSha=actual.value("spellDbcSha256",std::string());
@@ -751,8 +778,7 @@ bool ContentServerBundle::VerifyParity(
 					"Creature spawn template relationship is unresolved");
 		}
 		for (auto const &a : allocations)
-			if ((a.resourceKind == "creature-template.id" &&
-				 std::none_of(creatures.begin(), creatures.end(),
+			if ((a.resourceKind == "creature-template.id" &&				 std::none_of(creatures.begin(), creatures.end(),
 							  [&](auto const &r) {
 								  return r.packageKey == a.packageKey &&
 										 r.symbol == a.symbol &&
@@ -771,6 +797,47 @@ bool ContentServerBundle::VerifyParity(
 							r.symbol == a.symbol && r.guid == a.value;
 				 })))
 				throw std::runtime_error("Orphan managed server allocation");
+        // A native world map is client-only. Its durable record is exactly the
+        // lease plus the composed file hash, so every world-map lease must be
+        // covered by a recorded hash for its own table and vice versa.
+        std::map<std::string, std::string> worldMapHashes;
+        {
+            std::map<std::string, std::string> kinds;
+            for (auto const& table : WorldMapDbcTables())
+                kinds.emplace(table, WorldMapDbcComposer::ResourceKind(table));
+            std::map<std::string, std::set<std::string>> leases;
+            for (auto const &a : allocations)
+                for (auto const &entry : kinds)
+                    if (a.resourceKind == entry.second)
+                        leases[entry.first].insert(a.packageKey + "/" + a.symbol);
+            std::set<std::string> tableOf;
+            for (auto const &entry : kinds) tableOf.insert(entry.second);
+            for (auto const &a : allocations)
+                if (tableOf.count(a.resourceKind) &&
+                    !ContentBuildHash::Valid(a.baselineSha256))
+                    throw std::runtime_error(
+                        "World-map lease has no valid baseline provenance");
+            if (actual.contains("worldMapDbcSha256")) {
+                if (!actual.at("worldMapDbcSha256").is_object())
+                    throw std::runtime_error("Invalid worldMapDbcSha256");
+                for (auto it = actual.at("worldMapDbcSha256").begin();
+                     it != actual.at("worldMapDbcSha256").end(); ++it) {
+                    if (!kinds.count(it.key()))
+                        throw std::runtime_error("Unknown world-map table hash: " + it.key());
+                    auto hash = it.value().get<std::string>();
+                    if (!ContentBuildHash::Valid(hash))
+                        throw std::runtime_error("Invalid world-map table hash: " + it.key());
+                    worldMapHashes[it.key()] = hash;
+                }
+            }
+            for (auto const &entry : kinds)
+                if (leases.count(entry.first) != worldMapHashes.count(entry.first))
+                    throw std::runtime_error(
+                        "World-map lease/hash coverage mismatch for " + entry.first);
+            if (worldMapHashes != expectedWorldMapDbcSha256)
+                throw std::runtime_error(
+                    "World-map composed hash set mismatch");
+        }
         std::vector<ContentBaseline> baselines;
 		if (actual.contains("baselines")) {
             std::set<std::string> tables;
@@ -799,11 +866,30 @@ bool ContentServerBundle::VerifyParity(
 			if (!costs.empty())
 				expected.insert("ItemExtendedCost");
 			if (!spells.empty()) expected.insert("Spell");
+			for (auto const &entry : worldMapHashes)
+				expected.insert(entry.first);
 			if (tables != expected)
 				throw std::runtime_error("Baseline snapshot set mismatch");
 			if(!spells.empty()){
 				auto baseline=std::find_if(baselines.begin(),baselines.end(),[](auto const&b){return b.table=="Spell";});
 				if(baseline==baselines.end()||std::any_of(allocations.begin(),allocations.end(),[&](auto const&a){return a.resourceKind=="spell.id"&&a.baselineSha256!=baseline->hash;}))throw std::runtime_error("Spell lease/baseline provenance mismatch");
+			}
+			// Every world-map lease must be pinned to the accepted snapshot of the
+			// one table it belongs to, so a re-registered baseline can never be
+			// reused silently.
+			for (auto const &table : WorldMapDbcTables()) {
+				auto const &kind = WorldMapDbcComposer::ResourceKind(table);
+				auto baseline = std::find_if(
+					baselines.begin(), baselines.end(),
+					[&](auto const &b) { return b.table == table; });
+				if (std::any_of(allocations.begin(), allocations.end(),
+						[&](auto const &a) {
+							return a.resourceKind == kind &&
+								   (baseline == baselines.end() ||
+									a.baselineSha256 != baseline->hash);
+						}))
+					throw std::runtime_error(
+						"World-map lease/baseline provenance mismatch for " + table);
 			}
 		}
 		if ((!rows.empty() && !ContentBuildHash::Valid(itemSha)) ||
@@ -813,7 +899,7 @@ bool ContentServerBundle::VerifyParity(
 						  itemSha, clientMpqSha256, serverSha256, currencySha,
 						  categorySha, categories, baselines, costSha, costs,
 						  vendors, creatures, gameObjects, spawns, spells, spellSha,
-						  false)))
+						  false, worldMapHashes)))
 			throw std::runtime_error("manifest values differ from build, "
 									 "allocation, or server bundle");
         return true;

@@ -304,7 +304,13 @@ public:
         }
         if (!IsKnownDbcTable(table))
         {
-            handler->PSendSysMessage("Unsupported DBC table '{}'. Registered tables: Item, CurrencyTypes, CurrencyCategory, ItemExtendedCost, Spell.", table);
+            static std::string registered;
+            if (registered.empty())
+                for (auto const& candidate : {"Item", "CurrencyTypes", "CurrencyCategory",
+                             "ItemExtendedCost", "Spell", "DungeonMap", "DungeonMapChunk",
+                             "WorldMapArea", "WorldMapTransforms"})
+                    registered += (registered.empty() ? "" : ", ") + std::string(candidate);
+            handler->PSendSysMessage("Unsupported DBC table '{}'. Registered tables: {}.", table, registered);
             return true;
         }
         auto build = sContentManager.GetClientBuild();

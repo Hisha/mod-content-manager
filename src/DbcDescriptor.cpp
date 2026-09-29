@@ -73,6 +73,65 @@ DbcDescriptor const currency12340 = {
         {"BitIndex", DbcFieldType::Int32, false, nullptr, "currency.known-bit"}
     }
 };
+// Pre-Cataclysm dungeon map layouts measured from the stock 3.3.5a build 12340
+// client. These tables are not read by the worldserver; they are composed into
+// the client MPQ only. Field names follow the stock client layout. Fields whose
+// meaning is not proven by the repository or a build-12340 source keep neutral
+// "fieldN" names and are never given invented semantics.
+DbcDescriptor const dungeonMap12340 = {
+    12340, "DungeonMap", 1, "DBFilesClient/DungeonMap.dbc", "DungeonMap.dbc",
+    {
+        {"ID", DbcFieldType::UInt32, true, nullptr, "worldmap.dungeon-map.id"},
+        {"MapID", DbcFieldType::UInt32},
+        {"Floor", DbcFieldType::UInt32},
+        {"field3", DbcFieldType::Float32},
+        {"field4", DbcFieldType::Float32},
+        {"field5", DbcFieldType::Float32},
+        {"field6", DbcFieldType::Float32},
+        {"field7", DbcFieldType::UInt32}
+    }
+};
+DbcDescriptor const dungeonMapChunk12340 = {
+    12340, "DungeonMapChunk", 1, "DBFilesClient/DungeonMapChunk.dbc", "DungeonMapChunk.dbc",
+    {
+        {"ID", DbcFieldType::UInt32, true, nullptr, "worldmap.dungeon-map-chunk.id"},
+        {"MapID", DbcFieldType::UInt32},
+        {"field2", DbcFieldType::UInt32},
+        {"DungeonMapID", DbcFieldType::UInt32},
+        {"field4", DbcFieldType::Float32}
+    }
+};
+DbcDescriptor const worldMapArea12340 = {
+    12340, "WorldMapArea", 1, "DBFilesClient/WorldMapArea.dbc", "WorldMapArea.dbc",
+    {
+        {"ID", DbcFieldType::UInt32, true, nullptr, "worldmap.world-map-area.id"},
+        {"map_id", DbcFieldType::UInt32},
+        {"area_id", DbcFieldType::UInt32},
+        {"internal_name", DbcFieldType::StringOffset},
+        {"y1", DbcFieldType::Float32},
+        {"y2", DbcFieldType::Float32},
+        {"x1", DbcFieldType::Float32},
+        {"x2", DbcFieldType::Float32},
+        {"virtual_map_id", DbcFieldType::Int32},
+        {"dungeonMap_id", DbcFieldType::Int32},
+        {"parentMapID", DbcFieldType::UInt32}
+    }
+};
+DbcDescriptor const worldMapTransforms12340 = {
+    12340, "WorldMapTransforms", 1, "DBFilesClient/WorldMapTransforms.dbc", "WorldMapTransforms.dbc",
+    {
+        {"ID", DbcFieldType::UInt32, true, nullptr, "worldmap.world-map-transforms.id"},
+        {"MapID", DbcFieldType::UInt32},
+        {"RegionBottom", DbcFieldType::Float32},
+        {"RegionRight", DbcFieldType::Float32},
+        {"RegionTop", DbcFieldType::Float32},
+        {"RegionLeft", DbcFieldType::Float32},
+        {"NewMapID", DbcFieldType::UInt32},
+        {"RegionOffset_X", DbcFieldType::Float32},
+        {"RegionOffset_Y", DbcFieldType::Float32},
+        {"NewDungeonMapID", DbcFieldType::UInt32}
+    }
+};
 DbcDescriptor const category12340 = {
     12340, "CurrencyCategory", 1, "DBFilesClient/CurrencyCategory.dbc", "CurrencyCategory.dbc",
     {
@@ -99,10 +158,21 @@ DbcDescriptor const* FindDbcDescriptor(std::uint32_t clientBuild, std::string co
     if (tableName == "CurrencyTypes") return &currency12340;
     if (tableName == "CurrencyCategory") return &category12340;
     if (tableName == "Spell") return &spell12340;
+    if (tableName == "DungeonMap") return &dungeonMap12340;
+    if (tableName == "DungeonMapChunk") return &dungeonMapChunk12340;
+    if (tableName == "WorldMapArea") return &worldMapArea12340;
+    if (tableName == "WorldMapTransforms") return &worldMapTransforms12340;
     return nullptr;
 }
 
 bool IsKnownDbcTable(std::string const& tableName)
 {
-    return tableName == "ItemExtendedCost" || tableName == "Item" || tableName == "CurrencyTypes" || tableName == "CurrencyCategory" || tableName == "Spell";
+    return FindDbcDescriptor(12340, tableName) != nullptr;
+}
+
+std::vector<std::string> const& WorldMapDbcTables()
+{
+    static std::vector<std::string> const tables = {"DungeonMap", "DungeonMapChunk",
+        "WorldMapArea", "WorldMapTransforms"};
+    return tables;
 }

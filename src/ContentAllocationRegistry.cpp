@@ -7,6 +7,7 @@
 #include "ContentManagedServer.h"
 #include "ContentServerOwnership.h"
 #include "ContentSpellServer.h"
+#include "WorldMapDbcComposer.h"
 #include "DatabaseEnv.h"
 #include "Field.h"
 #include "QueryResult.h"
@@ -160,8 +161,13 @@ bool ContentAllocationRegistry::CommitComposed(
 	if (!Read(build.realmName, before, error))
 		return false;
     std::set<std::uint32_t> occupied;
-	for (auto const &row : plan) {
-		if (row.realm != build.realmName ||
+    // World-map kinds are derived from the composer so a new native world-map
+    // table can never be allocated for without also being composable.
+    std::set<std::string> worldMapKinds;
+    for (auto const& table : WorldMapDbcTables())
+        worldMapKinds.insert(WorldMapDbcComposer::ResourceKind(table));
+    for (auto const &row : plan) {
+        if (row.realm != build.realmName ||
 			(row.resourceKind != "item.id" &&
 			 row.resourceKind != "currency.known-bit" &&
 			 row.resourceKind != "currency-category.id" &&
@@ -169,7 +175,8 @@ bool ContentAllocationRegistry::CommitComposed(
 			 row.resourceKind != "creature-template.id" &&
 			 row.resourceKind != "gameobject-template.id" &&
 			 row.resourceKind != "creature-spawn.guid" &&
-			 row.resourceKind != "spell.id") ||
+			 row.resourceKind != "spell.id" &&
+			 !worldMapKinds.count(row.resourceKind)) ||
 			row.policyVersion != 1 || !row.value ||
 			!ContentBuildHash::Valid(row.baselineSha256)) {
 			error = "Invalid allocation plan";

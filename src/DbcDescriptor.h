@@ -30,4 +30,9 @@ struct DbcDescriptor
 DbcDescriptor const* FindDbcDescriptor(std::uint32_t clientBuild, std::string const& tableName);
 bool IsKnownDbcTable(std::string const& tableName);
 
+// Build-12340 client-only world-map tables, in deterministic composition order.
+// These have no worldserver counterpart; a package contributes rows and the
+// composed tables are written into the client MPQ only.
+std::vector<std::string> const& WorldMapDbcTables();
+
 #endif

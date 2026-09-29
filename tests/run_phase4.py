@@ -10,6 +10,12 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--currency-dbc', type=Path)
 parser.add_argument('--hunts-epf', type=Path)
 parser.add_argument('--extended-cost-dbc', type=Path)
+parser.add_argument('--world-map-baseline-dir', type=Path,
+                    help='Directory holding the verified stock 3.3.5a build-12340 world-map DBCs.')
+parser.add_argument('--world-map-golden-dir', type=Path,
+                    help='Directory holding the expected composed world-map DBCs.')
+parser.add_argument('--world-map-artwork', type=Path,
+                    help='Interface directory holding world-map .blp artwork.')
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 compiler = os.environ.get('CXX', 'g++')
@@ -60,6 +66,10 @@ tests['managed_server'] = ['ContentResourceAllocator', 'ContentPackage', 'Conten
                            'ContentManagedServerDescriptor', 'ServerTableDescriptor', 'CurrencyCategoryDbcComposer',
                            'CurrencyDbcComposer', 'ItemExtendedCostDbc', 'DbcReader', 'DbcDescriptor']
 tests['spell'] = ['SpellDbcComposer','ContentResourceAllocator','DbcReader','DbcDescriptor']
+tests['world_map'] = ['WorldMapDbcComposer', 'ContentResourceAllocator', 'ContentPackage',
+                      'ContentServerBundle', 'ContentVendorRow', 'ContentManagedServerDescriptor',
+                      'ServerTableDescriptor', 'CurrencyCategoryDbcComposer', 'CurrencyDbcComposer',
+                      'ItemExtendedCostDbc', 'DbcReader', 'DbcDescriptor', 'SpellDbcComposer']
 for name in ['server_bundle','schema2','schema3','extended_cost','managed_server','currency']:
     if 'SpellDbcComposer' not in tests[name]: tests[name].append('SpellDbcComposer')
 with tempfile.TemporaryDirectory(prefix='content-phase4-tests-') as directory:
@@ -68,7 +78,7 @@ with tempfile.TemporaryDirectory(prefix='content-phase4-tests-') as directory:
         command = [compiler, '-std=c++17', '-O0', '-g', '-I' + str(root / 'src'),
                    str(root / 'tests' / (name + '_tests.cpp'))]
         command += [str(root / 'src' / (unit + '.cpp')) for unit in units]
-        if name in ['schema2','schema3','extended_cost','managed_server']:
+        if name in ['schema2','schema3','extended_cost','managed_server','world_map']:
             command.append(str(root / 'src/third_party/miniz/miniz.c'))
         subprocess.run(command + ['-o', str(binary)], check=True)
         inputs = []
@@ -80,5 +90,9 @@ with tempfile.TemporaryDirectory(prefix='content-phase4-tests-') as directory:
             inputs.append(str(args.extended_cost_dbc.resolve()))
         if name == 'spell':
             inputs.append(str((root / 'reference/dbc/Spell.dbc').resolve()))
+        if name == 'world_map':
+            for option in [args.world_map_baseline_dir, args.world_map_golden_dir,
+                           args.world_map_artwork]:
+                if option: inputs.append(str(option.resolve()))
         subprocess.run([str(binary), *inputs], check=True)
         print(name + ': PASS', flush=True)

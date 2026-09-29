@@ -153,19 +153,104 @@ struct ContentCreatureSpawn {
 };
 
 struct ContentSpellRow {
-	std::string symbol;
-	std::uint32_t copyFrom = 0;
-	std::uint32_t iconCopyFromSpell = 0;
-	std::string profile;
-	std::map<std::string, std::string> names;
-	std::map<std::string, std::string> descriptions;
-	std::map<std::string, std::string> auraDescriptions;
-	bool operator==(ContentSpellRow const &o) const {
-		return symbol == o.symbol && copyFrom == o.copyFrom &&
-			   iconCopyFromSpell == o.iconCopyFromSpell && profile == o.profile &&
-			   names == o.names && descriptions == o.descriptions &&
-			   auraDescriptions == o.auraDescriptions;
-	}
+    std::string symbol;
+    std::uint32_t copyFrom = 0;
+    std::uint32_t iconCopyFromSpell = 0;
+    std::string profile;
+    std::map<std::string, std::string> names;
+    std::map<std::string, std::string> descriptions;
+    std::map<std::string, std::string> auraDescriptions;
+    bool operator==(ContentSpellRow const &o) const {
+        return symbol == o.symbol && copyFrom == o.copyFrom &&
+               iconCopyFromSpell == o.iconCopyFromSpell && profile == o.profile &&
+               names == o.names && descriptions == o.descriptions &&
+               auraDescriptions == o.auraDescriptions;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Native client world-map contribution (build 12340).
+//
+// A stock 3.3.5a dungeon map is identified by client-baked IDs. A package
+// therefore declares the exact IDs it owns instead of asking the allocator for
+// them; row ownership is deterministic and keyed by "DBC table + row ID". The
+// worldserver never reads these tables. Only the client MPQ is composed.
+//
+// Fields the repository cannot prove keep neutral fieldN names; no semantics
+// are invented for them.
+// ---------------------------------------------------------------------------
+
+// One DungeonMap.dbc row: a drawable floor of a dungeon map.
+struct ContentDungeonMapFloor {
+    std::uint32_t id = 0;    // DungeonMap.ID
+    std::uint32_t floor = 0; // DungeonMap.Floor
+    float field3 = 0, field4 = 0, field5 = 0, field6 = 0;
+    std::uint32_t field7 = 0;
+    bool operator==(ContentDungeonMapFloor const &o) const {
+        return id == o.id && floor == o.floor && field3 == o.field3 &&
+               field4 == o.field4 && field5 == o.field5 && field6 == o.field6 &&
+               field7 == o.field7;
+    }
+};
+
+// One DungeonMapChunk.dbc row. DungeonMapChunk.ID is unrelated to the WDL tile
+// numbering and is never assumed to map one-to-one onto BLP artwork.
+struct ContentDungeonMapChunk {
+    std::uint32_t id = 0;           // DungeonMapChunk.ID
+    std::uint32_t field2 = 0;       // DungeonMapChunk.field2
+    std::uint32_t dungeonMapId = 0; // DungeonMapChunk.DungeonMapID
+    float field4 = 0;               // DungeonMapChunk.field4
+    bool operator==(ContentDungeonMapChunk const &o) const {
+        return id == o.id && field2 == o.field2 &&
+               dungeonMapId == o.dungeonMapId && field4 == o.field4;
+    }
+};
+
+// One WorldMapArea.dbc row plus the floors and chunks of that area.
+struct ContentWorldMapArea {
+    std::uint32_t id = 0;     // WorldMapArea.ID
+    std::uint32_t areaId = 0; // WorldMapArea.area_id
+    std::string internalName; // WorldMapArea.internal_name
+    float y1 = 0, y2 = 0, x1 = 0, x2 = 0;
+    std::int32_t virtualMapId = -1;
+    std::int32_t dungeonMapId = 0;
+    std::uint32_t parentMapId = 0;
+    std::vector<ContentDungeonMapFloor> floors;
+    std::vector<ContentDungeonMapChunk> chunks;
+    bool operator==(ContentWorldMapArea const &o) const {
+        return id == o.id && areaId == o.areaId &&
+               internalName == o.internalName && y1 == o.y1 && y2 == o.y2 &&
+               x1 == o.x1 && x2 == o.x2 && virtualMapId == o.virtualMapId &&
+               dungeonMapId == o.dungeonMapId && parentMapId == o.parentMapId &&
+               floors == o.floors && chunks == o.chunks;
+    }
+};
+
+// One WorldMapTransforms.dbc row.
+struct ContentWorldMapTransform {
+    std::uint32_t id = 0; // WorldMapTransforms.ID
+    float regionBottom = 0, regionRight = 0, regionTop = 0, regionLeft = 0;
+    std::uint32_t newMapId = 0;
+    float regionOffsetX = 0, regionOffsetY = 0;
+    std::uint32_t newDungeonMapId = 0;
+    bool operator==(ContentWorldMapTransform const &o) const {
+        return id == o.id && regionBottom == o.regionBottom &&
+               regionRight == o.regionRight && regionTop == o.regionTop &&
+               regionLeft == o.regionLeft && newMapId == o.newMapId &&
+               regionOffsetX == o.regionOffsetX &&
+               regionOffsetY == o.regionOffsetY &&
+               newDungeonMapId == o.newDungeonMapId;
+    }
+};
+
+// One MapID contribution. `mapId` is written to every owned row's MapID/map_id.
+struct ContentWorldMap {
+    std::uint32_t mapId = 0;
+    ContentWorldMapTransform transform;
+    std::vector<ContentWorldMapArea> areas;
+    bool operator==(ContentWorldMap const &o) const {
+        return mapId == o.mapId && transform == o.transform && areas == o.areas;
+    }
 };
 
 struct ContentPackageManifest {
@@ -189,6 +274,7 @@ struct ContentPackageManifest {
 	std::vector<ContentGameObjectTemplate> gameObjectTemplates;
 	std::vector<ContentCreatureSpawn> creatureSpawns;
 	std::vector<ContentSpellRow> spells;
+	std::vector<ContentWorldMap> worldMaps;
 };
 
 struct ContentPackageStageResult {

@@ -100,3 +100,85 @@ std::vector<ItemAllocation> ContentResourceAllocator::Plan(std::string const& re
     }
     return plan;
 }
+
+std::vector<ItemAllocation> ContentResourceAllocator::PlanFixed(std::string const& realm,
+    ResourceAllocationPolicy const& policy, std::vector<ResourceAllocationRequest> const& requests,
+    std::vector<ItemAllocation> const& retained, std::set<std::uint32_t> const& occupiedExternal,
+    std::uint32_t build, std::string const& hash, std::set<std::string> const& acceptedHistory)
+{
+    if (policy.resourceKind.empty() || !policy.version || !policy.firstCandidate
+        || policy.lastCandidate < policy.firstCandidate)
+        throw std::runtime_error("Invalid resource allocation policy");
+    std::set<std::uint32_t> occupied = occupiedExternal;
+    std::map<std::tuple<std::string, std::string, std::string>, ItemAllocation> byIdentity;
+    std::map<std::pair<std::string, std::uint32_t>, std::string> byValue;
+    for (auto const& lease : retained)
+    {
+        if (lease.resourceKind != policy.resourceKind) continue;
+        if (lease.realm != realm)
+            throw std::runtime_error("Retained allocation scope does not match resource policy");
+        if (lease.value < policy.firstCandidate || lease.value > policy.lastCandidate)
+            throw std::runtime_error("Retained allocation outside resource bounds");
+        if (!byIdentity.emplace(std::make_tuple(lease.packageKey, lease.symbol, lease.resourceKind), lease).second)
+            throw std::runtime_error("Duplicate retained resource allocation identity");
+        // Removed and retired leases remain occupied, exactly as for allocated
+        // identities: a retired row ID is never silently handed to another owner.
+        if (!byValue.emplace(std::make_pair(lease.packageKey, lease.value), lease.symbol).second)
+            throw std::runtime_error("Duplicate retained resource value");
+        occupied.insert(lease.value);
+    }
+    auto sorted = requests;
+    std::sort(sorted.begin(), sorted.end(), [](auto const& a, auto const& b) {
+        return std::tie(a.packageKey, a.symbol, a.resourceKind)
+            < std::tie(b.packageKey, b.symbol, b.resourceKind);
+    });
+    std::vector<ItemAllocation> plan;
+    for (auto const& request : sorted)
+    {
+        if (request.resourceKind != policy.resourceKind)
+            throw std::runtime_error("Request resource kind does not match allocation policy");
+        if (!plan.empty() && plan.back().packageKey == request.packageKey
+            && plan.back().symbol == request.symbol && plan.back().resourceKind == request.resourceKind)
+            throw std::runtime_error("Duplicate resource allocation request: " + request.packageKey + "/" + request.symbol);
+        if (!request.fixedValue || request.fixedValue < policy.firstCandidate
+            || request.fixedValue > policy.lastCandidate)
+            throw std::runtime_error("Declared " + policy.resourceKind + " row ID is out of bounds: "
+                + std::to_string(request.fixedValue));
+        auto existing = byIdentity.find({request.packageKey, request.symbol, policy.resourceKind});
+        if (existing != byIdentity.end())
+        {
+            auto lease = existing->second;
+            if (lease.value != request.fixedValue)
+                throw std::runtime_error("Retained " + policy.resourceKind + " row ID disagrees with the declared ID: "
+                    + request.packageKey + "/" + request.symbol);
+            if (lease.baselineSha256 != hash && !acceptedHistory.count(lease.baselineSha256))
+                throw std::runtime_error("Retained allocation was pinned to a different baseline; review migration before reuse");
+            if (lease.policyVersion != policy.version)
+                throw std::runtime_error("Retained allocation uses another resource policy version; review migration before reuse");
+            if (occupiedExternal.count(lease.value))
+                throw std::runtime_error("Retained " + policy.resourceKind + " row ID is now externally occupied: "
+                    + std::to_string(lease.value));
+            lease.lastBuild = build;
+            plan.push_back(std::move(lease));
+            continue;
+        }
+        auto owner = byValue.find({request.packageKey, request.fixedValue});
+        if (owner != byValue.end() && owner->second != request.symbol)
+            throw std::runtime_error("Package '" + request.packageKey + "' already owns "
+                + policy.resourceKind + " row ID " + std::to_string(request.fixedValue)
+                + " as '" + owner->second + "'");
+        if (occupiedExternal.count(request.fixedValue))
+            throw std::runtime_error(policy.resourceKind + " row ID " + std::to_string(request.fixedValue)
+                + " is already present in the verified stock baseline");
+        if (!occupied.insert(request.fixedValue).second)
+            throw std::runtime_error(policy.resourceKind + " row ID " + std::to_string(request.fixedValue)
+                + " is already owned by another package or earlier request in this build");
+        byValue.emplace(std::make_pair(request.packageKey, request.fixedValue), request.symbol);
+        ItemAllocation lease{realm, request.packageKey, request.symbol, request.fixedValue,
+            "reserved", build, build, hash};
+        lease.resourceKind = request.resourceKind;
+        lease.policyVersion = policy.version;
+        plan.push_back(std::move(lease));
+    }
+    return plan;
+}

@@ -546,3 +546,33 @@ The logic lives in the header-only `src/ContentClientRequirement.h`
 unchanged: it inspects runtime/native-content capabilities, while Schema 3
 requirements are an immutable build property. See
 [tests/PHASE4_TESTS.md](tests/PHASE4_TESTS.md) for the parser and MySQL harnesses.
+
+## Native world map DBCs (Deadmines and other pre-Cataclysm instances)
+
+Schema 2 and 3 packages may declare `worldMaps[]`, which lets a mod define an instance's
+pre-Cataclysm map geometry and floor layout. This is required, not cosmetic: the client reads
+instance placement only from `DungeonMap.dbc`, `DungeonMapChunk.dbc`, `WorldMapArea.dbc` and
+`WorldMapTransforms.dbc`, so creatures, objects or spawns alone do not make an instance visible
+on the world map or in the instance map. Build 12340 only.
+
+Every contributed row keeps an author-declared ID leased durably per table, because the client bakes
+map geometry: reassigning an ID would silently repaint an existing map. Composition is therefore
+strictly append-only — the verified stock rows and the stock string block are preserved byte for
+byte, `WorldMapArea` string offsets are appended (offset 0 stays the empty string so no existing
+offset can move), and package rows follow in a deterministic package-key then declaration order.
+Declared IDs that collide with stock or another package's lease are rejected, and composed bytes are
+reparsed and verified before the build is accepted.
+
+The tables are client-only, so they add no managed server rows; they are recorded in parity artifact
+format 8 as `worldMapDbcSha256` with lease-to-baseline provenance. Stock baselines are registered
+through the same generic baseline registry as the other phases, so no world-map-specific SHA setting
+is required.
+
+`tests/fixtures/deadmines/manifest.json` is the proven minimal Deadmines contribution (map 36,
+transform 11, area 756/1581, floors 166/167, 29 chunks, 24 client BLP tiles). Composing it over the
+stock baselines reproduces the verified patch byte for byte, including the appended
+`"TheDeadmines\0"` at string offset 1303.
+
+See [native world map DBC guide](docs/WORLD_MAP_DBC.md) for the exact field layouts, the JSON shape,
+ownership rules, the deterministic EPF assembly script, and the focused test command. No consumer
+EPF, stock baseline DBC, generated MPQ, AzerothCore change, or client addon is included.

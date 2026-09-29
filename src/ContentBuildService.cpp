@@ -23,6 +23,7 @@
 #include "ItemDbcComposer.h"
 #include "MpqBuilder.h"
 #include "SpellDbcComposer.h"
+#include "WorldMapDbcComposer.h"
 
 #include <algorithm>
 #include <fstream>
@@ -181,6 +182,59 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 			for (auto const &row : m.spells)
 				spellRequests.push_back({m.packageKey,row.symbol,"spell.id"});
 		}
+		// World-map rows keep the client-baked identity the stock client already
+		// uses, so each table reserves the exact declared ID instead of searching
+		// for a free one. Symbols are derived from the manifest position, which
+		// is stable for a fixed EPF and independent of database row order.
+		std::map<std::string, std::vector<ResourceAllocationRequest>> worldMapRequests;
+		std::size_t worldMapCount = 0;
+		for (auto const &source : selected) {
+			auto const& m = source.validation.manifest;
+			std::size_t mapIndex = 0;
+			for (auto const &map : m.worldMaps) {
+				++worldMapCount;
+				auto prefix = "worldmap/" + std::to_string(mapIndex) + "/";
+				for (auto const &area : map.areas)
+					for (auto const &dungeonFloor : area.floors)
+						worldMapRequests["DungeonMap"].push_back(
+							{m.packageKey, prefix + "dungeonmap/" + std::to_string(dungeonFloor.id),
+							 WorldMapDbcComposer::ResourceKind("DungeonMap"), dungeonFloor.id});
+				worldMapRequests["WorldMapTransforms"].push_back(
+					{m.packageKey, prefix + "transform",
+					 WorldMapDbcComposer::ResourceKind("WorldMapTransforms"),
+					 map.transform.id});
+				for (auto const &area : map.areas) {
+					worldMapRequests["WorldMapArea"].push_back(
+						{m.packageKey, prefix + "area/" + std::to_string(area.id),
+						 WorldMapDbcComposer::ResourceKind("WorldMapArea"), area.id});
+					for (auto const &dungeonFloor : area.floors)
+						worldMapRequests["DungeonMap"].push_back(
+							{m.packageKey,
+							 prefix + "area/" + std::to_string(area.id) + "/floor/"
+								+ std::to_string(dungeonFloor.id),
+							 WorldMapDbcComposer::ResourceKind("DungeonMap"),
+							 dungeonFloor.id});
+					for (auto const &chunk : area.chunks)
+						worldMapRequests["DungeonMapChunk"].push_back(
+							{m.packageKey,
+							 prefix + "area/" + std::to_string(area.id) + "/chunk/"
+								+ std::to_string(chunk.id),
+							 WorldMapDbcComposer::ResourceKind("DungeonMapChunk"),
+							 chunk.id});
+				}
+				++mapIndex;
+			}
+		}
+		std::map<std::string, bool> composingWorldMap;
+		for (auto const& table : WorldMapDbcTables())
+			composingWorldMap[table] = worldMapRequests[table].empty() ? false : true;
+		for (auto const &entry : worldMapRequests)
+			if (composingWorldMap[entry.first]) {
+				auto key = Fold("DBFilesClient/" + entry.first + ".dbc");
+				Require(!owners.count(key),
+						"Raw " + entry.first + ".dbc conflicts with semantic composition");
+				owners.emplace(key, "world-map composer");
+			}
 		bool composingSpell=!spellRequests.empty();
 		if(composingSpell){auto key=Fold("DBFilesClient/Spell.dbc");Require(!owners.count(key),"Raw Spell.dbc conflicts with semantic composition");owners.emplace(key,"Spell composer");}
         bool composingCost = !costRequests.empty();
@@ -338,6 +392,58 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 			allocationPlan.insert(allocationPlan.end(),plan.begin(),plan.end());
 			for(auto const&source:selected)for(auto const&d:source.validation.manifest.spells){auto lease=std::find_if(plan.begin(),plan.end(),[&](auto const&a){return a.packageKey==source.validation.manifest.packageKey&&a.symbol==d.symbol;});Require(lease!=plan.end(),"Spell allocation missing");spells.push_back(SpellDbcComposer::Resolve(baseline.document,d,source.validation.manifest.packageKey,source.validation.manifest.version,lease->value));report("Planned spell.id: "+lease->packageKey+"/"+lease->symbol+" = "+std::to_string(lease->value));}
 			composedSpellBytes=SpellDbcComposer::Compose(baseline.document,spells);expectedSpellRecords=baseline.document.recordCount+static_cast<std::uint32_t>(spells.size());
+		}
+		// Native world maps are client-only: nothing occupies these rows in the
+		// world database, so ownership is exactly the durable lease plus the
+		// verified stock baseline. Every contributed row is planned first, so a
+		// collision fails before a single byte is written.
+		std::vector<ResolvedWorldMap> worldMaps;
+		std::map<std::string, std::vector<std::uint8_t>> composedWorldMapBytes;
+		std::map<std::string, std::uint32_t> expectedWorldMapRecords;
+		if (worldMapCount) {
+			std::map<std::string, ContentBaseline> worldMapBaselines;
+			for (auto const &table : WorldMapDbcTables())
+				if (composingWorldMap[table])
+					worldMapBaselines[table] = loadBaseline(
+						table, WorldMapDbcComposer::VerifiedBaselineSha256(table));
+			for (auto const &source : selected)
+				for (auto const &map : source.validation.manifest.worldMaps)
+					worldMaps.push_back(
+						{source.validation.manifest.packageKey, map});
+			// Ownership is keyed by resource kind, so one table must map to
+			// exactly one kind and no two tables may share a kind.
+			std::set<std::string> kinds;
+			for (auto const &entry : worldMapRequests)
+				if (composingWorldMap[entry.first]) {
+					auto const &kind = WorldMapDbcComposer::ResourceKind(entry.first);
+					Require(std::all_of(entry.second.begin(), entry.second.end(),
+						[&](auto const &r) { return r.resourceKind == kind; }),
+						"World-map table " + entry.first
+						+ " mixes allocation resource kinds");
+					Require(kinds.insert(kind).second,
+						"World-map tables share allocation resource kind " + kind);
+				}
+			for (auto const &table : WorldMapDbcTables()) {
+				if (!composingWorldMap[table]) continue;
+				auto const &baseline = worldMapBaselines[table];
+				auto stockIds = WorldMapDbcComposer::Inspect(table, baseline.document);
+				std::vector<ItemAllocation> retained;
+				Require(ContentAllocationRegistry().Read(realmName, retained, error), error);
+				auto const kind = WorldMapDbcComposer::ResourceKind(table);
+				auto plan = ContentResourceAllocator::PlanFixed(
+					realmName, ContentResourceAllocator::FixedRowIdPolicy(kind),
+					worldMapRequests[table], retained, stockIds, result.buildNumber,
+					baseline.hash, acceptedHistory[table]);
+				for (auto const &lease : plan)
+					report("Planned " + lease.resourceKind + ": " + lease.packageKey
+						+ "/" + lease.symbol + " = " + std::to_string(lease.value));
+				allocationPlan.insert(allocationPlan.end(), plan.begin(), plan.end());
+				composedWorldMapBytes[table] = WorldMapDbcComposer::Compose(
+					table, baseline.document, worldMaps);
+				expectedWorldMapRecords[table] = baseline.document.recordCount
+					+ static_cast<std::uint32_t>(
+						WorldMapDbcComposer::Rows(table, worldMaps).size());
+			}
 		}
 		for (auto const &source : selected) {
 			auto const &m = source.validation.manifest;
@@ -808,9 +914,13 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 			report("  " + std::to_string(staged.stagedFiles.size()) +
 				   " file(s)");
         }
+		std::size_t worldMapFileCount = 0;
+		for (auto const &table : WorldMapDbcTables())
+			if (composingWorldMap[table]) ++worldMapFileCount;
 		Require(result.fileCount + (composingItem ? 1 : 0) +
 						(composingCurrency ? 1 : 0) +
-						(composingCategory ? 1 : 0) + (composingCost ? 1 : 0) + (composingSpell ? 1 : 0) ==
+						(composingCategory ? 1 : 0) + (composingCost ? 1 : 0) + (composingSpell ? 1 : 0) +
+						worldMapFileCount ==
 					owners.size(),
             "Staged file count does not match the declared cumulative set");
 		if (composingItem) {
@@ -984,10 +1094,25 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 			{std::ofstream out(target,std::ios::binary);Require(out.is_open(),"Cannot create Spell.dbc");out.write(reinterpret_cast<char const*>(composedSpellBytes.data()),static_cast<std::streamsize>(composedSpellBytes.size()));Require(out.good(),"Cannot write Spell.dbc");}
 			auto parsed=DbcReader::Read(target,*FindDbcDescriptor(12340,"Spell"));Require(parsed.valid&&parsed.document.recordCount==expectedSpellRecords,"Spell.dbc disk readback failed: "+parsed.error);Require(ContentBuildHash::Calculate(target,spellHash,error),error);++result.fileCount;report("Composed Spell.dbc SHA-256: "+spellHash);
 		}
+		// One shared staging path for all four world-map tables: write, read the
+		// file back off disk, confirm the bytes are the composed bytes, then hash.
+		std::map<std::string, std::string> worldMapHashes;
+		for (auto const &table : WorldMapDbcTables()) {
+			if (!composingWorldMap[table]) continue;
+			DbcDocument staged;
+			std::string stageError;
+			Require(WorldMapDbcComposer::Stage(table, composedWorldMapBytes.at(table),
+				result.workspace, staged, stageError), stageError);
+			Require(staged.recordCount == expectedWorldMapRecords.at(table),
+				table + ".dbc disk readback has an unexpected record count");
+			auto target = result.workspace / "DBFilesClient" / (table + ".dbc");
+			Require(ContentBuildHash::Calculate(target, worldMapHashes[table], error), error);
+			++result.fileCount;
+			report("Composed " + table + ".dbc SHA-256: " + worldMapHashes[table]);
+		}
 		// Recheck every accepted snapshot immediately before artifact assembly.
 		// The commit also guards registry identities.
-		for (auto const &baseline : baselines) {
-			auto current = ContentBaselineRegistry::Inspect(
+		for (auto const &baseline : baselines) {			auto current = ContentBaselineRegistry::Inspect(
 				manager.GetBaselineDbcDirectory(),
                 *FindDbcDescriptor(baseline.clientBuild, baseline.table));
 			Require(current.hash == baseline.hash,
@@ -1036,7 +1161,8 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 							 hash, serverRecord.bundleSha256, currencyHash,
 							 categoryHash, categories, baselines, costHash,
 							 costs, vendors, creatureTemplates,
-							 gameObjectTemplates, creatureSpawns, spells, spellHash));
+							 gameObjectTemplates, creatureSpawns, spells, spellHash,
+							 true, worldMapHashes));
             serverRecord.parityFilename = parityPath.filename().string();
 			Require(ContentBuildHash::Calculate(
 						parityPath, serverRecord.paritySha256, error),

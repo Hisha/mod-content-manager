@@ -1,0 +1,355 @@
+{
+  "schema": 3,
+  "package": "mod-deadmines-dungeon-map",
+  "name": "The Deadmines dungeon map",
+  "version": "1.0.0",
+  "description": "Native pre-Cataclysm Deadmines instance map: two DungeonMap floors, twenty-nine DungeonMapChunk entries, one WorldMapArea and the instance WorldMapTransforms row.",
+  "content": [
+    {
+      "type": "file",
+      "source": "artwork/TheDeadmines1_1.blp",
+      "target": "Interface/WorldMap/TheDeadmines/TheDeadmines1_1.blp"
+    },
+    {
+      "type": "file",
+      "source": "artwork/TheDeadmines1_2.blp",
+      "target": "Interface/WorldMap/TheDeadmines/TheDeadmines1_2.blp"
+    },
+    {
+      "type": "file",
+      "source": "artwork/TheDeadmines1_3.blp",
+      "target": "Interface/WorldMap/TheDeadmines/TheDeadmines1_3.blp"
+    },
+    {
+      "type": "file",
+      "source": "artwork/TheDeadmines1_4.blp",
+      "target": "Interface/WorldMap/TheDeadmines/TheDeadmines1_4.blp"
+    },
+    {
+      "type": "file",
+      "source": "artwork/TheDeadmines1_5.blp",
+      "target": "Interface/WorldMap/TheDeadmines/TheDeadmines1_5.blp"
+    },
+    {
+      "type": "file",
+      "source": "artwork/TheDeadmines1_6.blp",
+      "target": "Interface/WorldMap/TheDeadmines/TheDeadmines1_6.blp"
+    },
+    {
+      "type": "file",
+      "source": "artwork/TheDeadmines1_7.blp",
+      "target": "Interface/WorldMap/TheDeadmines/TheDeadmines1_7.blp"
+    },
+    {
+      "type": "file",
+      "source": "artwork/TheDeadmines1_8.blp",
+      "target": "Interface/WorldMap/TheDeadmines/TheDeadmines1_8.blp"
+    },
+    {
+      "type": "file",
+      "source": "artwork/TheDeadmines1_9.blp",
+      "target": "Interface/WorldMap/TheDeadmines/TheDeadmines1_9.blp"
+    },
+    {
+      "type": "file",
+      "source": "artwork/TheDeadmines1_10.blp",
+      "target": "Interface/WorldMap/TheDeadmines/TheDeadmines1_10.blp"
+    },
+    {
+      "type": "file",
+      "source": "artwork/TheDeadmines1_11.blp",
+      "target": "Interface/WorldMap/TheDeadmines/TheDeadmines1_11.blp"
+    },
+    {
+      "type": "file",
+      "source": "artwork/TheDeadmines1_12.blp",
+      "target": "Interface/WorldMap/TheDeadmines/TheDeadmines1_12.blp"
+    },
+    {
+      "type": "file",
+      "source": "artwork/TheDeadmines2_1.blp",
+      "target": "Interface/WorldMap/TheDeadmines/TheDeadmines2_1.blp"
+    },
+    {
+      "type": "file",
+      "source": "artwork/TheDeadmines2_2.blp",
+      "target": "Interface/WorldMap/TheDeadmines/TheDeadmines2_2.blp"
+    },
+    {
+      "type": "file",
+      "source": "artwork/TheDeadmines2_3.blp",
+      "target": "Interface/WorldMap/TheDeadmines/TheDeadmines2_3.blp"
+    },
+    {
+      "type": "file",
+      "source": "artwork/TheDeadmines2_4.blp",
+      "target": "Interface/WorldMap/TheDeadmines/TheDeadmines2_4.blp"
+    },
+    {
+      "type": "file",
+      "source": "artwork/TheDeadmines2_5.blp",
+      "target": "Interface/WorldMap/TheDeadmines/TheDeadmines2_5.blp"
+    },
+    {
+      "type": "file",
+      "source": "artwork/TheDeadmines2_6.blp",
+      "target": "Interface/WorldMap/TheDeadmines/TheDeadmines2_6.blp"
+    },
+    {
+      "type": "file",
+      "source": "artwork/TheDeadmines2_7.blp",
+      "target": "Interface/WorldMap/TheDeadmines/TheDeadmines2_7.blp"
+    },
+    {
+      "type": "file",
+      "source": "artwork/TheDeadmines2_8.blp",
+      "target": "Interface/WorldMap/TheDeadmines/TheDeadmines2_8.blp"
+    },
+    {
+      "type": "file",
+      "source": "artwork/TheDeadmines2_9.blp",
+      "target": "Interface/WorldMap/TheDeadmines/TheDeadmines2_9.blp"
+    },
+    {
+      "type": "file",
+      "source": "artwork/TheDeadmines2_10.blp",
+      "target": "Interface/WorldMap/TheDeadmines/TheDeadmines2_10.blp"
+    },
+    {
+      "type": "file",
+      "source": "artwork/TheDeadmines2_11.blp",
+      "target": "Interface/WorldMap/TheDeadmines/TheDeadmines2_11.blp"
+    },
+    {
+      "type": "file",
+      "source": "artwork/TheDeadmines2_12.blp",
+      "target": "Interface/WorldMap/TheDeadmines/TheDeadmines2_12.blp"
+    }
+  ],
+  "worldMaps": [
+    {
+      "mapId": 36,
+      "transform": {
+        "id": 11,
+        "regionBottom": -20000.0,
+        "regionRight": -20000.0,
+        "regionTop": 20000.0,
+        "regionLeft": 20000.0,
+        "newMapId": 36,
+        "regionOffsetX": 0.0,
+        "regionOffsetY": 0.0,
+        "newDungeonMapId": 167
+      },
+      "areas": [
+        {
+          "id": 756,
+          "areaId": 1581,
+          "internalName": "TheDeadmines",
+          "y1": 1966.6666259765625,
+          "y2": -3033.333251953125,
+          "x1": 1133.333251953125,
+          "x2": -2200.0,
+          "virtualMapId": -1,
+          "dungeonMapId": 0,
+          "parentMapId": 0,
+          "floors": [
+            {
+              "id": 166,
+              "floor": 1,
+              "field3": -796.6220092773438,
+              "field4": -237.35800170898438,
+              "field5": -337.5090026855469,
+              "field6": 35.333499908447266,
+              "field7": 39
+            },
+            {
+              "id": 167,
+              "floor": 2,
+              "field3": -1016.6199951171875,
+              "field4": -517.3569946289062,
+              "field5": -267.5090026855469,
+              "field6": 65.33329772949219,
+              "field7": 39
+            }
+          ],
+          "chunks": [
+            {
+              "id": 2521,
+              "field2": 193,
+              "dungeonMapId": 166,
+              "field4": -10000.0
+            },
+            {
+              "id": 2524,
+              "field2": 194,
+              "dungeonMapId": 166,
+              "field4": -10000.0
+            },
+            {
+              "id": 2528,
+              "field2": 195,
+              "dungeonMapId": 166,
+              "field4": -10000.0
+            },
+            {
+              "id": 2527,
+              "field2": 196,
+              "dungeonMapId": 166,
+              "field4": -10000.0
+            },
+            {
+              "id": 2518,
+              "field2": 197,
+              "dungeonMapId": 166,
+              "field4": -10000.0
+            },
+            {
+              "id": 2520,
+              "field2": 198,
+              "dungeonMapId": 166,
+              "field4": -10000.0
+            },
+            {
+              "id": 2522,
+              "field2": 199,
+              "dungeonMapId": 166,
+              "field4": -10000.0
+            },
+            {
+              "id": 2525,
+              "field2": 200,
+              "dungeonMapId": 166,
+              "field4": -10000.0
+            },
+            {
+              "id": 2517,
+              "field2": 201,
+              "dungeonMapId": 166,
+              "field4": -10000.0
+            },
+            {
+              "id": 2519,
+              "field2": 202,
+              "dungeonMapId": 166,
+              "field4": -10000.0
+            },
+            {
+              "id": 2523,
+              "field2": 203,
+              "dungeonMapId": 166,
+              "field4": -10000.0
+            },
+            {
+              "id": 2526,
+              "field2": 205,
+              "dungeonMapId": 166,
+              "field4": -10000.0
+            },
+            {
+              "id": 2535,
+              "field2": 206,
+              "dungeonMapId": 167,
+              "field4": -10000.0
+            },
+            {
+              "id": 2536,
+              "field2": 207,
+              "dungeonMapId": 167,
+              "field4": -10000.0
+            },
+            {
+              "id": 2537,
+              "field2": 209,
+              "dungeonMapId": 167,
+              "field4": -10000.0
+            },
+            {
+              "id": 2543,
+              "field2": 210,
+              "dungeonMapId": 167,
+              "field4": -10000.0
+            },
+            {
+              "id": 2531,
+              "field2": 211,
+              "dungeonMapId": 166,
+              "field4": -10000.0
+            },
+            {
+              "id": 2532,
+              "field2": 212,
+              "dungeonMapId": 166,
+              "field4": -10000.0
+            },
+            {
+              "id": 2530,
+              "field2": 213,
+              "dungeonMapId": 166,
+              "field4": -10000.0
+            },
+            {
+              "id": 2534,
+              "field2": 214,
+              "dungeonMapId": 167,
+              "field4": -10000.0
+            },
+            {
+              "id": 2533,
+              "field2": 214,
+              "dungeonMapId": 166,
+              "field4": 27.0
+            },
+            {
+              "id": 2541,
+              "field2": 227,
+              "dungeonMapId": 167,
+              "field4": -10000.0
+            },
+            {
+              "id": 2540,
+              "field2": 233,
+              "dungeonMapId": 167,
+              "field4": -10000.0
+            },
+            {
+              "id": 2538,
+              "field2": 239,
+              "dungeonMapId": 167,
+              "field4": -10000.0
+            },
+            {
+              "id": 2516,
+              "field2": 240,
+              "dungeonMapId": 166,
+              "field4": -10000.0
+            },
+            {
+              "id": 2544,
+              "field2": 245,
+              "dungeonMapId": 167,
+              "field4": -10000.0
+            },
+            {
+              "id": 2529,
+              "field2": 246,
+              "dungeonMapId": 166,
+              "field4": -10000.0
+            },
+            {
+              "id": 2539,
+              "field2": 12510,
+              "dungeonMapId": 167,
+              "field4": -10000.0
+            },
+            {
+              "id": 2542,
+              "field2": 12511,
+              "dungeonMapId": 167,
+              "field4": -10000.0
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

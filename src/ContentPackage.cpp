@@ -47,6 +47,364 @@ bool IsRegularZipEntry(mz_zip_archive &zip, int index) {
         auto type = (stat.m_external_attr >> 16) & 0170000;
         return type == 0 || type == 0100000;
     }
+
+// ---------------------------------------------------------
+// World-map (build 12340) manifest helpers
+// ---------------------------------------------------------
+
+bool ClosedKeys(json const &object, std::set<std::string> const &allowed,
+                std::string &offending) {
+	for (auto it = object.begin(); it != object.end(); ++it)
+		if (!allowed.count(it.key())) {
+			offending = it.key();
+			return false;
+		}
+    return true;
+}
+
+bool ReadUnsigned(json const &value, std::uint32_t &out) {
+	if (!value.is_number_unsigned())
+		return false;
+    auto number = value.get<std::uint64_t>();
+	if (number > std::numeric_limits<std::uint32_t>::max())
+		return false;
+	out = static_cast<std::uint32_t>(number);
+	return true;
+}
+
+bool ReadSigned(json const &value, std::int32_t &out) {
+	// JSON has one number type, so 0 and -1 may both arrive unsigned. A signed
+	// field accepts either spelling as long as the value fits in 32 bits.
+	if (!value.is_number_integer())
+		return false;
+    if (value.is_number_unsigned()) {
+		auto number = value.get<std::uint64_t>();
+		if (number > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max()))
+			return false;
+		out = static_cast<std::int32_t>(number);
+		return true;
+	}
+    auto number = value.get<std::int64_t>();
+	if (number < std::numeric_limits<std::int32_t>::min() ||
+		number > std::numeric_limits<std::int32_t>::max())
+		return false;
+	out = static_cast<std::int32_t>(number);
+	return true;
+}
+
+bool ReadFloat(json const &value, float &out) {
+	if (!value.is_number())
+		return false;
+    auto number = value.get<double>();
+	if (!std::isfinite(number) ||
+		number < -std::numeric_limits<float>::max() ||
+		number > std::numeric_limits<float>::max())
+		return false;
+	out = static_cast<float>(number);
+	return std::isfinite(out);
+}
+
+bool ReadWorldMapFloor(json const &declaration, ContentDungeonMapFloor &floor,
+					   std::string &error) {
+    static std::set<std::string> const keys = {"id",    "floor", "field3",
+                                               "field4", "field5", "field6",
+                                               "field7"};
+	if (!declaration.is_object()) {
+		error = "worldMaps floors entries must be objects";
+		return false;
+	}
+	if (!ClosedKeys(declaration, keys, error)) {
+		error = "Unsupported or allocator-owned worldMaps floor field: " + error;
+		return false;
+	}
+	if (!ReadUnsigned(declaration.value("id", json(0u)), floor.id) || !floor.id ||
+		!ReadUnsigned(declaration.value("floor", json(0u)), floor.floor) ||
+		!floor.floor ||
+		!ReadUnsigned(declaration.value("field7", json(0u)), floor.field7) ||
+		!ReadFloat(declaration.value("field3", json(0.0)), floor.field3) ||
+		!ReadFloat(declaration.value("field4", json(0.0)), floor.field4) ||
+		!ReadFloat(declaration.value("field5", json(0.0)), floor.field5) ||
+		!ReadFloat(declaration.value("field6", json(0.0)), floor.field6)) {
+		error = "worldMaps floor requires a non-zero id and floor plus correctly "
+				"typed field3..field7";
+		return false;
+	}
+    return true;
+}
+
+bool ReadWorldMapChunk(json const &declaration, ContentDungeonMapChunk &chunk,
+					   std::string &error) {
+    static std::set<std::string> const keys = {"id", "field2", "dungeonMapId",
+                                               "field4"};
+	if (!declaration.is_object()) {
+		error = "worldMaps chunk must be an object";
+		return false;
+	}
+	if (!ClosedKeys(declaration, keys, error)) {
+		error = "Unsupported or allocator-owned worldMaps chunk field: " + error;
+		return false;
+	}
+	if (!ReadUnsigned(declaration.value("id", json(0u)), chunk.id) || !chunk.id ||
+		!ReadUnsigned(declaration.value("field2", json(0u)), chunk.field2) ||
+		!chunk.field2 ||
+		!ReadUnsigned(declaration.value("dungeonMapId", json(0u)),
+					  chunk.dungeonMapId) ||
+		!chunk.dungeonMapId ||
+		!ReadFloat(declaration.value("field4", json(0.0)), chunk.field4)) {
+		error = "worldMaps chunk requires a non-zero id, field2, dungeonMapId and "
+				"a finite field4";
+		return false;
+	}
+    return true;
+}
+
+bool ReadWorldMapArea(json const &declaration, ContentWorldMapArea &area,
+					  std::string &error) {
+    static std::set<std::string> const keys = {
+        "id",           "areaId",         "internalName",     "y1",
+        "y2",           "x1",             "x2",               "virtualMapId",
+        "dungeonMapId", "parentMapId",    "floors",           "chunks"};
+	if (!declaration.is_object()) {
+		error = "worldMaps area must be an object";
+		return false;
+	}
+	if (!ClosedKeys(declaration, keys, error)) {
+		error = "Unsupported or allocator-owned worldMaps area field: " + error;
+		return false;
+	}
+	if (!ReadUnsigned(declaration.value("id", json(0u)), area.id) || !area.id ||
+		!ReadUnsigned(declaration.value("areaId", json(0u)), area.areaId) ||
+		!declaration.contains("virtualMapId") ||
+		!ReadSigned(declaration.value("virtualMapId", json(0)),
+					area.virtualMapId) ||
+		!ReadSigned(declaration.value("dungeonMapId", json(0)),
+					area.dungeonMapId) ||
+		!ReadUnsigned(declaration.value("parentMapId", json(0u)),
+					  area.parentMapId) ||
+		!ReadFloat(declaration.value("y1", json(0.0)), area.y1) ||
+		!ReadFloat(declaration.value("y2", json(0.0)), area.y2) ||
+		!ReadFloat(declaration.value("x1", json(0.0)), area.x1) ||
+		!ReadFloat(declaration.value("x2", json(0.0)), area.x2)) {
+		error = "worldMaps area requires a non-zero id, correctly typed "
+				"areaId/virtualMapId/dungeonMapId/parentMapId/rectangle fields "
+				"and an explicit virtualMapId";
+		return false;
+	}
+	if (!declaration.contains("internalName") ||
+		!declaration["internalName"].is_string()) {
+		error = "worldMaps area requires internalName";
+		return false;
+	}
+	area.internalName = declaration["internalName"].get<std::string>();
+	if (area.internalName.empty() || area.internalName.size() > 255 ||
+		std::any_of(area.internalName.begin(), area.internalName.end(),
+					[](unsigned char c) { return c < 32 || c == 127; })) {
+		error = "worldMaps internalName must be 1..255 UTF-8 bytes with no control "
+				"characters";
+		return false;
+	}
+	try {
+		(void)json(area.internalName).dump(); // strict UTF-8, no normalization
+	} catch (std::exception const &) {
+		error = "worldMaps internalName is not valid UTF-8";
+		return false;
+	}
+	if (!declaration.contains("floors") || !declaration["floors"].is_array() ||
+		declaration["floors"].empty()) {
+		error = "worldMaps area requires a nonempty floors array";
+		return false;
+	}
+	for (auto const &floor : declaration["floors"]) {
+		ContentDungeonMapFloor row;
+		if (!ReadWorldMapFloor(floor, row, error))
+			return false;
+		area.floors.push_back(std::move(row));
+	}
+	if (!declaration.contains("chunks") || !declaration["chunks"].is_array()) {
+		error = "worldMaps area requires a chunks array";
+		return false;
+	}
+	for (auto const &chunk : declaration["chunks"]) {
+		ContentDungeonMapChunk row;
+		if (!ReadWorldMapChunk(chunk, row, error))
+			return false;
+		area.chunks.push_back(std::move(row));
+	}
+    return true;
+}
+
+bool ReadWorldMapTransform(json const &declaration,
+						   ContentWorldMapTransform &transform,
+						   std::string &error) {
+    static std::set<std::string> const keys = {
+        "id",           "regionBottom",  "regionRight",        "regionTop",
+        "regionLeft",   "newMapId",      "regionOffsetX",      "regionOffsetY",
+        "newDungeonMapId"};
+	if (!declaration.is_object()) {
+		error = "worldMaps transform must be an object";
+		return false;
+	}
+	if (!ClosedKeys(declaration, keys, error)) {
+		error = "Unsupported or allocator-owned worldMaps transform field: " +
+				error;
+		return false;
+	}
+	if (!ReadUnsigned(declaration.value("id", json(0u)), transform.id) ||
+		!transform.id ||
+		!ReadUnsigned(declaration.value("newMapId", json(0u)), transform.newMapId) ||
+		!transform.newMapId ||
+		!ReadUnsigned(declaration.value("newDungeonMapId", json(0u)),
+					  transform.newDungeonMapId) ||
+		!transform.newDungeonMapId ||
+		!ReadFloat(declaration.value("regionBottom", json(0.0)),
+				   transform.regionBottom) ||
+		!ReadFloat(declaration.value("regionRight", json(0.0)),
+				   transform.regionRight) ||
+		!ReadFloat(declaration.value("regionTop", json(0.0)), transform.regionTop) ||
+		!ReadFloat(declaration.value("regionLeft", json(0.0)),
+				   transform.regionLeft) ||
+		!ReadFloat(declaration.value("regionOffsetX", json(0.0)),
+				   transform.regionOffsetX) ||
+		!ReadFloat(declaration.value("regionOffsetY", json(0.0)),
+				   transform.regionOffsetY)) {
+		error = "worldMaps transform requires a non-zero id, newMapId and "
+				"newDungeonMapId plus finite region fields";
+		return false;
+	}
+    return true;
+}
+
+// Reads and validates the whole worldMaps section. Row identities are
+// author-declared and fixed, so every table rejects duplicate IDs inside one
+// package and every reference must resolve inside the same world map.
+bool ReadWorldMaps(json const &manifest, ContentPackageManifest &result,
+				   std::string &error) {
+	if (!manifest.is_array()) {
+		error = "worldMaps must be an array";
+		return false;
+	}
+    static std::set<std::string> const keys = {"mapId", "transform", "areas"};
+	std::set<std::uint32_t> mapIds, transformIds, areaIds, floorIds, chunkIds;
+	for (auto const &declaration : manifest) {
+		if (!declaration.is_object()) {
+			error = "worldMaps entry must be an object";
+			return false;
+		}
+		if (!ClosedKeys(declaration, keys, error)) {
+			error = "Unsupported or allocator-owned worldMaps field: " + error;
+			return false;
+		}
+		ContentWorldMap map;
+		if (!ReadUnsigned(declaration.value("mapId", json(0u)), map.mapId) ||
+			!map.mapId || !mapIds.insert(map.mapId).second) {
+			error = "worldMaps requires a non-zero mapId declared once per package";
+			return false;
+		}
+		if (!declaration.contains("transform")) {
+			error = "worldMaps transform must be an object";
+			return false;
+		}
+		if (!ReadWorldMapTransform(declaration["transform"], map.transform, error))
+			return false;
+		if (!transformIds.insert(map.transform.id).second) {
+			error = "Duplicate WorldMapTransforms ID in package: " +
+					std::to_string(map.transform.id);
+			return false;
+		}
+		if (!declaration.contains("areas") || !declaration["areas"].is_array() ||
+			declaration["areas"].empty()) {
+			error = "worldMaps requires a nonempty areas array";
+			return false;
+		}
+		// A chunk or area may reference any floor of the same world map, so the
+		// floor set is collected across all areas before references are checked.
+		std::set<std::uint32_t> mapFloors;
+		for (auto const &areaDeclaration : declaration["areas"])
+			for (auto const &floorDeclaration : areaDeclaration.is_object() &&
+													  areaDeclaration.contains("floors") &&
+													  areaDeclaration["floors"].is_array()
+												  ? areaDeclaration["floors"]
+												  : json::array())
+				if (floorDeclaration.is_object() && floorDeclaration.value("id", json(0u)).is_number_unsigned())
+					mapFloors.insert(floorDeclaration["id"].get<std::uint32_t>());
+		for (auto const &areaDeclaration : declaration["areas"]) {
+			ContentWorldMapArea area;
+			if (!ReadWorldMapArea(areaDeclaration, area, error))
+				return false;
+			if (!areaIds.insert(area.id).second) {
+				error = "Duplicate WorldMapArea ID in package: " +
+						std::to_string(area.id);
+				return false;
+			}
+			for (auto const &floor : area.floors)
+				if (!floorIds.insert(floor.id).second) {
+					error = "Duplicate DungeonMap ID in package: " +
+							std::to_string(floor.id);
+					return false;
+				}
+			for (auto const &chunk : area.chunks) {
+				if (!chunkIds.insert(chunk.id).second) {
+					error = "Duplicate DungeonMapChunk ID in package: " +
+							std::to_string(chunk.id);
+					return false;
+				}
+				if (!mapFloors.count(chunk.dungeonMapId)) {
+					error = "DungeonMapChunk " + std::to_string(chunk.id) +
+							" references DungeonMap " +
+							std::to_string(chunk.dungeonMapId) +
+							" which is not a floor of world map " +
+							std::to_string(map.mapId);
+					return false;
+				}
+			}
+			if (area.dungeonMapId && !mapFloors.count(
+											static_cast<std::uint32_t>(area.dungeonMapId))) {
+				error = "WorldMapArea " + std::to_string(area.id) +
+						" references DungeonMap " +
+						std::to_string(area.dungeonMapId) +
+						" which is not a floor of world map " +
+						std::to_string(map.mapId);
+				return false;
+			}
+			map.areas.push_back(std::move(area));
+		}
+		if (!mapFloors.count(map.transform.newDungeonMapId)) {
+			error = "WorldMapTransforms " + std::to_string(map.transform.id) +
+					" references NewDungeonMapID " +
+					std::to_string(map.transform.newDungeonMapId) +
+					" which is not a floor of world map " +
+					std::to_string(map.mapId);
+			return false;
+		}
+		result.worldMaps.push_back(std::move(map));
+	}
+	// Client artwork for a contributed map must use the exact area directory the
+	// client derives from internalName. This is what keeps package assets from
+	// inventing alternate tile filenames that the client would never read.
+	static std::string const prefix = "Interface/WorldMap/";
+	std::vector<std::string> directories;
+	for (auto const &map : result.worldMaps)
+		for (auto const &area : map.areas)
+			directories.push_back(prefix + area.internalName + "/");
+	for (auto const &entry : result.content) {
+		auto target = ContentBuildPaths::Target(entry.target);
+		if (target.compare(0, prefix.size(), prefix) != 0)
+			continue;
+		bool owned = false;
+		for (auto const &directory : directories)
+			if (target.compare(0, directory.size(), directory) == 0) {
+				owned = true;
+				break;
+			}
+		if (!owned) {
+			error = "World-map asset '" + entry.target +
+					"' is not beneath a declared area directory " + prefix +
+					"<internalName>/";
+			return false;
+		}
+	}
+    return true;
+}
 } // namespace
 ContentPackage::ContentPackage(std::filesystem::path path) :
 	_path(std::move(path)) {}
@@ -166,7 +524,8 @@ ContentPackageValidationResult ContentPackage::Validate() const {
 		 manifest.contains("vendorRows") ||
 		 manifest.contains("creatureTemplates") ||
 		 manifest.contains("gameobjectTemplates") ||
-		 manifest.contains("creatureSpawns") || manifest.contains("spells"))) {
+		 manifest.contains("creatureSpawns") || manifest.contains("spells") ||
+		 manifest.contains("worldMaps"))) {
 		result.error = "serverRows require Schema 2";
 		return result;
 	}
@@ -1142,12 +1501,17 @@ ContentPackageValidationResult ContentPackage::Validate() const {
                 result.manifest.vendorRows.push_back(row);
             }
         }
+		if (manifest.contains("worldMaps") &&
+			!ReadWorldMaps(manifest["worldMaps"], result.manifest,
+						   result.error))
+			return result;
 		if (result.manifest.content.empty() &&
 			result.manifest.itemRows.empty() &&
 			result.manifest.extendedCosts.empty() &&
 			result.manifest.creatureTemplates.empty() &&
 			result.manifest.gameObjectTemplates.empty() &&
-			result.manifest.spells.empty()) {
+			result.manifest.spells.empty() &&
+			result.manifest.worldMaps.empty()) {
 			result.error = "Schema 2 or newer needs content or a typed "
 						   "resource declaration";
 			return result;
@@ -1216,7 +1580,8 @@ ContentPackage::StageInto(std::filesystem::path const &stagingDirectory,
 			actual.vendorRows == expected.vendorRows &&
 			actual.creatureTemplates == expected.creatureTemplates &&
 			actual.gameObjectTemplates == expected.gameObjectTemplates &&
-			actual.creatureSpawns == expected.creatureSpawns;
+			actual.creatureSpawns == expected.creatureSpawns &&
+			actual.worldMaps == expected.worldMaps;
         if (same)
             for (std::size_t i = 0; i < actual.content.size(); ++i)
 				same = same &&
