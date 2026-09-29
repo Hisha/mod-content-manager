@@ -1,5 +1,6 @@
 #include "ContentServerBundle.h"
 #include "ContentBuildHash.h"
+#include "ContentResourceAllocator.h"
 #include "ServerTableDescriptor.h"
 #include "WorldMapDbcComposer.h"
 #include "third_party/json/json.hpp"
@@ -127,6 +128,170 @@ std::vector<ResolvedExtendedCost> ParseCosts(json const &source) {
     return result;
 }
 
+// Activation-side resource kinds. The world-map kinds are derived from the
+// composer so activation can never lag behind the tables it must accept.
+std::set<std::string> const &WorldMapResourceKinds()
+{
+    static std::set<std::string> const kinds = [] {
+        std::set<std::string> result;
+        for (auto const &table : WorldMapDbcTables())
+            result.insert(WorldMapDbcComposer::ResourceKind(table));
+        return result;
+    }();
+    return kinds;
+}
+
+// A short, log-safe description of one parity resource, so a rejection names
+// the exact allocation instead of only the artifact.
+std::string ResourceContext(json const &resource)
+{
+    auto field = [&resource](char const *name) -> std::string {
+        auto found = resource.find(name);
+        if (found == resource.end()) return "<absent>";
+        if (found->is_string()) {
+            auto value = found->get<std::string>();
+            return value.size() <= 64 ? value : value.substr(0, 64) + "...";
+        }
+        if (found->is_number_unsigned()) return std::to_string(found->get<std::uint64_t>());
+        if (found->is_number_integer()) return std::to_string(found->get<std::int64_t>());
+        if (found->is_boolean()) return found->get<bool>() ? "true" : "false";
+        if (found->is_null()) return "null";
+        return "<not-a-scalar>";
+    };
+    return "package='" + field("package") + "' symbol='" + field("symbol") +
+           "' resourceKind='" + field("resourceKind") + "' value=" + field("value") +
+           " baselineSha256='" + field("baselineSha256") +
+           "' allocationPolicyVersion=" + field("allocationPolicyVersion");
+}
+
+} // namespace
+
+ContentServerBundle::ActivationParity ContentServerBundle::ReadParityAllocations(
+    std::string const &parityText, std::vector<ItemAllocation> const &current)
+{
+    ActivationParity result;
+    std::set<std::tuple<std::string, std::string, std::string>> identities;
+    json parsed;
+    try {
+        parsed = json::parse(parityText);
+    } catch (std::exception const &exception) {
+        throw std::runtime_error(std::string(
+            "Invalid parity allocation: manifest is not valid JSON (") +
+            exception.what() + ")");
+    }
+    json const &parity = parsed;
+    if (!parity.is_object() || !parity.contains("resources") ||
+        !parity.at("resources").is_array())
+        throw std::runtime_error("Parity manifest has no 'resources' array");
+    // The artifact's own baseline snapshots supply the client build each
+    // world-map table was composed for, so a lease can be checked against the
+    // exact descriptor that produced it.
+    std::map<std::string, std::uint32_t> tableBuild;
+    if (parity.contains("baselines") && parity.at("baselines").is_array())
+        for (auto const &snapshot : parity.at("baselines"))
+            if (snapshot.is_object() && snapshot.contains("table") &&
+                snapshot["table"].is_string() && snapshot.contains("clientBuild") &&
+                snapshot["clientBuild"].is_number_unsigned())
+                tableBuild[snapshot["table"].get<std::string>()] =
+                    snapshot["clientBuild"].get<std::uint32_t>();
+    auto const &worldMapKinds = WorldMapResourceKinds();
+    for (auto const &resource : parity.at("resources")) {
+        auto const fail = [&resource](std::string const &invariant) {
+            throw std::runtime_error("Invalid parity allocation: " + invariant +
+                                     " [" + ResourceContext(resource) + "]");
+        };
+        if (!resource.is_object())
+            fail("resource is not an object");
+        if (!resource.contains("package") || !resource["package"].is_string() ||
+            !resource.contains("symbol") || !resource["symbol"].is_string() ||
+            !resource.contains("value") || !resource["value"].is_number_unsigned() ||
+            !resource.contains("resourceKind") ||
+            !resource["resourceKind"].is_string() ||
+            !resource.contains("baselineSha256") ||
+            !resource["baselineSha256"].is_string() ||
+            !resource.contains("allocationPolicyVersion") ||
+            !resource["allocationPolicyVersion"].is_number_unsigned())
+            fail("required field is missing or has the wrong type");
+        auto package = resource.at("package").get<std::string>();
+        auto symbol = resource.at("symbol").get<std::string>();
+        auto value = resource.at("value").get<std::uint32_t>();
+        auto baseline = resource.at("baselineSha256").get<std::string>();
+        auto policy = resource.at("allocationPolicyVersion").get<std::uint32_t>();
+        auto kind = resource.at("resourceKind").get<std::string>();
+        bool const worldMap = worldMapKinds.count(kind) != 0;
+        if (!value) fail("row ID is zero");
+        if (!worldMap && kind != "item.id" && kind != "currency.known-bit" &&
+            kind != "currency-category.id" && kind != "item-extended-cost.id" &&
+            kind != "creature-template.id" && kind != "gameobject-template.id" &&
+            kind != "creature-spawn.guid" && kind != "spell.id")
+            fail("unknown resource kind");
+        if (!worldMap && ((kind == "currency-category.id" ||
+                           kind == "item-extended-cost.id") && value > 65535))
+            fail("row ID is outside the kind's numeric range");
+        if (!worldMap && ((kind == "creature-template.id" ||
+                           kind == "gameobject-template.id") && value > 0x00ffffff))
+            fail("row ID is outside the kind's numeric range");
+        if (!worldMap && kind == "currency.known-bit" && value > 64)
+            fail("row ID is outside the kind's numeric range");
+        if (!worldMap && kind == "spell.id" &&
+            value > ContentResourceAllocator::SpellIdPolicy({1}).lastCandidate)
+            fail("row ID is outside the kind's numeric range");
+        if (!ContentBuildHash::Valid(baseline))
+            fail("baselineSha256 is not a valid SHA-256");
+        if (worldMap) {
+            // A fixed client-baked ID is checked against the descriptor that
+            // composed it, so a re-registered baseline cannot slip through.
+            std::string table;
+            for (auto const &candidate : WorldMapDbcTables())
+                if (WorldMapDbcComposer::ResourceKind(candidate) == kind)
+                    table = candidate;
+            auto build = tableBuild.find(table);
+            if (build == tableBuild.end())
+                fail("no baseline snapshot for " + table);
+            auto descriptor = FindDbcDescriptor(build->second, table);
+            if (!descriptor) fail("no " + std::to_string(build->second) +
+                                  " descriptor for " + table);
+            if (!resource.contains("dbcDescriptorVersion") ||
+                !resource["dbcDescriptorVersion"].is_number_unsigned() ||
+                resource["dbcDescriptorVersion"].get<std::uint32_t>() !=
+                    descriptor->version)
+                fail("dbcDescriptorVersion does not match the " + table +
+                     " descriptor version");
+        }
+        if (!identities.emplace(package, symbol, kind).second)
+            fail("duplicate package/symbol/resourceKind identity");
+        auto found = std::find_if(
+            current.begin(), current.end(), [&](auto const &lease) {
+                return lease.packageKey == package && lease.symbol == symbol &&
+                       lease.resourceKind == kind;
+            });
+        if (found == current.end())
+            fail("no retained lease for this identity in the world database");
+        if (found->value != value) fail("retained lease holds a different row ID");
+        if (found->baselineSha256 != baseline)
+            fail("retained lease is pinned to a different baseline");
+        if (found->policyVersion != policy)
+            fail("retained lease uses a different allocation policy version");
+        result.allocations.push_back(*found);
+    }
+    if (parity.contains("worldMapDbcSha256")) {
+        if (!parity.at("worldMapDbcSha256").is_object())
+            throw std::runtime_error(
+                "Invalid parity allocation: worldMapDbcSha256 is not an object");
+        for (auto it = parity.at("worldMapDbcSha256").begin();
+             it != parity.at("worldMapDbcSha256").end(); ++it)
+            if (!it.value().is_string())
+                throw std::runtime_error(
+                    "Invalid parity allocation: composed hash for " + it.key() +
+                    " is not a string");
+            else
+                result.worldMapDbcSha256[it.key()] = it.value().get<std::string>();
+    }
+    return result;
+}
+
+namespace
+{
 json ResourceObject(ItemAllocation const &allocation,
 					std::vector<ResolvedServerItem> const &rows) {
 	if (allocation.resourceKind == "spell.id")

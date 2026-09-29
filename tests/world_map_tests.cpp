@@ -871,6 +871,220 @@ static void ParityTests(fs::path const &baselineDirectory)
 	std::cout << "  world-map parity artifact: PASS\n";
 }
 
+// Activation reads the artifact through ContentServerBundle::ReadParityAllocations
+// and then ContentServerBundle::VerifyParity, in that order. This reproduces both
+// steps for the real Deadmines fixed world-map leases, which is how a production
+// STAGED build is checked before its MPQ is published. The pre-fix activation
+// reader rejected every worldmap.* kind, so a perfectly valid artifact could be
+// recorded by a build and still refuse to activate.
+static void ActivationTests()
+{
+	auto const fixture = fs::path(__FILE__).parent_path() / "fixtures" / "deadmines";
+	json const authored = json::parse(ReadAll(fixture / "manifest.json"));
+	auto content = BaseManifest();
+	for (auto const &key : {"package", "name", "version"})
+		content[key] = authored.at(key);
+	content["worldMaps"] = authored.at("worldMaps");
+	auto const manifestPath = fs::temp_directory_path() / "deadmines-activation.epf";
+	fs::remove(manifestPath);
+	Save(manifestPath, content);
+	auto const validated = ContentPackage(manifestPath).Validate();
+	assert(validated.valid);
+	auto const &maps = validated.manifest.worldMaps;
+	assert(maps.size() == 1 && maps[0].areas.size() == 1);
+	auto const &area = maps[0].areas[0];
+	auto const floorKind = WorldMapDbcComposer::ResourceKind("DungeonMap");
+
+	// Plan the first build for all four tables exactly as the build service does,
+	// then record the composed hashes and baseline snapshots a build writes.
+	std::map<std::string, std::vector<ResourceAllocationRequest>> requests;
+	WorldMapDbcComposer::AppendRequests(validated.manifest.packageKey, maps, requests);
+	std::vector<ItemAllocation> retained;
+	std::map<std::string, std::string> hashes;
+	std::vector<ContentBaseline> baselines;
+	for (auto const &table : WorldMapDbcTables()) {
+		auto const plan = ContentResourceAllocator::PlanFixed("realm",
+			ContentResourceAllocator::FixedRowIdPolicy(
+				WorldMapDbcComposer::ResourceKind(table)),
+			requests.at(table), {}, {}, 48,
+			WorldMapDbcComposer::VerifiedBaselineSha256(table));
+		for (auto const &lease : plan) retained.push_back(lease);
+		hashes[table] = WorldMapDbcComposer::VerifiedBaselineSha256(table);
+		ContentBaseline snapshot;
+		snapshot.table = table;
+		snapshot.clientBuild = 12340;
+		snapshot.descriptorVersion = FindDbcDescriptor(12340, table)->version;
+		snapshot.hash = hashes[table];
+		baselines.push_back(snapshot);
+	}
+	assert(retained.size() == area.floors.size() + area.chunks.size() + 2);
+	// The Deadmines floor IDs are small numbers inside the stock ID space. They
+	// are valid: composition proved they are absent from the stock DBC, so no
+	// dynamically allocated numeric bound may reject them during activation.
+	for (auto const &lease : retained)
+		if (lease.resourceKind == floorKind)
+			assert(lease.value < 256);
+
+	auto const parity = ContentServerBundle::ParityJson("realm", 48, retained, {},
+		"", "", "mpq", "server", "", "", {}, baselines, "", {}, {}, {}, {}, {}, {},
+		"", false, hashes);
+	auto const artifact = json::parse(parity);
+	assert(artifact.at("format") == 8);
+	assert(artifact.at("resources").size() == retained.size());
+	std::size_t floorResources = 0;
+	for (auto const &resource : artifact.at("resources"))
+		if (resource.at("resourceKind") == floorKind) {
+			++floorResources;
+			assert(resource.at("dbcDescriptorVersion") == 1);
+		}
+	assert(floorResources == area.floors.size());
+
+	// The exact activation sequence: read the declared leases and composed
+	// hashes out of the artifact, then verify the artifact against them.
+	std::string error;
+	auto const activate = [&error](std::string const &text, json const &doc,
+		std::vector<ItemAllocation> const &retainedLeases) {
+		auto const declared =
+			ContentServerBundle::ReadParityAllocations(text, retainedLeases);
+		return ContentServerBundle::VerifyParity(text, "realm", 48,
+			doc.at("baselineSha256"), "mpq", "server", {}, declared.allocations,
+			error, {}, {}, {}, {}, {}, {}, declared.worldMapDbcSha256);
+	};
+	if (!activate(parity, artifact, retained))
+		std::cerr << "  activation refused: " << error << "\n";
+	assert(activate(parity, artifact, retained));
+	// The reader returns the artifact's own leases and the hashes it recorded.
+	auto const declared = ContentServerBundle::ReadParityAllocations(parity, retained);
+	assert(declared.allocations.size() == retained.size());
+	assert(declared.worldMapDbcSha256 == hashes);
+	// Activation must hand VerifyParity the hashes it read from this artifact.
+	// Passing an empty set -- the pre-fix activation call -- leaves the recorded
+	// composed hashes unaccounted for and must be refused.
+	{
+		std::string local;
+		assert(!ContentServerBundle::VerifyParity(parity, "realm", 48,
+			artifact.at("baselineSha256"), "mpq", "server", {}, declared.allocations,
+			local, {}, {}, {}, {}, {}, {}, {}));
+	}
+
+	// Every mutation below must fail closed through the same two steps, and the
+	// diagnostic must name the allocation or the artifact, never just "invalid".
+	auto rejects = [&](json const &doc, char const *why) {
+		auto const text = doc.dump(2) + "\n";
+		std::string detail;
+		bool accepted = false;
+		try {
+			accepted = activate(text, doc, retained);
+			detail = error;
+		} catch (std::exception const &exception) {
+			detail = exception.what();
+		}
+		if (accepted) {
+			std::cerr << "  accepted a mutated artifact: " << why << "\n";
+			assert(false);
+		}
+		if (detail.find("package=") == std::string::npos &&
+			detail.find("parity") == std::string::npos &&
+			detail.find("Parity") == std::string::npos) {
+			std::cerr << "  uninformative diagnostic for " << why << ": " << detail
+					  << "\n";
+			assert(false);
+		}
+	};
+	// Applies a mutation to the first DungeonMap resource of a fresh copy.
+	auto mutatesFloor = [&](std::function<void(json&)> mutation) {
+		auto doc = artifact;
+		for (auto &resource : doc.at("resources"))
+			if (resource.at("resourceKind") == floorKind) {
+				mutation(resource);
+				break;
+			}
+		return doc;
+	};
+	rejects(mutatesFloor([](json &r) { r["value"] = 999; }), "unowned row ID");
+	rejects(mutatesFloor([](json &r) { r["value"] = 0; }), "zero row ID");
+	rejects(mutatesFloor([](json &r) { r["value"] = "166"; }), "row ID of wrong type");
+	rejects(mutatesFloor([](json &r) { r["resourceKind"] = "worldmap.bogus.id"; }),
+		"unknown resource kind");
+	// A fixed lease relabelled as a dynamically allocated kind must be held to
+	// that kind's bounds instead of inheriting the fixed-ID exemption.
+	rejects(mutatesFloor([](json &r) { r["resourceKind"] = "currency.known-bit"; }),
+		"fixed lease relabelled as a dynamic kind");
+	rejects(mutatesFloor([](json &r) { r["allocationPolicyVersion"] = 2; }),
+		"policy version drift");
+	rejects(mutatesFloor([](json &r) { r["baselineSha256"] = kHash; }),
+		"baseline provenance drift");
+	rejects(mutatesFloor([](json &r) { r["baselineSha256"] = "not-a-hash"; }),
+		"malformed baseline fingerprint");
+	rejects(mutatesFloor([](json &r) { r.erase("baselineSha256"); }),
+		"absent baseline fingerprint");
+	rejects(mutatesFloor([](json &r) { r["dbcDescriptorVersion"] = 2; }),
+		"descriptor version drift");
+	rejects(mutatesFloor([](json &r) { r.erase("dbcDescriptorVersion"); }),
+		"absent descriptor version");
+	{
+		auto doc = artifact;
+		doc["worldMapDbcSha256"]["DungeonMap"] = "nope";
+		rejects(doc, "malformed composed hash");
+	}
+	{
+		auto doc = artifact;
+		doc.at("worldMapDbcSha256").erase("DungeonMap");
+		rejects(doc, "missing composed hash");
+	}
+	{
+		// Every composed world-map table has a lease, so the only hash that
+		// cannot be accounted for is one for a table outside the set.
+		auto doc = artifact;
+		doc["worldMapDbcSha256"]["Item"] = kHash;
+		rejects(doc, "composed hash for a table outside the world-map set");
+	}
+	{
+		// A hash whose lease is gone from the artifact is an orphan.
+		auto doc = artifact;
+		for (auto it = doc["resources"].begin(); it != doc["resources"].end(); ++it)
+			if (it->at("resourceKind") == WorldMapDbcComposer::ResourceKind("WorldMapArea")) {
+				doc["resources"].erase(it);
+				break;
+			}
+		rejects(doc, "composed hash with no lease");
+	}
+	{
+		auto doc = artifact;
+		for (auto &snapshot : doc.at("baselines"))
+			if (snapshot.at("table") == "DungeonMap")
+				snapshot["clientBuild"] = 11723;
+		rejects(doc, "unavailable descriptor build");
+	}
+	{
+		auto doc = artifact;
+		for (auto const &resource : doc.at("resources"))
+			if (resource.at("resourceKind") == floorKind) {
+				doc["resources"].push_back(resource);
+				break;
+			}
+		rejects(doc, "duplicate identity");
+	}
+	{
+		auto doc = artifact;
+		doc["resources"] = json::object();
+		rejects(doc, "resources is not an array");
+	}
+	// A lease the world database no longer holds at all.
+	{
+		auto withoutFloor = retained;
+		withoutFloor.erase(std::remove_if(withoutFloor.begin(), withoutFloor.end(),
+			[&](auto const &lease) {
+				return lease.resourceKind == floorKind &&
+					lease.value == area.floors[0].id;
+			}), withoutFloor.end());
+		assert(Throws([&] {
+			(void)ContentServerBundle::ReadParityAllocations(parity, withoutFloor);
+		}));
+	}
+	std::cout << "  world-map activation parity: PASS\n";
+}
+
 // The Deadmines fixture must reproduce the verified stock patch byte for byte.
 static void GoldenTests(fs::path const &baselineDirectory, fs::path const &goldenDirectory,
 	fs::path const &artworkDirectory)
@@ -1011,6 +1225,7 @@ int main(int argc, char **argv)
 	DescriptorTests();
 	AllocationTests();
 	FirstBuildPlanningTests();
+	ActivationTests();
 	auto const scratch = Scratch();
 	auto const stockDirectory = fs::path(argc > 1 && argv[1][0] ? argv[1] : "");
 	if (!stockDirectory.empty() && fs::is_directory(stockDirectory)) {

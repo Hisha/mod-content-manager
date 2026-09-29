@@ -29,6 +29,25 @@ struct ResolvedServerItem
 class ContentServerBundle
 {
 public:
+	// The allocation view activation takes of a parity artifact: the retained
+	// leases it declares, plus the composed world-map hashes it records. Both
+	// come from the same read so activation cannot accept an allocation while
+	// validating its hash against a different artifact state.
+	struct ActivationParity
+	{
+		std::vector<ItemAllocation> allocations;
+		std::map<std::string, std::string> worldMapDbcSha256;
+	};
+	// Reads the parity artifact's resource list and matches every entry against
+	// the retained world-database leases. This is the same reader activation
+	// runs. A native world-map row is a client-only lease, so it is accepted
+	// without a server row; its identity is bounded only by the uint32 row-ID
+	// space, because composition has already proved the ID is absent from the
+	// stock DBC. Throws std::runtime_error naming the package, symbol, resource
+	// kind, value and the invariant that failed.
+	static ActivationParity ReadParityAllocations(
+		std::string const& parityText, std::vector<ItemAllocation> const& current);
+
 	static std::string ServerJson(std::string const& realm, std::vector<ResolvedServerItem> rows, std::vector<ResolvedExtendedCost> costs = {}, std::vector<ResolvedVendorRow> vendors = {},
 		std::vector<ResolvedCreatureTemplate> creatures = {}, std::vector<ResolvedGameObjectTemplate> gameObjects = {}, std::vector<ResolvedCreatureSpawn> spawns = {}, std::vector<ResolvedSpell> spells = {}, bool validateCurrentSpellPolicy = true);
     static std::string ParityJson(std::string const& realm, std::uint32_t build,

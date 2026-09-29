@@ -58,6 +58,10 @@ tests = {
 for name in ['server_bundle', 'schema2', 'schema3', 'currency']:
     for unit in ['CurrencyCategoryDbcComposer', 'CurrencyDbcComposer', 'ItemExtendedCostDbc', 'DbcReader', 'DbcDescriptor']:
         if unit not in tests[name]: tests[name].append(unit)
+# ContentServerBundle validates a spell row-ID bound through the allocator's own
+# policy, so the bundle unit must link the allocator too.
+for name in ['server_bundle', 'schema2', 'schema3', 'currency']:
+    if 'ContentResourceAllocator' not in tests[name]: tests[name].append('ContentResourceAllocator')
 for name in ['server_bundle', 'currency']:
     tests[name].append('ContentManagedServerDescriptor')
 tests['category'] = ['CurrencyCategoryDbcComposer', 'CurrencyDbcComposer', 'DbcReader', 'DbcDescriptor', 'ContentResourceAllocator']

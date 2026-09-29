@@ -124,53 +124,6 @@ bool ValidateItemSchema(std::string &error) {
     return true;
 }
 
-std::vector<ItemAllocation>
-ManifestAllocations(json const &parity,
-					std::vector<ItemAllocation> const &current) {
-    std::vector<ItemAllocation> result;
-    std::set<std::tuple<std::string, std::string, std::string>> identities;
-	if (!parity.at("resources").is_array())
-		throw std::runtime_error("parity resources are not an array");
-	for (auto const &resource : parity.at("resources")) {
-        auto package = resource.at("package").get<std::string>();
-        auto symbol = resource.at("symbol").get<std::string>();
-        auto value = resource.at("value").get<std::uint32_t>();
-        auto baseline = resource.at("baselineSha256").get<std::string>();
-		auto policy =
-			resource.at("allocationPolicyVersion").get<std::uint32_t>();
-        auto kind = resource.at("resourceKind").get<std::string>();
-		if (!value ||
-			(kind != "item.id" && kind != "currency.known-bit" &&
-			 kind != "currency-category.id" &&
-			 kind != "item-extended-cost.id" &&
-			 kind != "creature-template.id" &&
-			 kind != "gameobject-template.id" &&
-			 kind != "creature-spawn.guid" && kind != "spell.id") ||
-			((kind == "currency-category.id" ||
-			  kind == "item-extended-cost.id") &&
-			 value > 65535) ||
-			((kind == "creature-template.id" ||
-			  kind == "gameobject-template.id") &&
-			 value > 0x00ffffff) ||
-			 (kind == "currency.known-bit" && value > 64) ||
-			 (kind == "spell.id" && value > ContentResourceAllocator::SpellIdPolicy({1}).lastCandidate) ||
-			!ContentBuildHash::Valid(baseline) ||
-			!identities.emplace(package, symbol, kind).second)
-            throw std::runtime_error("invalid parity allocation");
-		auto found = std::find_if(
-			current.begin(), current.end(), [&](auto const &lease) {
-				return lease.packageKey == package && lease.symbol == symbol &&
-					   lease.resourceKind == kind;
-        });
-		if (found == current.end() || found->value != value ||
-			found->baselineSha256 != baseline || found->policyVersion != policy)
-			throw std::runtime_error(
-				"retained allocation no longer matches parity manifest: " +
-				package + "/" + symbol);
-        result.push_back(*found);
-    }
-    return result;
-}
 } // namespace
 
 bool ContentServerDeployment::ReadStatus(std::uint32_t build, bool& exists,
@@ -308,11 +261,17 @@ bool ContentServerDeployment::Inspect(
         std::vector<ItemAllocation> retained;
 		Require(ContentAllocationRegistry().Read(realm, retained, error),
 				error);
-        auto allocations=ManifestAllocations(parityObject,retained);
+        // One read of the artifact supplies both the retained leases and the
+        // composed world-map hashes, so activation cannot validate an
+        // allocation against a different artifact state than it accepts.
+        auto const declared =
+			ContentServerBundle::ReadParityAllocations(parity, retained);
+        auto const &allocations = declared.allocations;
 		Require(ContentServerBundle::VerifyParity(
 					parity, realm, build, parityObject.at("baselineSha256"),
 					record->sha256, status.bundleSha256, rows, allocations,
-									 error, costs, vendors, creatures, gameObjects, spawns, spells),
+									 error, costs, vendors, creatures, gameObjects, spawns, spells,
+					declared.worldMapDbcSha256),
 				error);
         if(parityObject.contains("baselines"))
 			for (auto const &snapshot : parityObject.at("baselines")) {
@@ -486,7 +445,9 @@ bool ContentServerDeployment::Apply(
         std::vector<ItemAllocation> retained;
 		if (!ContentAllocationRegistry().Read(realm, retained, error))
 			return false;
-        auto allocations = ManifestAllocations(parityObject, retained);
+        auto const declared =
+			ContentServerBundle::ReadParityAllocations(parity, retained);
+        auto const &allocations = declared.allocations;
         auto baseline = parityObject.at("baselineSha256").get<std::string>();
 		Require(rows.empty() ? baseline.empty()
 							 : ContentBuildHash::Valid(baseline),
@@ -494,7 +455,8 @@ bool ContentServerDeployment::Apply(
 		if (!ContentServerBundle::VerifyParity(
 				parity, realm, build, baseline, record->sha256,
 				status.bundleSha256, rows, allocations, error, costs, vendors,
-				creatures, gameObjects, spawns, spells))
+				creatures, gameObjects, spawns, spells,
+				declared.worldMapDbcSha256))
 			return false;
         std::vector<std::string> provenanceGuards;
         if (parityObject.contains("baselines"))
