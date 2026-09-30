@@ -13,8 +13,10 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <iomanip>
 #include <iterator>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -84,7 +86,9 @@ ContentWorldMap MinimalMap(std::uint32_t mapId = 36, std::uint32_t floorId = 900
 {
 	ContentWorldMap map;
 	map.mapId = mapId;
-	map.transform = {12, -1.0f, 1.0f, 2.0f, 3.0f, mapId, 0.0f, 0.0f, floorId};
+	map.transform =
+		ContentWorldMapTransform{12, -1.0f, 1.0f, 2.0f, 3.0f, mapId, 0.0f, 0.0f,
+			floorId};
 	map.areas.push_back(ContentWorldMapArea{areaId, 42, "TestMap", 1.0f, 2.0f, 3.0f,
 		4.0f, -1, 0, 0, {ContentDungeonMapFloor{floorId, 1, 0.0f, 0.0f, 0.0f, 0.0f, 1}},
 		{ContentDungeonMapChunk{chunkId, 7, floorId, 0.0f}}});
@@ -120,6 +124,39 @@ json WorldMapManifest()
     })");
 }
 
+// A native instance map exactly as WDM Stable ships it: a WorldMapArea, its
+// DungeonMap floors, its DungeonMapChunk rows and the artwork, and no
+// WorldMapTransforms row. Gnomeregan (map 90, four floors), ShadowfangKeep (map
+// 33, seven floors), BlackrockSpire (map 229, seven floors), ScarletMonastery
+// (map 189, four floors), DireMaul (map 429, six floors), Scholomance (map 289,
+// four floors), BlackTemple (map 564, seven floors and dungeonMapId -1),
+// SunwellPlateau (map 580, dungeonMapId -1) and Karazhan (map 532, seventeen
+// floors) are all of this shape in WDM Stable, so the absence of a transform is
+// a real client shape rather than an invented one. The IDs are synthetic so no
+// test ever collides with a stock or WDM row.
+json NativeMapManifest(std::int32_t dungeonMapId = 0, std::size_t floorCount = 1)
+{
+	json floors = json::array();
+	json chunks = json::array();
+	for (std::size_t index = 0; index < floorCount; ++index)
+	{
+		floors.push_back({{"id", 900 + index}, {"floor", index + 1},
+			{"field3", -100.0 - static_cast<double>(index)},
+			{"field4", -200.0}, {"field5", -300.0}, {"field6", 40.0},
+			{"field7", 39}});
+		chunks.push_back({{"id", 5000 + index}, {"field2", 7},
+			{"dungeonMapId", 900 + index}, {"field4", -10000.0}});
+	}
+	json area = {{"id", 691}, {"areaId", 940}, {"internalName", "Gnomeregan"},
+		{"y1", -4500.0}, {"y2", -4800.0}, {"x1", -5200.0}, {"x2", -4900.0},
+		{"virtualMapId", -1}, {"dungeonMapId", dungeonMapId}, {"parentMapId", 0},
+		{"floors", floors}, {"chunks", chunks}};
+	json map = {{"mapId", 90}, {"areas", json::array({area})}};
+	return json{{"schema", 3}, {"package", "test-native-map"},
+		{"name", "Test Native Map"}, {"version", "1.0.0"},
+		{"worldMaps", json::array({map})}};
+}
+
 // Validation helper: every rejection must name the offending concept so an
 // operator can act on the message instead of guessing.
 std::string Reject(fs::path const &scratch, json const &manifest,
@@ -136,6 +173,21 @@ std::string Reject(fs::path const &scratch, json const &manifest,
 		assert(false);
 	}
 	return bad.error;
+}
+
+// The positive counterpart: a case that must be accepted keeps its own
+// diagnostics so a rejected fixture is never mistaken for a broken assertion.
+ContentPackageManifest Accept(fs::path const &scratch, std::string const &name,
+	json const &manifest)
+{
+	auto const path = scratch / (name + ".epf");
+	fs::remove(path);
+	Save(path, manifest);
+	auto const good = ContentPackage(path).Validate();
+	if (!good.valid)
+		std::cerr << "  expected " << name << " to validate: " << good.error << "\n";
+	assert(good.valid);
+	return good.manifest;
 }
 
 // Locates a node by a mixed string/index path so a rejection case can be built
@@ -324,7 +376,7 @@ static void CompositionTests(fs::path const &baselineDirectory)
 	assert(WorldMapDbcComposer::FloorWords(36, {900, 1, 0, 0, 0, 0, 1}).size() == 8);
 	assert(WorldMapDbcComposer::ChunkWords(36, {5000, 7, 900, 0}).size() == 5);
 	assert(WorldMapDbcComposer::AreaWords(36, MinimalMap().areas[0], 1303).size() == 11);
-	assert(WorldMapDbcComposer::TransformWords(36, MinimalMap().transform).size() == 10);
+	assert(WorldMapDbcComposer::TransformWords(36, *MinimalMap().transform).size() == 10);
 	assert(Throws([] { (void)WorldMapDbcComposer::FloorWords(36, {0, 1, 0, 0, 0, 0, 1}); }));
 	assert(Throws([] { (void)WorldMapDbcComposer::FloorWords(36, {900, 0, 0, 0, 0, 0, 1}); }));
 	assert(Throws([] { (void)WorldMapDbcComposer::ChunkWords(0, {5000, 7, 900, 0}); }));
@@ -600,6 +652,328 @@ static void FirstBuildPlanningTests()
 	std::cout << "  world-map first-build planning: PASS\n";
 }
 
+// A native instance map that declares no transform is the ordinary shape of the
+// data. It must reach DBC composition, and it must not conjure a transform on
+// the way: no row, no fixed ID, no lease, and WorldMapTransforms left exactly as
+// the verified stock file.
+static void NoTransformTests(fs::path const &scratch, fs::path const &baselineDirectory)
+{
+	auto const validated = Accept(scratch, "native-map", NativeMapManifest());
+	assert(validated.worldMaps.size() == 1);
+	auto const& map = validated.worldMaps[0];
+	assert(map.mapId == 90);
+	// Absent, not defaulted: no zeroed transform is standing in for one.
+	assert(!map.transform);
+	auto const& area = map.areas[0];
+	assert(area.id == 691 && area.dungeonMapId == 0 && area.virtualMapId == -1);
+	assert(area.floors.size() == 1 && area.chunks.size() == 1);
+
+	// No transform request exists at all, so the build never plans that table.
+	std::map<std::string, std::vector<ResourceAllocationRequest>> requests;
+	WorldMapDbcComposer::AppendRequests(validated.packageKey, validated.worldMaps,
+		requests);
+	assert(!requests.count("WorldMapTransforms"));
+	assert(requests.at("DungeonMap").size() == 1);
+	assert(requests.at("DungeonMapChunk").size() == 1);
+	assert(requests.at("WorldMapArea").size() == 1);
+	for (auto const& request : requests.at("DungeonMap"))
+		assert(request.fixedValue == 900);
+
+	// Fixed-ID planning succeeds for exactly the three tables the map owns.
+	for (auto const& table : {"DungeonMap", "DungeonMapChunk", "WorldMapArea"}) {
+		auto const plan = ContentResourceAllocator::PlanFixed("realm",
+			ContentResourceAllocator::FixedRowIdPolicy(
+				WorldMapDbcComposer::ResourceKind(table)),
+			requests.at(table), {}, {}, 1,
+			WorldMapDbcComposer::VerifiedBaselineSha256(table));
+		assert(plan.size() == requests.at(table).size());
+		for (auto const& lease : plan) {
+			assert(lease.value != 0);
+			assert(lease.state == "reserved" && lease.firstBuild == 1);
+			assert(lease.baselineSha256 ==
+				WorldMapDbcComposer::VerifiedBaselineSha256(table));
+		}
+	}
+
+	std::vector<ResolvedWorldMap> const maps{{validated.packageKey, map}};
+	assert(WorldMapDbcComposer::Rows("DungeonMap", maps) ==
+		std::vector<std::uint32_t>{900});
+	assert(WorldMapDbcComposer::Rows("DungeonMapChunk", maps) ==
+		std::vector<std::uint32_t>{5000});
+	assert(WorldMapDbcComposer::Rows("WorldMapArea", maps) ==
+		std::vector<std::uint32_t>{691});
+	// Nothing is composed for the transform table, so the stock file is returned
+	// byte for byte rather than a synthesised row appended to it.
+	assert(WorldMapDbcComposer::Rows("WorldMapTransforms", maps).empty());
+	auto const stockTransforms = Stock("WorldMapTransforms", baselineDirectory);
+	assert(WorldMapDbcComposer::Compose("WorldMapTransforms", stockTransforms, maps) ==
+		DbcReader::Serialize(stockTransforms));
+
+	// The other three tables compose normally: the stock rows survive, the
+	// declared rows follow, and the composed record carries exactly the authored
+	// words. "@" stands for the appended internal-name string offset, which
+	// depends on the stock string block.
+	struct Expected { char const* table; std::size_t stock; char const* words; };
+	static Expected const expected[] = {
+		{"DungeonMap", 55, "0x00000384 0x0000005A 0x00000001 0xC2C80000 0xC3480000 "
+			"0xC3960000 0x42200000 0x00000027"},
+		{"DungeonMapChunk", 622, "0x00001388 0x0000005A 0x00000007 0x00000384 0xC61C4000"},
+		{"WorldMapArea", 108, "0x000002B3 0x0000005A 0x000003AC @ 0xC58CA000 "
+			"0xC5960000 0xC5A28000 0xC5992000 0xFFFFFFFF 0x00000000 0x00000000"}};
+	for (auto const& e : expected) {
+		auto const stock = Stock(e.table, baselineDirectory);
+		auto const composed = WorldMapDbcComposer::Compose(e.table, stock, maps);
+		auto const parsed = DbcReader::Parse(composed, *FindDbcDescriptor(12340, e.table));
+		if (!parsed.valid) std::cerr << "  " << e.table << " did not reparse\n";
+		assert(parsed.valid);
+		assert(parsed.document.recordCount == e.stock + 1);
+		assert(std::equal(stock.words.begin(), stock.words.end(),
+			parsed.document.words.begin()));
+		assert(std::equal(stock.strings.begin(), stock.strings.end(),
+			parsed.document.strings.begin()));
+		auto const fields = FindDbcDescriptor(12340, e.table)->fields.size();
+		std::vector<std::uint32_t> const row(
+			parsed.document.words.begin() + e.stock * fields,
+			parsed.document.words.begin() + (e.stock + 1) * fields);
+		std::ostringstream declared;
+		for (std::size_t index = 0; index < row.size(); ++index)
+			declared << (index ? " " : "") << "0x" << std::hex << std::uppercase
+				<< std::setw(8) << std::setfill('0') << row[index];
+		std::string const text = declared.str();
+		std::ostringstream offset;
+		offset << "0x" << std::hex << std::uppercase << std::setw(8)
+			<< std::setfill('0') << stock.stringBlockSize;
+		std::string const wanted = std::string(e.words).find('@') == std::string::npos
+			? std::string(e.words)
+			: std::string(e.words).substr(0, std::string(e.words).find('@')) +
+				offset.str() + std::string(e.words).substr(
+					std::string(e.words).find('@') + 1);
+		if (text != wanted)
+			std::cerr << "  " << e.table << " composed row " << text << " != "
+					  << wanted << "\n";
+		assert(text == wanted);
+		if (e.table == std::string("WorldMapArea")) {
+			// The internal name is appended after every stock string, so no
+			// existing offset can move.
+			assert(parsed.document.stringBlockSize == stock.stringBlockSize + 11);
+			assert(std::string(reinterpret_cast<char const*>(
+				parsed.document.strings.data() + stock.stringBlockSize), 11) ==
+				std::string("Gnomeregan\0", 11));
+		}
+	}
+
+	// Parity covers exactly the three tables that were composed, so no
+	// WorldMapTransforms hash is recorded and none is required.
+	std::map<std::string, std::string> hashes;
+	std::vector<ContentBaseline> baselines;
+	std::vector<ItemAllocation> retained;
+	for (auto const& table : {"DungeonMap", "DungeonMapChunk", "WorldMapArea"}) {
+		auto const plan = ContentResourceAllocator::PlanFixed("realm",
+			ContentResourceAllocator::FixedRowIdPolicy(
+				WorldMapDbcComposer::ResourceKind(table)),
+			requests.at(table), {}, {}, 12,
+			WorldMapDbcComposer::VerifiedBaselineSha256(table));
+		retained.insert(retained.end(), plan.begin(), plan.end());
+		hashes[table] = WorldMapDbcComposer::VerifiedBaselineSha256(table);
+		ContentBaseline snapshot;
+		snapshot.table = table;
+		snapshot.clientBuild = 12340;
+		snapshot.descriptorVersion = FindDbcDescriptor(12340, table)->version;
+		snapshot.hash = hashes[table];
+		baselines.push_back(snapshot);
+	}
+	auto const parity = ContentServerBundle::ParityJson("realm", 12, retained, {},
+		"", "", "mpq", "server", "", "", {}, baselines, "", {}, {}, {}, {}, {}, {},
+		"", false, hashes);
+	auto const artifact = json::parse(parity);
+	assert(!artifact.at("worldMapDbcSha256").count("WorldMapTransforms"));
+	std::string error;
+	auto const declared = ContentServerBundle::ReadParityAllocations(parity, retained);
+	assert(declared.worldMapDbcSha256 == hashes);
+	if (!ContentServerBundle::VerifyParity(parity, "realm", 12, "", "mpq", "server",
+		{}, declared.allocations, error, {}, {}, {}, {}, {}, {}, declared.worldMapDbcSha256))
+		std::cerr << "  no-transform parity refused: " << error << "\n";
+	assert(ContentServerBundle::VerifyParity(parity, "realm", 12, "", "mpq", "server",
+		{}, declared.allocations, error, {}, {}, {}, {}, {}, {}, declared.worldMapDbcSha256));
+	// Recording a transform hash for a table this package never composed is
+	// refused: there is no lease to account for it.
+	{
+		auto forged = hashes;
+		forged["WorldMapTransforms"] =
+			WorldMapDbcComposer::VerifiedBaselineSha256("WorldMapTransforms");
+		assert(!ContentServerBundle::VerifyParity(parity, "realm", 12, "", "mpq",
+			"server", {}, declared.allocations, error, {}, {}, {}, {}, {}, {}, forged));
+	}
+	// A lease for a transform the package never declared is an orphan.
+	{
+		auto orphaned = retained;
+		orphaned.push_back(ContentResourceAllocator::PlanFixed("realm",
+			ContentResourceAllocator::FixedRowIdPolicy(
+				WorldMapDbcComposer::ResourceKind("WorldMapTransforms")),
+			{{validated.packageKey, "worldmap/0/transform",
+			  WorldMapDbcComposer::ResourceKind("WorldMapTransforms"), 900}},
+			{}, {}, 12,
+			WorldMapDbcComposer::VerifiedBaselineSha256("WorldMapTransforms")).front());
+		assert(!ContentServerBundle::VerifyParity(parity, "realm", 12, "", "mpq",
+			"server", {}, orphaned, error, {}, {}, {}, {}, {}, {}, hashes));
+	}
+	std::cout << "  world-map without a transform: PASS\n";
+}
+
+// Several floors never imply a transform. Karazhan has seventeen and none in
+// WDM Stable, so the model must not require one merely because floors.size() > 1.
+static void MultiFloorNoTransformTests(fs::path const &scratch,
+	fs::path const &baselineDirectory)
+{
+	auto const validated = Accept(scratch, "native-multifloor",
+		NativeMapManifest(0, 2));
+	assert(validated.worldMaps.size() == 1);
+	auto const& map = validated.worldMaps[0];
+	assert(!map.transform);
+	assert(map.areas[0].floors.size() == 2 && map.areas[0].chunks.size() == 2);
+	assert(map.areas[0].floors[0].id == 900 && map.areas[0].floors[1].id == 901);
+	assert(map.areas[0].chunks[0].dungeonMapId == 900 &&
+		   map.areas[0].chunks[1].dungeonMapId == 901);
+
+	std::map<std::string, std::vector<ResourceAllocationRequest>> requests;
+	WorldMapDbcComposer::AppendRequests(validated.packageKey, validated.worldMaps,
+		requests);
+	assert(!requests.count("WorldMapTransforms"));
+	assert(requests.at("DungeonMap").size() == 2);
+
+	std::vector<ResolvedWorldMap> const maps{{validated.packageKey, map}};
+	std::vector<std::uint32_t> const twoFloors{900, 901};
+	assert(WorldMapDbcComposer::Rows("DungeonMap", maps) == twoFloors);
+	assert(WorldMapDbcComposer::Rows("WorldMapTransforms", maps).empty());
+
+	auto const stock = Stock("DungeonMap", baselineDirectory);
+	auto const parsed = DbcReader::Parse(
+		WorldMapDbcComposer::Compose("DungeonMap", stock, maps),
+		*FindDbcDescriptor(12340, "DungeonMap"));
+	assert(parsed.valid && parsed.document.recordCount == stock.recordCount + 2);
+	// Both floors carry their own authored Floor value, in declaration order.
+	assert(parsed.document.words[55 * 8 + 0] == 900 &&
+		   parsed.document.words[55 * 8 + 2] == 1);
+	assert(parsed.document.words[56 * 8 + 0] == 901 &&
+		   parsed.document.words[56 * 8 + 2] == 2);
+	assert(WorldMapDbcComposer::Compose("WorldMapTransforms",
+		Stock("WorldMapTransforms", baselineDirectory), maps) ==
+		DbcReader::Serialize(Stock("WorldMapTransforms", baselineDirectory)));
+
+	// BlackTemple's shape: several floors, no transform, and dungeonMapId -1.
+	auto const sentinel = Accept(scratch, "native-multifloor-sentinel",
+		NativeMapManifest(-1, 2));
+	assert(!sentinel.worldMaps[0].transform);
+	assert(sentinel.worldMaps[0].areas[0].dungeonMapId == -1);
+	assert(sentinel.worldMaps[0].areas[0].floors.size() == 2);
+	std::cout << "  world-map multi-floor without a transform: PASS\n";
+}
+
+// areas[].dungeonMapId is a reference field. Stock 3.3.5a and WDM Stable both
+// carry 0 and -1 there, and WDM points one area (AhnQiraj, map 531) at a
+// DungeonMap row owned by a different map (ID 2, map 574). All of it must be
+// representable and preserved exactly, and none of it may become a claim on the
+// row it names.
+static void DungeonMapIdReferenceTests(fs::path const &scratch)
+{
+	// 0 and -1 are the stock spellings; both validate and both survive verbatim.
+	for (auto const value : {0, -1})
+	{
+		auto const validated = Accept(scratch, "dungeonmapid-" +
+			std::to_string(value), NativeMapManifest(value));
+		assert(validated.worldMaps[0].areas[0].dungeonMapId == value);
+	}
+	// A reference to a DungeonMap row this package does not own is legitimate
+	// and is never turned into an ownership claim.
+	{
+		auto manifest = NativeMapManifest();
+		// AhnQiraj's shape: an area naming a floor of another map entirely.
+		manifest["worldMaps"][0]["areas"][0]["dungeonMapId"] = 2;
+		auto const validated = Accept(scratch, "dungeonmapid-external", manifest);
+		assert(validated.worldMaps[0].areas[0].dungeonMapId == 2);
+		std::map<std::string, std::vector<ResourceAllocationRequest>> requests;
+		WorldMapDbcComposer::AppendRequests(validated.packageKey,
+			validated.worldMaps, requests);
+		// The referenced row is neither requested nor leased: naming it is not
+		// owning it.
+		assert(requests.at("DungeonMap").size() == 1);
+		for (auto const& request : requests.at("DungeonMap"))
+			assert(request.fixedValue == 900);
+		auto const leases = ContentResourceAllocator::PlanFixed("realm",
+			ContentResourceAllocator::FixedRowIdPolicy(
+				WorldMapDbcComposer::ResourceKind("DungeonMap")),
+			requests.at("DungeonMap"), {}, {}, 1,
+			WorldMapDbcComposer::VerifiedBaselineSha256("DungeonMap"));
+		assert(leases.size() == 1 && leases[0].value == 900);
+	}
+	// A reference to a floor this package owns under a different world map is
+	// still refused: the client would read that row as if it belonged here. A
+	// floor can only be owned once, so the second map declares its own row.
+	{
+		auto manifest = NativeMapManifest();
+		manifest["worldMaps"][0]["areas"][0]["dungeonMapId"] = 902;
+		manifest["worldMaps"].push_back(json::parse(R"({
+          "mapId": 91,
+          "areas": [
+            {"id": 692, "areaId": 941, "internalName": "GnomereganTwo",
+             "y1": -4500.0, "y2": -4800.0, "x1": -5200.0, "x2": -4900.0,
+             "virtualMapId": -1, "dungeonMapId": 0, "parentMapId": 0,
+             "floors": [{"id": 902, "floor": 1, "field3": 0.0, "field4": 0.0,
+               "field5": 0.0, "field6": 0.0, "field7": 39}],
+             "chunks": [{"id": 5010, "field2": 7, "dungeonMapId": 902, "field4": 0.0}]}
+          ]
+        })"));
+		Reject(scratch, manifest, "which this package owns under world map 91");
+	}
+	// The field is still a typed signed 32-bit value: no float, no string, and
+	// nothing outside the range the record can hold.
+	for (auto const& value : std::vector<json>{1.5, "2", 4294967296LL, -4294967296LL})
+		Reject(scratch, Replace(NativeMapManifest(), {"worldMaps", "0", "areas", "0",
+			"dungeonMapId"}, value), "worldMaps area requires");
+	// A chunk's floor is a different relationship: a chunk draws a floor of its
+	// own map, so a reference outside the map stays refused. WDM Stable resolves
+	// all 1932 of its chunk references inside their own map.
+	Reject(scratch, Replace(NativeMapManifest(), {"worldMaps", "0", "areas", "0",
+		"chunks", "0", "dungeonMapId"}, 901), "which is not a floor of world map 90");
+	std::cout << "  world-map dungeonMapId reference: PASS\n";
+}
+
+// The reference value reaches the record exactly as authored: 0 stays 0, -1
+// serializes to its raw uint32 representation, and an external ID is stored
+// unchanged. No truncation, no sign corruption, no rewriting.
+static void DungeonMapIdCompositionTests(fs::path const &scratch,
+	fs::path const &baselineDirectory)
+{
+	DbcDocument const stock = Stock("WorldMapArea", baselineDirectory);
+	auto composed = [&](std::int32_t value) {
+		auto const validated = Accept(scratch, "dungeonmapid-composed-" +
+			std::to_string(value), NativeMapManifest(value));
+		std::vector<ResolvedWorldMap> const maps{{validated.packageKey,
+			validated.worldMaps[0]}};
+		auto const parsed = DbcReader::Parse(
+			WorldMapDbcComposer::Compose("WorldMapArea", stock, maps),
+			*FindDbcDescriptor(12340, "WorldMapArea"));
+		assert(parsed.valid);
+		assert(parsed.document.recordCount == stock.recordCount + 1);
+		assert(std::equal(stock.words.begin(), stock.words.end(),
+			parsed.document.words.begin()));
+		return parsed.document;
+	};
+	// Word 9 is dungeonMap_id and word 8 is virtual_map_id; both are int32 in the
+	// descriptor, so -1 must arrive as 0xFFFFFFFF rather than 0 or 1.
+	auto const zero = composed(0);
+	assert(zero.words[108 * 11 + 8] == 0xFFFFFFFFu);
+	assert(zero.words[108 * 11 + 9] == 0u);
+	auto const sentinel = composed(-1);
+	assert(sentinel.words[108 * 11 + 8] == 0xFFFFFFFFu);
+	assert(sentinel.words[108 * 11 + 9] == 0xFFFFFFFFu);
+	auto const external = composed(2);
+	assert(external.words[108 * 11 + 9] == 2u);
+	// Composition is still a pure function of the baseline plus the input.
+	assert(composed(-1).words == sentinel.words);
+	std::cout << "  world-map dungeonMapId serialization: PASS\n";
+}
+
 static void PackageTests(fs::path const &scratch)
 {
 	auto const manifest = WorldMapManifest();
@@ -611,7 +985,7 @@ static void PackageTests(fs::path const &scratch)
 	auto const &area = result.manifest.worldMaps[0].areas[0];
 	assert(area.floors.size() == 1 && area.chunks.size() == 1);
 	assert(area.dungeonMapId == 0 && area.virtualMapId == -1);
-	assert(result.manifest.worldMaps[0].transform.newDungeonMapId == 900);
+	assert(result.manifest.worldMaps[0].transform->newDungeonMapId == 900);
 
 	// Schema 1 has no worldMaps section at all.
 	Reject(scratch, Replace(manifest, {"schema"}, 1), "Schema 2");
@@ -651,8 +1025,41 @@ static void PackageTests(fs::path const &scratch)
 		"worldMaps floor requires");
 	Reject(scratch, Replace(manifest, {"worldMaps", "0", "areas", "0", "floors", "0", "field6"},
 		"x"), "worldMaps floor requires");
-	Reject(scratch, Erase(manifest, {"worldMaps", "0", "transform"}),
-		"worldMaps transform must be");
+	// A declared transform is still validated in full: only its absence is legal.
+	Reject(scratch, Replace(manifest, {"worldMaps", "0", "transform"}, 5),
+		"worldMaps transform must be an object");
+	Reject(scratch, Replace(manifest, {"worldMaps", "0", "transform"}, json()),
+		"worldMaps transform must be an object");
+	// Two maps may not claim the same WorldMapTransforms ID. A map with no
+	// transform at all is fine beside one that has it, and claims no ID.
+	{
+		auto shared = manifest;
+		shared["worldMaps"].push_back(json::parse(R"({
+          "mapId": 37,
+          "transform": {"id": 12, "regionBottom": -1.0, "regionRight": 1.0, "regionTop": 2.0,
+            "regionLeft": 3.0, "newMapId": 37, "regionOffsetX": 0.0, "regionOffsetY": 0.0,
+            "newDungeonMapId": 902},
+          "areas": [
+            {"id": 802, "areaId": 44, "internalName": "TestMapTwo", "y1": 1.0, "y2": 2.0,
+             "x1": 3.0, "x2": 4.0, "virtualMapId": -1, "dungeonMapId": 0, "parentMapId": 0,
+             "floors": [{"id": 902, "floor": 1, "field3": 0.0, "field4": 0.0, "field5": 0.0,
+               "field6": 0.0, "field7": 1}],
+             "chunks": [{"id": 5002, "field2": 9, "dungeonMapId": 902, "field4": 0.0}]}
+          ]
+        })"));
+		Reject(scratch, shared, "Duplicate WorldMapTransforms ID");
+		// The same package with the second transform removed is valid and owns
+		// exactly one transform row.
+		shared["worldMaps"][1].erase("transform");
+		auto const mixed = Accept(scratch, "mixed-transform", shared);
+		assert(mixed.worldMaps.size() == 2);
+		assert(mixed.worldMaps[0].transform && !mixed.worldMaps[1].transform);
+		std::map<std::string, std::vector<ResourceAllocationRequest>> requests;
+		WorldMapDbcComposer::AppendRequests(mixed.packageKey, mixed.worldMaps,
+			requests);
+		assert(requests.at("WorldMapTransforms").size() == 1);
+		assert(requests.at("WorldMapTransforms")[0].fixedValue == 12);
+	}
 	Reject(scratch, Erase(manifest, {"worldMaps", "0", "areas"}), "nonempty areas");
 	Reject(scratch, Erase(manifest, {"worldMaps", "0", "areas", "0", "floors"}),
 		"nonempty floors");
@@ -1116,8 +1523,9 @@ static void GoldenTests(fs::path const &baselineDirectory, fs::path const &golde
 	assert(deadmines.areas[0].chunks.size() == 29);
 	assert(deadmines.areas[0].floors[0].id == 166 &&
 		   deadmines.areas[0].floors[1].id == 167);
-	assert(deadmines.transform.id == 11 && deadmines.transform.newMapId == 36);
-	assert(deadmines.transform.newDungeonMapId == 167);
+	assert(deadmines.transform && deadmines.transform->id == 11 &&
+		   deadmines.transform->newMapId == 36);
+	assert(deadmines.transform->newDungeonMapId == 167);
 	// The declared artwork is exactly the 24 Deadmines tiles under the client
 	// directory the area's internal name derives.
 	std::set<std::string> expected;
@@ -1217,6 +1625,54 @@ static void GoldenTests(fs::path const &baselineDirectory, fs::path const &golde
 	assert(composedArea.valid);
 	assert(composedArea.document.stringBlockSize == 1316);
 	assert(composedArea.document.words[108 * 11 + 3] == 1303);
+
+	// A declared transform is preserved exactly, so Deadmines still carries its
+	// own WorldMapTransforms row and its fixed ID 11 lease, unchanged.
+	assert(WorldMapDbcComposer::Rows("WorldMapTransforms", maps) ==
+		   std::vector<std::uint32_t>{11});
+	{
+		auto const parsed = DbcReader::Parse(WorldMapDbcComposer::Compose(
+			"WorldMapTransforms", Stock("WorldMapTransforms", baselineDirectory),
+			maps), *FindDbcDescriptor(12340, "WorldMapTransforms"));
+		assert(parsed.valid && parsed.document.recordCount == 10);
+		// ID 11, MapID 36, RegionBottom/Right -20000, RegionTop/Left 20000,
+		// NewMapID 36, RegionOffset 0/0, NewDungeonMapID 167.
+		assert(parsed.document.words[9 * 10 + 0] == 11);
+		assert(parsed.document.words[9 * 10 + 1] == 36);
+		assert(parsed.document.words[9 * 10 + 2] == 0xC69C4000u);
+		assert(parsed.document.words[9 * 10 + 3] == 0xC69C4000u);
+		assert(parsed.document.words[9 * 10 + 4] == 0x469C4000u);
+		assert(parsed.document.words[9 * 10 + 5] == 0x469C4000u);
+		assert(parsed.document.words[9 * 10 + 6] == 36);
+		assert(parsed.document.words[9 * 10 + 7] == 0);
+		assert(parsed.document.words[9 * 10 + 8] == 0);
+		assert(parsed.document.words[9 * 10 + 9] == 167);
+	}
+	// Dropping the transform from this very fixture must change the transform
+	// table alone: the other three are byte-for-byte the golden patch, and
+	// WorldMapTransforms falls back to the verified stock file. So the optional
+	// transform is what the Deadmines row rests on, and nothing else moved.
+	{
+		ContentWorldMap withTransform = deadmines;
+		ContentWorldMap withoutTransform = deadmines;
+		withoutTransform.transform.reset();
+		std::vector<ResolvedWorldMap> const bare{{"deadmines", withTransform}};
+		std::vector<ResolvedWorldMap> const without{{"deadmines", withoutTransform}};
+		for (auto const &table : {"DungeonMap", "DungeonMapChunk", "WorldMapArea"}) {
+			auto const with = WorldMapDbcComposer::Compose(table,
+				Stock(table, baselineDirectory), bare);
+			auto const withoutBytes = WorldMapDbcComposer::Compose(table,
+				Stock(table, baselineDirectory), without);
+			assert(with == withoutBytes);
+			std::string const golden =
+				ReadAll(goldenDirectory / (std::string(table) + ".dbc"));
+			assert(with == std::vector<std::uint8_t>(golden.begin(), golden.end()));
+		}
+		assert(WorldMapDbcComposer::Rows("WorldMapTransforms", without).empty());
+		auto const stockTransforms = Stock("WorldMapTransforms", baselineDirectory);
+		assert(WorldMapDbcComposer::Compose("WorldMapTransforms", stockTransforms,
+			without) == DbcReader::Serialize(stockTransforms));
+	}
 	std::cout << "  Deadmines golden fixture: PASS\n";
 }
 
@@ -1232,6 +1688,9 @@ int main(int argc, char **argv)
 		CompositionTests(stockDirectory);
 		StagingTests(stockDirectory);
 		ParityTests(stockDirectory);
+		NoTransformTests(scratch, stockDirectory);
+		MultiFloorNoTransformTests(scratch, stockDirectory);
+		DungeonMapIdCompositionTests(scratch, stockDirectory);
 		auto const golden = fs::path(argc > 2 && argv[2][0] ? argv[2] : "");
 		auto const artwork = fs::path(argc > 3 && argv[3][0] ? argv[3] : "");
 		if (!golden.empty() && fs::is_directory(golden))
@@ -1241,6 +1700,7 @@ int main(int argc, char **argv)
 	} else {
 		std::cout << "  world-map baseline checks: SKIP (no --world-map-baseline-dir)\n";
 	}
+	DungeonMapIdReferenceTests(scratch);
 	PackageTests(scratch);
 	return 0;
 }

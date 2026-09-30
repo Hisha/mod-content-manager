@@ -56,8 +56,12 @@ void WorldMapDbcComposer::AppendRequests(std::string const& packageKey,
     std::size_t mapIndex = 0;
     for (auto const& map : maps) {
         auto const prefix = "worldmap/" + std::to_string(mapIndex) + "/";
-        out["WorldMapTransforms"].push_back({packageKey, prefix + "transform",
-            ResourceKind("WorldMapTransforms"), map.transform.id});
+        // A map with no declared transform contributes no WorldMapTransforms row
+        // at all: no request, no fixed ID, no lease, no composed record. Nothing
+        // is synthesised for it, and NewDungeonMapID is never guessed.
+        if (map.transform)
+            out["WorldMapTransforms"].push_back({packageKey, prefix + "transform",
+                ResourceKind("WorldMapTransforms"), map.transform->id});
         for (auto const& area : map.areas) {
             auto const areaPrefix = prefix + "area/" + std::to_string(area.id) + "/";
             out["WorldMapArea"].push_back({packageKey, prefix + "area/" +
@@ -162,7 +166,10 @@ std::vector<std::uint32_t> WorldMapDbcComposer::Rows(std::string const& table, s
         else if (table == "WorldMapArea")
             for (auto const& area : declaration.areas) ids.push_back(area.id);
         else if (table == "WorldMapTransforms")
-            ids.push_back(declaration.transform.id);
+        {
+            // A map without a declared transform contributes no row at all.
+            if (declaration.transform) ids.push_back(declaration.transform->id);
+        }
         else
             throw std::runtime_error("Unsupported world-map DBC table: " + table);
     }
@@ -208,7 +215,12 @@ std::vector<std::uint8_t> WorldMapDbcComposer::Compose(std::string const& table,
             for (auto const& area : declaration.areas)
                 additions.push_back(AreaWords(declaration.mapId, area, intern(area.internalName)));
         else if (table == "WorldMapTransforms")
-            additions.push_back(TransformWords(declaration.mapId, declaration.transform));
+        {
+            // A map without a declared transform composes no transform row, so
+            // the verified stock file is reproduced exactly.
+            if (declaration.transform)
+                additions.push_back(TransformWords(declaration.mapId, *declaration.transform));
+        }
         else
             throw std::runtime_error("Unsupported world-map DBC table: " + table);
     }

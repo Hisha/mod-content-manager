@@ -568,6 +568,16 @@ format 8 as `worldMapDbcSha256` with lease-to-baseline provenance. Stock baselin
 through the same generic baseline registry as the other phases, so no world-map-specific SHA setting
 is required.
 
+A map's `transform` is optional, because most maps have no override — WDM Karazhan declares 17
+floors and no transform. Omitting it produces no request, lease, row or hash for
+`WorldMapTransforms.dbc`, which then stays byte-identical to stock; no `NewDungeonMapID` is ever
+inferred. A `transform` that *is* declared is validated exactly as before.
+
+`areas[].dungeonMapId` is a signed reference to a `DungeonMap` floor rather than an owned ID, so `0`,
+`-1` and a cross-map reference the package does not own are all accepted and written through to
+`WorldMapArea.dbc` unchanged. Only a reference to a floor this same package owns under a different
+`mapId` is refused, since the client would resolve it against the wrong map.
+
 `tests/fixtures/deadmines/manifest.json` is the proven minimal Deadmines contribution (map 36,
 transform 11, area 756/1581, floors 166/167, 29 chunks, 24 client BLP tiles). Composing it over the
 stock baselines reproduces the verified patch byte for byte, including the appended

@@ -65,7 +65,7 @@ The descriptors live in `src/DbcDescriptor.cpp` and are reachable through `World
 ## Schema 2 and 3 declaration
 
 `worldMaps[]` is a schema 2/3 top-level array. Schema 1 packages are rejected. The shape is
-`worldMaps[] -> {mapId, transform, areas[]}`, and every area owns `floors[]` and `chunks[]`:
+`worldMaps[] -> {mapId, transform (optional), areas[]}`, and every area owns `floors[]` and `chunks[]`:
 
 ```json
 "worldMaps": [
@@ -102,9 +102,34 @@ The descriptors live in `src/DbcDescriptor.cpp` and are reachable through `World
         ]
       }
     ]
+  },
+  {
+    "mapId": 90,
+    "areas": [
+      {
+        "id": 691,
+        "areaId": 940,
+        "internalName": "Gnomeregan",
+        "y1": -4500.0, "y2": -4800.0, "x1": -5200.0, "x2": -4900.0,
+        "virtualMapId": -1,
+        "dungeonMapId": -1,
+        "parentMapId": 0,
+        "floors": [
+          { "id": 900, "floor": 1, "field3": 0.0, "field4": 0.0,
+            "field5": 0.0, "field6": 0.0, "field7": 39 }
+        ],
+        "chunks": [
+          { "id": 5000, "field2": 7, "dungeonMapId": 900, "field4": -10000.0 }
+        ]
+      }
+    ]
   }
 ]
 ```
+
+The second entry above is a complete map with no `transform` key. It contributes a floor, a chunk and
+an area, requests nothing from `WorldMapTransforms`, and leaves the composed transform table equal to
+stock.
 
 The `fieldN` keys mirror the descriptor exactly. They are not placeholders waiting to be renamed:
 their client-side meaning is not established, so the module refuses to invent one. `mapId` is written
@@ -112,14 +137,58 @@ to every owned row's `MapID`/`map_id`, so it is not repeated per floor or chunk.
 `DungeonMapChunk.ID` is unrelated to the WDL tile it covers, and that chunk order is significant and
 preserved exactly as declared.
 
+## `transform` is optional
+
+A `transform` is a world-map *override*, not part of a map's identity, and most stock and WDM maps
+declare none. Karazhan in WDM Stable (map 532) is the clearest example: 17 floors, an area, and 86
+chunks, with no `WorldMapTransforms` row. So `transform` is optional and defaults to *absent*, never
+to a default row. Omitting it is the accurate way to say "this map has no override", and a map
+without one is a complete, valid contribution.
+
+When the key is absent the module does nothing on the author's behalf:
+
+- No `WorldMapTransforms` request, fixed ID, lease, or parity hash is produced. `NewDungeonMapID` is
+  never inferred, defaulted, or guessed from another map's row.
+- No transform row is composed, so the composed `WorldMapTransforms.dbc` is the verified stock file
+  byte for byte.
+- `AreaWords()` and the fixed-ID planner are simply not invoked for that table.
+
+A present `transform` is validated exactly as before, and in particular `newDungeonMapId` must still
+name a floor declared in the same map. Relaxing the *presence* requirement does not relax any
+validation of a transform that is actually declared.
+
+## `areas[].dungeonMapId` is a reference, not an owned ID
+
+`areas[].dungeonMapId` is a signed `int32` **reference** to a `DungeonMap` floor. It is not an ID this
+package allocates, and it is written through to `WorldMapArea.dbc` word 9 unchanged. The stock and WDM
+tables all rely on that:
+
+| Declared value | Meaning in the client |
+|---|---|
+| `0` | no dungeon map (the common case) |
+| `-1` | explicit "unset" sentinel |
+| positive | a floor of *some* map, which need not be this one |
+
+WDM Stable contains a live cross-map case: `WorldMapArea` 766 (Ahn'Qiraj, map 531) carries
+`dungeonMapId = 2`, while `DungeonMap` 2 belongs to map 574. Rejecting that would make real content
+unauthorable, so a reference that the package does not own is accepted and preserved byte for byte.
+
+The one case still refused is a reference to a floor **this same package** owns under a *different*
+`mapId`, because the client would resolve it as if it belonged to this map and silently paint the
+wrong floor. A floor may still only be owned by one map in a package. `DungeonMapChunk.dungeonMapId`
+keeps the stricter original rule: a chunk must belong to a floor of the map that declares it, which
+holds for every stock and WDM chunk.
+
 Validation is deliberately strict, because these tables are client-baked:
 
 - Every object is closed: any key not listed above is rejected as unsupported/allocator-owned.
 - All IDs are non-zero and unique within their table; all `mapId` values are non-zero.
 - `virtualMapId` is **required and explicit** even when the intended value is `-1`, so a
   "no override" case can never be produced by silently omitting a field.
-- Floor references are validated **map-wide** across all areas of one `worldMaps[]` entry, so
-  `chunks[].dungeonMapId`, `areas[].dungeonMapId` and `transform.newDungeonMapId` must name a floor
+- `areas[].dungeonMapId` is closed as a set: `0`, `-1`, and out-of-range or non-integer values are
+  still rejected, but any in-range floor reference is kept verbatim.
+- Floor references that must resolve to this map are validated **map-wide** across all areas of one
+  `worldMaps[]` entry, so `chunks[].dungeonMapId` and `transform.newDungeonMapId` must name a floor
   declared somewhere in the same map, not merely in the same area.
 - Artwork declared for a world-map area must live under
   `Interface/WorldMap/<internalName>/`; a tile anywhere else is rejected.
@@ -157,6 +226,8 @@ historical lease and composed file hash also stay in the parity artifact.
 - `WorldMapArea` string offsets are appended to the stock string block. Offset 0 must already be the
   empty string, so appending can never move an existing offset; a declared `internalName` is
   interned so repeated names share one appended copy.
+- Only declared rows are appended. A map without a `transform` appends no `WorldMapTransforms` row,
+  so a package that declares no transform at all reproduces the stock transform file exactly.
 - Collision and read-back verification run before the build is accepted: a declared ID that already
   exists in the stock table, a mismatched record layout, or a composed file that does not reparse
   into the expected rows fails the build.
@@ -226,6 +297,19 @@ the parity artifact, the byte-exact Deadmines golden comparison, end-to-end EPF 
 staging of all 24 tiles, and the rejection cases (schema 1, unknown keys, wrong types, zero and
 duplicate IDs, missing keys, dangling floor references, artwork in the wrong directory, path
 traversal, corrupt composed bytes).
+
+It also pins the two compatibility rules this module depends on, so neither can regress unnoticed:
+
+- **No-transform maps** — a map that omits `transform` parses, requests only the three always-present
+  tables, has no `WorldMapTransforms` row, composes the stock transform bytes unchanged, and
+  contributes no transform lease or hash. Covered for a single-floor map and for a multi-floor map,
+  and the Deadmines golden run re-proves that adding a second, transform-less map changes the other
+  three tables but leaves `WorldMapTransforms.dbc` at the 9 stock rows. A present transform must still
+  be an object; duplicate transform IDs across maps are still rejected.
+- **`dungeonMapId` as a reference** — `0`, `-1`, and a cross-map reference this package does not own
+  are all accepted and composed into word 9 unchanged; a reference to a floor the same package owns
+  under a different `mapId` is rejected. Out-of-range and non-integer values are rejected, as is a
+  chunk that references another map's floor.
 
 ## Limitations
 

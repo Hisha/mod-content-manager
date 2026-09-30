@@ -53,6 +53,9 @@ public:
     // cannot drift apart. A row is requested exactly once: a DungeonMap row is
     // owned by the area that declares the floor, so its symbol carries the area
     // and there is never a second, area-less alias competing for the same ID.
+    // A world map that declares no transform requests no WorldMapTransforms row
+    // at all, and an area's dungeonMapId is a reference that never requests the
+    // DungeonMap row it names.
     static void AppendRequests(std::string const& packageKey,
         std::vector<ContentWorldMap> const& maps,
         std::map<std::string, std::vector<ResourceAllocationRequest>>& out);

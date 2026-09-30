@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <memory>
 #include <set>
 #include <utility>
@@ -274,9 +275,30 @@ bool ReadWorldMapTransform(json const &declaration,
     return true;
 }
 
+// Best-effort scan of the floor IDs a raw worldMaps entry declares, used to
+// resolve references before the entries themselves are read. A malformed entry
+// is reported by the real readers below, so a shape that does not scan here
+// simply contributes no ID.
+std::vector<std::uint32_t> DeclaredFloorIds(json const &declaration) {
+	std::vector<std::uint32_t> ids;
+	if (!declaration.is_object() || !declaration.contains("areas") ||
+		!declaration["areas"].is_array())
+		return ids;
+	for (auto const &area : declaration["areas"])
+		if (area.is_object() && area.contains("floors") && area["floors"].is_array())
+			for (auto const &floor : area["floors"])
+				if (floor.is_object() &&
+					floor.value("id", json(0u)).is_number_unsigned())
+					ids.push_back(floor["id"].get<std::uint32_t>());
+	return ids;
+}
+
 // Reads and validates the whole worldMaps section. Row identities are
 // author-declared and fixed, so every table rejects duplicate IDs inside one
-// package and every reference must resolve inside the same world map.
+// package. A relationship that only makes sense against a row this package owns
+// -- a chunk's floor, a declared transform's NewDungeonMapID -- must resolve
+// inside the same world map. A bare reference field is not such a relationship
+// and is not resolved that way; see the dungeonMapId check below.
 bool ReadWorldMaps(json const &manifest, ContentPackageManifest &result,
 				   std::string &error) {
 	if (!manifest.is_array()) {
@@ -285,6 +307,18 @@ bool ReadWorldMaps(json const &manifest, ContentPackageManifest &result,
 	}
     static std::set<std::string> const keys = {"mapId", "transform", "areas"};
 	std::set<std::uint32_t> mapIds, transformIds, areaIds, floorIds, chunkIds;
+	// Every floor this package owns and the map that owns it, collected up front
+	// so a reference is resolved against the whole package and not against
+	// whatever happens to be declared before it.
+	std::map<std::uint32_t, std::uint32_t> floorMapOf;
+	for (auto const &entry : manifest) {
+		auto const owner = entry.is_object() ? entry.value("mapId", json(0u))
+											 : json(0u);
+		if (!owner.is_number_unsigned())
+			continue;
+		for (auto const id : DeclaredFloorIds(entry))
+			floorMapOf.emplace(id, owner.get<std::uint32_t>());
+	}
 	for (auto const &declaration : manifest) {
 		if (!declaration.is_object()) {
 			error = "worldMaps entry must be an object";
@@ -300,33 +334,30 @@ bool ReadWorldMaps(json const &manifest, ContentPackageManifest &result,
 			error = "worldMaps requires a non-zero mapId declared once per package";
 			return false;
 		}
-		if (!declaration.contains("transform")) {
-			error = "worldMaps transform must be an object";
-			return false;
-		}
-		if (!ReadWorldMapTransform(declaration["transform"], map.transform, error))
-			return false;
-		if (!transformIds.insert(map.transform.id).second) {
-			error = "Duplicate WorldMapTransforms ID in package: " +
-					std::to_string(map.transform.id);
-			return false;
+		if (declaration.contains("transform")) {
+			// A declared transform is validated exactly as before and keeps its
+			// author-declared ID. Its absence is legal: a native dungeon map can
+			// be WorldMapArea + DungeonMap + DungeonMapChunk + artwork only, so
+			// nothing is composed, requested or leased for it.
+			if (!ReadWorldMapTransform(declaration["transform"],
+									   map.transform.emplace(), error))
+				return false;
+			if (!transformIds.insert(map.transform->id).second) {
+				error = "Duplicate WorldMapTransforms ID in package: " +
+						std::to_string(map.transform->id);
+				return false;
+			}
 		}
 		if (!declaration.contains("areas") || !declaration["areas"].is_array() ||
 			declaration["areas"].empty()) {
 			error = "worldMaps requires a nonempty areas array";
 			return false;
 		}
-		// A chunk or area may reference any floor of the same world map, so the
-		// floor set is collected across all areas before references are checked.
-		std::set<std::uint32_t> mapFloors;
-		for (auto const &areaDeclaration : declaration["areas"])
-			for (auto const &floorDeclaration : areaDeclaration.is_object() &&
-													  areaDeclaration.contains("floors") &&
-													  areaDeclaration["floors"].is_array()
-												  ? areaDeclaration["floors"]
-												  : json::array())
-				if (floorDeclaration.is_object() && floorDeclaration.value("id", json(0u)).is_number_unsigned())
-					mapFloors.insert(floorDeclaration["id"].get<std::uint32_t>());
+		// A chunk may reference any floor of the same world map, so the floor set
+		// is collected across all areas before references are checked.
+		auto const declaredFloors = DeclaredFloorIds(declaration);
+		std::set<std::uint32_t> mapFloors(declaredFloors.begin(), declaredFloors.end());
+
 		for (auto const &areaDeclaration : declaration["areas"]) {
 			ContentWorldMapArea area;
 			if (!ReadWorldMapArea(areaDeclaration, area, error))
@@ -357,25 +388,37 @@ bool ReadWorldMaps(json const &manifest, ContentPackageManifest &result,
 					return false;
 				}
 			}
-			if (area.dungeonMapId && !mapFloors.count(
-											static_cast<std::uint32_t>(area.dungeonMapId))) {
-				error = "WorldMapArea " + std::to_string(area.id) +
-						" references DungeonMap " +
-						std::to_string(area.dungeonMapId) +
-						" which is not a floor of world map " +
-						std::to_string(map.mapId);
-				return false;
+			// areas[].dungeonMapId is a reference field, not an owned row: naming an
+			// ID here composes, requests and leases nothing, so no same-map
+			// resolution is required of it. Stock 3.3.5a and WDM Stable both carry 0
+			// and -1 here, and WDM points one area at a DungeonMap row owned by a
+			// different map, so such a value is preserved exactly as authored. The
+			// one refused case is naming a floor this package owns under a different
+			// map: the client would read that row as if it belonged to this one.
+			if (area.dungeonMapId) {
+				auto const referenced =
+					floorMapOf.find(static_cast<std::uint32_t>(area.dungeonMapId));
+				if (referenced != floorMapOf.end() &&
+					referenced->second != map.mapId) {
+					error = "WorldMapArea " + std::to_string(area.id) +
+							" references DungeonMap " +
+							std::to_string(area.dungeonMapId) +
+							" which this package owns under world map " +
+							std::to_string(referenced->second);
+					return false;
+				}
 			}
 			map.areas.push_back(std::move(area));
 		}
-		if (!mapFloors.count(map.transform.newDungeonMapId)) {
-			error = "WorldMapTransforms " + std::to_string(map.transform.id) +
+		if (map.transform && !mapFloors.count(map.transform->newDungeonMapId)) {
+			error = "WorldMapTransforms " + std::to_string(map.transform->id) +
 					" references NewDungeonMapID " +
-					std::to_string(map.transform.newDungeonMapId) +
+					std::to_string(map.transform->newDungeonMapId) +
 					" which is not a floor of world map " +
 					std::to_string(map.mapId);
 			return false;
 		}
+
 		result.worldMaps.push_back(std::move(map));
 	}
 	// Client artwork for a contributed map must use the exact area directory the

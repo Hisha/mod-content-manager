@@ -207,6 +207,12 @@ struct ContentDungeonMapChunk {
 };
 
 // One WorldMapArea.dbc row plus the floors and chunks of that area.
+//
+// `dungeonMapId` is a reference field, not an owned row: naming an ID here never
+// leases or composes that DungeonMap row. Only `floors` below is owned. Stock
+// 3.3.5a already carries 0 and -1 here, and WDM Stable additionally points one
+// area at a DungeonMap row owned by a different map, so no same-map resolution
+// is required of this field.
 struct ContentWorldMapArea {
     std::uint32_t id = 0;     // WorldMapArea.ID
     std::uint32_t areaId = 0; // WorldMapArea.area_id
@@ -244,9 +250,18 @@ struct ContentWorldMapTransform {
 };
 
 // One MapID contribution. `mapId` is written to every owned row's MapID/map_id.
+//
+// `transform` is optional. A native dungeon map is described by its
+// WorldMapArea, DungeonMap floors, DungeonMapChunk rows and artwork alone, and
+// stock 3.3.5a and WDM Stable both carry such maps with no WorldMapTransforms
+// row at all (Karazhan, map 532, has seventeen floors and no transform). So an
+// absent transform is a valid contribution, not a missing declaration: no row is
+// composed, no ID is requested and no lease is created. When a transform is
+// declared it is preserved exactly as authored. None is ever synthesised, and
+// NewDungeonMapID is never guessed.
 struct ContentWorldMap {
     std::uint32_t mapId = 0;
-    ContentWorldMapTransform transform;
+    std::optional<ContentWorldMapTransform> transform;
     std::vector<ContentWorldMapArea> areas;
     bool operator==(ContentWorldMap const &o) const {
         return mapId == o.mapId && transform == o.transform && areas == o.areas;
