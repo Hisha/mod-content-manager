@@ -37,6 +37,7 @@ public:
 	{
 		std::vector<ItemAllocation> allocations;
 		std::map<std::string, std::string> worldMapDbcSha256;
+		std::map<std::string, std::string> frameXmlSha256;
 	};
 	// Reads the parity artifact's resource list and matches every entry against
 	// the retained world-database leases. This is the same reader activation
@@ -59,7 +60,8 @@ public:
         std::vector<ContentBaseline> baselines = {}, std::string const& extendedCostDbcSha256 = "",
         std::vector<ResolvedExtendedCost> costs = {}, std::vector<ResolvedVendorRow> vendors = {},
 		std::vector<ResolvedCreatureTemplate> creatures = {}, std::vector<ResolvedGameObjectTemplate> gameObjects = {}, std::vector<ResolvedCreatureSpawn> spawns = {}, std::vector<ResolvedSpell> spells = {}, std::string const& spellDbcSha256 = "", bool validateCurrentSpellPolicy = true,
-		std::map<std::string, std::string> const& worldMapDbcSha256 = {});
+		std::map<std::string, std::string> const& worldMapDbcSha256 = {},
+		std::map<std::string, std::string> const& frameXmlSha256 = {});
     static bool ParseServer(std::string const& text, std::string const& realm,
         std::vector<ResolvedServerItem>& rows, std::string& error, std::vector<ResolvedExtendedCost>* costs = nullptr, std::vector<ResolvedVendorRow>* vendors = nullptr,
 		std::vector<ResolvedCreatureTemplate>* creatures = nullptr, std::vector<ResolvedGameObjectTemplate>* gameObjects = nullptr, std::vector<ResolvedCreatureSpawn>* spawns = nullptr, std::vector<ResolvedSpell>* spells = nullptr);
@@ -69,7 +71,8 @@ public:
         std::vector<ItemAllocation> const& allocations, std::string& error,
         std::vector<ResolvedExtendedCost> const& costs = {}, std::vector<ResolvedVendorRow> const& vendors = {},
 		std::vector<ResolvedCreatureTemplate> const& creatures = {}, std::vector<ResolvedGameObjectTemplate> const& gameObjects = {}, std::vector<ResolvedCreatureSpawn> const& spawns = {}, std::vector<ResolvedSpell> const& spells = {},
-		std::map<std::string, std::string> const& worldMapDbcSha256 = {});
+		std::map<std::string, std::string> const& worldMapDbcSha256 = {},
+		std::map<std::string, std::string> const& frameXmlSha256 = {});
     static std::string RowJson(ResolvedServerItem const& row);
     static std::string SqlText(std::string const& value);
     static std::string SqlIdentityText(std::string const& value);

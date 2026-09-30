@@ -1,5 +1,6 @@
 #include "ContentServerBundle.h"
 #include "ContentBuildHash.h"
+#include "ContentFrameXml.h"
 #include "ContentResourceAllocator.h"
 #include "ServerTableDescriptor.h"
 #include "WorldMapDbcComposer.h"
@@ -287,6 +288,19 @@ ContentServerBundle::ActivationParity ContentServerBundle::ReadParityAllocations
             else
                 result.worldMapDbcSha256[it.key()] = it.value().get<std::string>();
     }
+    if (parity.contains("frameXmlSha256")) {
+        if (!parity.at("frameXmlSha256").is_object())
+            throw std::runtime_error(
+                "Invalid parity allocation: frameXmlSha256 is not an object");
+        for (auto it = parity.at("frameXmlSha256").begin();
+             it != parity.at("frameXmlSha256").end(); ++it)
+            if (!it.value().is_string())
+                throw std::runtime_error(
+                    "Invalid parity allocation: generated FrameXML hash for " +
+                    it.key() + " is not a string");
+            else
+                result.frameXmlSha256[it.key()] = it.value().get<std::string>();
+    }
     return result;
 }
 
@@ -460,7 +474,8 @@ std::string ContentServerBundle::ParityJson(
 	std::vector<ResolvedCreatureSpawn> spawns,
     std::vector<ResolvedSpell> spells, std::string const& spellDbcSha256,
 	bool validateCurrentSpellPolicy,
-	std::map<std::string, std::string> const& worldMapDbcSha256) {
+	std::map<std::string, std::string> const& worldMapDbcSha256,
+	std::map<std::string, std::string> const& frameXmlSha256) {
     auto sorted = allocations;
     std::sort(sorted.begin(), sorted.end(), [](auto const& a, auto const& b) {
 		return std::tie(a.packageKey, a.symbol) <
@@ -552,17 +567,30 @@ std::string ContentServerBundle::ParityJson(
 		artifact["format"] = 7; artifact["spellDbcSha256"] = spellDbcSha256;
 		artifact["spells"] = SpellObjects(spells,validateCurrentSpellPolicy);
 	}
-	if (!worldMapDbcSha256.empty()) {
-		// A native world map is a client-only contribution, so its only durable
-		// record is the lease plus the composed file hash. Recording both keeps a
-		// rebuild or reinstall auditable without a world-database row.
-		artifact["format"] = 8;
-		artifact["worldMapDbcSha256"] = json::object();
-		for (auto const& entry : worldMapDbcSha256) {
-			if (!ContentBuildHash::Valid(entry.second))
-				throw std::runtime_error("Invalid composed " + entry.first + ".dbc hash");
-			artifact["worldMapDbcSha256"][entry.first] = entry.second;
-		}
+if (!worldMapDbcSha256.empty()) {
+        // A native world map is a client-only contribution, so its only durable
+        // record is the lease plus the composed file hash. Recording both keeps a
+        // rebuild or reinstall auditable without a world-database row.
+        artifact["format"] = 8;
+        artifact["worldMapDbcSha256"] = json::object();
+        for (auto const &entry : worldMapDbcSha256) {
+            if (!ContentBuildHash::Valid(entry.second))
+                throw std::runtime_error("Invalid composed " + entry.first + ".dbc hash");
+            artifact["worldMapDbcSha256"][entry.first] = entry.second;
+        }
+	}
+	if (!frameXmlSha256.empty()) {
+        // Generated FrameXML is derived entirely from package declarations, so it
+        // leases nothing and has no server row. Its durable record is the exact
+        // set of generated files and their hashes, which is what makes an install
+        // prove it received the same floor labels the build composed.
+        artifact["format"] = 9;
+        artifact["frameXmlSha256"] = json::object();
+        for (auto const &entry : frameXmlSha256) {
+            if (!ContentBuildHash::Valid(entry.second))
+                throw std::runtime_error("Invalid generated FrameXML hash for " + entry.first);
+            artifact["frameXmlSha256"][entry.first] = entry.second;
+        }
 	}
     return artifact.dump(2) + "\n";
 }
@@ -778,7 +806,8 @@ bool ContentServerBundle::VerifyParity(
 	std::vector<ResolvedGameObjectTemplate> const &gameObjects,
         std::vector<ResolvedCreatureSpawn> const &spawns,
 	std::vector<ResolvedSpell> const &spells,
-	std::map<std::string, std::string> const &expectedWorldMapDbcSha256) {
+	std::map<std::string, std::string> const &expectedWorldMapDbcSha256,
+	std::map<std::string, std::string> const &expectedFrameXmlSha256) {
 	try {
         auto actual = json::parse(text);
 		auto spellSha=actual.value("spellDbcSha256",std::string());
@@ -1003,6 +1032,34 @@ bool ContentServerBundle::VerifyParity(
                 throw std::runtime_error(
                     "World-map composed hash set mismatch");
         }
+        // Generated FrameXML is recorded the same way a composed DBC is: by exact
+        // target and hash, with no allocator lease behind it. The recorded set
+        // must be exactly the set this build composed, so an install cannot accept
+        // floor labels that differ from the ones its parity artifact describes.
+        std::map<std::string, std::string> frameXmlHashes;
+        {
+            static std::map<std::string, std::string> const known = [] {
+                std::map<std::string, std::string> targets;
+                for (auto const &target : ContentFrameXml::Targets())
+                    targets.emplace(target, target);
+                return targets;
+            }();
+            if (actual.contains("frameXmlSha256")) {
+                if (!actual.at("frameXmlSha256").is_object())
+                    throw std::runtime_error("Invalid frameXmlSha256");
+                for (auto it = actual.at("frameXmlSha256").begin();
+                     it != actual.at("frameXmlSha256").end(); ++it) {
+                    if (!known.count(it.key()))
+                        throw std::runtime_error("Unknown generated FrameXML file: " + it.key());
+                    auto hash = it.value().get<std::string>();
+                    if (!ContentBuildHash::Valid(hash))
+                        throw std::runtime_error("Invalid generated FrameXML hash: " + it.key());
+                    frameXmlHashes[it.key()] = hash;
+                }
+            }
+            if (frameXmlHashes != expectedFrameXmlSha256)
+                throw std::runtime_error("Generated FrameXML hash set mismatch");
+        }
         std::vector<ContentBaseline> baselines;
 		if (actual.contains("baselines")) {
             std::set<std::string> tables;
@@ -1064,7 +1121,7 @@ bool ContentServerBundle::VerifyParity(
 						  itemSha, clientMpqSha256, serverSha256, currencySha,
 						  categorySha, categories, baselines, costSha, costs,
 						  vendors, creatures, gameObjects, spawns, spells, spellSha,
-						  false, worldMapHashes)))
+						  false, worldMapHashes, frameXmlHashes)))
 			throw std::runtime_error("manifest values differ from build, "
 									 "allocation, or server bundle");
         return true;

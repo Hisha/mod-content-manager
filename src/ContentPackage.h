@@ -206,6 +206,34 @@ struct ContentDungeonMapChunk {
     }
 };
 
+// Locale-aware dungeon level labels declared for one WorldMapArea.
+//
+// A key is the exact level index the stock
+// WorldMapLevelDropDown_Initialize loop numbers, so a label can only ever land
+// on the level the client itself numbers that way. Labels are keyed by locale
+// because the client selects them with GetLocale(); a locale the build-12340
+// client cannot return is refused at parse time.
+struct ContentWorldMapFloorNames {
+    std::map<std::uint32_t, std::string> labels;
+    bool operator==(ContentWorldMapFloorNames const &o) const {
+        return labels == o.labels;
+    }
+};
+
+// The verified stock FrameXML.toc this package's floor labels will be inserted
+// into. The package carries the bytes because only it knows which client build
+// its labels were authored against; Content Manager refuses any digest other
+// than the pinned build-12340 one, so the generated TOC is always the stock TOC
+// plus exactly one inserted line.
+struct ContentClientFrameXml {
+    std::string stockTocSource; // member path inside the package EPF
+    std::string stockTocSha256; // pinned digest of those exact bytes
+    bool operator==(ContentClientFrameXml const &o) const {
+        return stockTocSource == o.stockTocSource &&
+               stockTocSha256 == o.stockTocSha256;
+    }
+};
+
 // One WorldMapArea.dbc row plus the floors and chunks of that area.
 //
 // `dungeonMapId` is a reference field, not an owned row: naming an ID here never
@@ -213,6 +241,9 @@ struct ContentDungeonMapChunk {
 // 3.3.5a already carries 0 and -1 here, and WDM Stable additionally points one
 // area at a DungeonMap row owned by a different map, so no same-map resolution
 // is required of this field.
+//
+// `floorNames` is client-only and composes no DBC row: it describes how this
+// area's levels are labelled in the world-map level dropdown.
 struct ContentWorldMapArea {
     std::uint32_t id = 0;     // WorldMapArea.ID
     std::uint32_t areaId = 0; // WorldMapArea.area_id
@@ -223,12 +254,14 @@ struct ContentWorldMapArea {
     std::uint32_t parentMapId = 0;
     std::vector<ContentDungeonMapFloor> floors;
     std::vector<ContentDungeonMapChunk> chunks;
+    std::map<std::string, ContentWorldMapFloorNames> floorNames;
     bool operator==(ContentWorldMapArea const &o) const {
         return id == o.id && areaId == o.areaId &&
                internalName == o.internalName && y1 == o.y1 && y2 == o.y2 &&
                x1 == o.x1 && x2 == o.x2 && virtualMapId == o.virtualMapId &&
                dungeonMapId == o.dungeonMapId && parentMapId == o.parentMapId &&
-               floors == o.floors && chunks == o.chunks;
+               floors == o.floors && chunks == o.chunks &&
+               floorNames == o.floorNames;
     }
 };
 
@@ -277,6 +310,10 @@ struct ContentPackageManifest {
 	// Schema 3: sorted, deduplicated immutable client requirements (e.g.
 	// protected-framexml).
     std::vector<std::string> clientRequirements;
+    // Schema 3: the verified stock FrameXML.toc these floor labels are inserted
+    // into. Present exactly when some worldMaps[].areas[].floorNames is declared,
+    // because the two are the same declaration seen from its client side.
+    std::optional<ContentClientFrameXml> clientFrameXml;
 
     std::vector<ContentPackageEntry> content;
     std::vector<ContentItemRow> itemRows;
@@ -310,6 +347,13 @@ public:
     explicit ContentPackage(std::filesystem::path path);
 
     ContentPackageValidationResult Validate() const;
+
+	// Reads one member's exact bytes without staging it. Used to verify the
+	// stock FrameXML.toc a package declares before any of its floor labels are
+	// allowed to influence the build.
+	static bool ReadMember(std::filesystem::path const& epf,
+		std::string const& member, std::vector<std::uint8_t>& out,
+		std::string& error);
 
 	ContentPackageStageResult
 	Stage(std::filesystem::path const &workDirectory) const;

@@ -1,0 +1,332 @@
+#include "ContentFrameXml.h"
+#include "ContentBuildHash.h"
+#include "ContentBuildPaths.h"
+#include <cstdio>
+#include <fstream>
+
+namespace
+{
+// One Lua 5.1 short string literal. Backslash, quote and the C0 controls are
+// escaped; every other byte, including UTF-8 continuation bytes, is emitted
+// literally the way the client's own GlobalStrings.lua already carries them.
+std::string LuaString(std::string const& value)
+{
+    std::string out = "\"";
+    for (unsigned char c : value)
+    {
+        if (c == '\\') out += "\\\\";
+        else if (c == '"') out += "\\\"";
+        else if (c == '\n') out += "\\n";
+        else if (c == '\r') out += "\\r";
+        else if (c == '\t') out += "\\t";
+        else if (c < 32 || c == 127)
+        {
+            char escaped[5];
+            std::snprintf(escaped, sizeof escaped, "\\%03u", static_cast<unsigned>(c));
+            out += escaped;
+        }
+        else out += static_cast<char>(c);
+    }
+    out += '"';
+    return out;
+}
+
+std::string Number(std::uint32_t value)
+{
+    return std::to_string(value);
+}
+}
+
+std::string const& ContentFrameXml::GeneratedLuaTarget()
+{
+    static std::string const target =
+        "Interface/FrameXML/ContentManagerWorldMapFloorNames.lua";
+    return target;
+}
+
+std::string const& ContentFrameXml::StockTocTarget()
+{
+    static std::string const target = "Interface/FrameXML/FrameXML.toc";
+    return target;
+}
+
+std::string const& ContentFrameXml::TocInsertionMarker()
+{
+    static std::string const marker = "## add new modules above here";
+    return marker;
+}
+
+std::string const& ContentFrameXml::VerifiedStockTocSha256()
+{
+    // Verified stock 3.3.5a build-12340 locale-enUS.MPQ Interface/FrameXML/
+    // FrameXML.toc: 2456 bytes, CRLF line endings, no trailing newline. The
+    // digest is pinned so a generated TOC can only ever be this exact file plus
+    // one inserted line.
+    static std::string const digest =
+        "36ccfed8ad8e424fb312c942a75bd17c6091dd264df8653f117dcfe8417d91a3";
+    return digest;
+}
+
+std::set<std::string> const& ContentFrameXml::SupportedLocales()
+{
+    // Exactly the locales GetLocale() can return on build 12340.
+    static std::set<std::string> const locales = {
+        "deDE", "enCN", "enGB", "enUS", "esES", "esMX", "frFR",
+        "itIT", "koKR", "ptBR", "ruRU", "zhCN", "zhTW"};
+    return locales;
+}
+
+bool ContentFrameXml::SupportedLocale(std::string const& locale)
+{
+    return SupportedLocales().count(locale) != 0;
+}
+
+bool ContentFrameXml::FloorNameToken(std::string const& internalName,
+                                     std::string& token)
+{
+    token.clear();
+    if (internalName.empty()) return false;
+    for (unsigned char c : internalName)
+    {
+        // Non-ASCII would need the client's own Latin-1 fold to reproduce in
+        // Lua, which is not something to reimplement here.
+        if (c < 32 || c > 126) return false;
+        token += (c >= 'a' && c <= 'z') ? static_cast<char>(c - 'a' + 'A')
+                                        : static_cast<char>(c);
+    }
+    return !token.empty();
+}
+
+bool ContentFrameXml::Collect(std::vector<ContentWorldMap> const& worldMaps,
+                              Declared& out, std::string& error)
+{
+    for (auto const& map : worldMaps)
+        for (auto const& area : map.areas)
+            for (auto const& entry : area.floorNames)
+            {
+                if (entry.first.empty() || entry.second.labels.empty())
+                {
+                    error = "worldMaps floorNames locales must be nonempty for "
+                            "area " + std::to_string(area.id);
+                    return false;
+                }
+                std::string token;
+                if (!FloorNameToken(area.internalName, token))
+                {
+                    error = "worldMaps area " + std::to_string(area.id) +
+                            " internalName '" + area.internalName +
+                            "' cannot carry floor labels: it is outside the "
+                            "ASCII range the generated client lookup matches. "
+                            "An area without an ASCII internal name keeps the "
+                            "stock floor label";
+                    return false;
+                }
+                for (auto const& label : entry.second.labels)
+                {
+                    auto& levels = out[entry.first][token];
+                    auto existing = levels.find(label.first);
+                    if (existing != levels.end() && existing->second != label.second)
+                    {
+                        error = "worldMaps area " + std::to_string(area.id) +
+                                " declares conflicting labels for locale '" +
+                                entry.first + "' level " + Number(label.first) +
+                                " of map token '" + token + "'";
+                        return false;
+                    }
+                    levels[label.first] = label.second;
+                }
+            }
+    return true;
+}
+
+bool ContentFrameXml::Merge(Declared const& package, std::string const& packageKey,
+                            Declared& out, std::string& error)
+{
+    for (auto const& locale : package)
+        for (auto const& map : locale.second)
+            for (auto const& level : map.second)
+            {
+                auto& levels = out[locale.first][map.first];
+                auto existing = levels.find(level.first);
+                if (existing != levels.end() && existing->second != level.second)
+                {
+                    error = "Package '" + packageKey + "' declares a different "
+                            "label for locale '" + locale.first + "' map '" +
+                            map.first + "' level " + Number(level.first) +
+                            " than the package that owns it";
+                    return false;
+                }
+                levels[level.first] = level.second;
+            }
+    return true;
+}
+
+bool ContentFrameXml::ComposeLua(Declared const& floors, std::string& text,
+                                 std::string& error)
+{
+    if (floors.empty())
+    {
+        error = "Cannot generate floor-name Lua with no declared floor names";
+        return false;
+    }
+    for (auto const& locale : floors)
+        if (locale.second.empty())
+        {
+            error = "Declared locale '" + locale.first + "' has no map labels";
+            return false;
+        }
+    std::string out =
+        "-- Generated by Content Manager from declared\n"
+        "-- worldMaps[].areas[].floorNames. Do not edit.\n"
+        "--\n"
+        "-- This module is loaded from the stock FrameXML.toc after\n"
+        "-- WorldMapFrame.xml and replaces exactly one stock function,\n"
+        "-- WorldMapLevelDropDown_Initialize. Every other stock global is read\n"
+        "-- from the file it already comes from; nothing here is reimplemented\n"
+        "-- beyond that one function, and the stock function itself still runs\n"
+        "-- whenever this module has no label to offer.\n"
+        "CONTENT_MANAGER_DUNGEON_FLOOR_NAMES = {\n";
+    for (auto const& locale : floors)
+    {
+        out += "    [" + LuaString(locale.first) + "] = {\n";
+        for (auto const& map : locale.second)
+        {
+            out += "        [" + LuaString(map.first) + "] = {\n";
+            for (auto const& level : map.second)
+                out += "            [" + Number(level.first) + "] = " +
+                       LuaString(level.second) + ",\n";
+            out += "        },\n";
+        }
+        out += "    },\n";
+    }
+    out +=
+        "}\n"
+        "\n"
+        "do\n"
+        "    local floorNames = CONTENT_MANAGER_DUNGEON_FLOOR_NAMES\n"
+        "    local stockInitialize = WorldMapLevelDropDown_Initialize\n"
+        "    -- The body below is the stock build-12340 body with exactly one\n"
+        "    -- changed line: info.text falls back to the stock format string\n"
+        "    -- whenever this map and level declare no label. The level index is\n"
+        "    -- used exactly as the stock loop numbers it, so a label can only\n"
+        "    -- ever land on the level the client itself numbers that way.\n"
+        "    WorldMapLevelDropDown_Initialize = function()\n"
+        "        local labels = nil\n"
+        "        local mapInfo = GetMapInfo()\n"
+        "        if mapInfo then\n"
+        "            labels = floorNames[GetLocale()]\n"
+        "            if labels then\n"
+        "                labels = labels[strupper(mapInfo)]\n"
+        "            end\n"
+        "        end\n"
+        "        if not labels then\n"
+        "            return stockInitialize()\n"
+        "        end\n"
+        "        local info = UIDropDownMenu_CreateInfo()\n"
+        "        local level = GetCurrentMapDungeonLevel()\n"
+        "        for i = 1, GetNumDungeonMapLevels() do\n"
+        "            info.text = labels[i] or string.format(FLOOR_NUMBER, i)\n"
+        "            info.func = WorldMapLevelButton_OnClick\n"
+        "            info.checked = (i == level)\n"
+        "            UIDropDownMenu_AddButton(info)\n"
+        "        end\n"
+        "    end\n"
+        "end\n";
+    text = std::move(out);
+    return true;
+}
+
+bool ContentFrameXml::ComposeToc(std::vector<std::uint8_t> const& stock,
+                                 std::string& text, std::string& error)
+{
+    std::string const source(stock.begin(), stock.end());
+    std::string const moduleName =
+        GeneratedLuaTarget().substr(GeneratedLuaTarget().rfind('/') + 1);
+
+    std::string out;
+    out.reserve(source.size() + moduleName.size() + 4);
+    std::size_t insertions = 0;
+    for (std::size_t position = 0; position < source.size();)
+    {
+        auto newline = source.find('\n', position);
+        auto stop = newline == std::string::npos ? source.size() : newline + 1;
+        std::string const raw = source.substr(position, stop - position);
+        position = stop;
+        std::string line = raw;
+        if (!line.empty() && line.back() == '\n') line.pop_back();
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line == moduleName)
+        {
+            error = "Stock FrameXML.toc already loads " + moduleName;
+            return false;
+        }
+        out += raw;
+        if (line != TocInsertionMarker()) continue;
+        // Reuse this TOC's own line ending for the inserted entry rather than
+        // normalizing the whole file, so the diff against stock stays one line.
+        if (raw.size() < 2 || raw.compare(raw.size() - 2, 2, "\r\n") != 0)
+        {
+            error = "Stock FrameXML.toc insertion marker is not a terminated "
+                    "line";
+            return false;
+        }
+        out += moduleName + "\r\n";
+        ++insertions;
+    }
+    if (insertions != 1)
+    {
+        error = "Stock FrameXML.toc must contain exactly one '" +
+                TocInsertionMarker() + "' line, found " +
+                std::to_string(insertions);
+        return false;
+    }
+    text = std::move(out);
+    return true;
+}
+
+bool ContentFrameXml::Stage(std::string const& target, std::string const& text,
+                            std::filesystem::path const& workspace,
+                            std::string& error)
+{
+    namespace fs = std::filesystem;
+    using namespace ContentBuildPaths;
+    try
+    {
+        Require(!workspace.empty(), "Build workspace must not be empty");
+        Require(!text.empty(), "Generated FrameXML content must not be empty");
+        RejectLinks(workspace);
+        auto safe = Target(target);
+        auto destination = workspace / fs::path(safe).generic_string();
+        RejectLinks(destination);
+        fs::create_directories(destination.parent_path());
+        Require(!fs::exists(fs::symlink_status(destination)),
+                "Generated " + safe + " target already exists in workspace");
+        {
+            std::ofstream output(destination, std::ios::binary | std::ios::trunc);
+            Require(output.is_open(), "Cannot create generated " + safe);
+            output.write(text.data(), static_cast<std::streamsize>(text.size()));
+            Require(output.good(), "Cannot write generated " + safe);
+        }
+        std::ifstream input(destination, std::ios::binary);
+        Require(input.is_open(), "Cannot read back generated " + safe);
+        std::string readBack((std::istreambuf_iterator<char>(input)),
+                             std::istreambuf_iterator<char>());
+        Require(input.good() || input.eof(), "Cannot read generated " + safe);
+        Require(readBack == text,
+                "Generated " + safe + " read-back differs from composed text");
+        return true;
+    }
+    catch (std::exception const& exception)
+    {
+        error = exception.what();
+        return false;
+    }
+}
+
+std::vector<std::string> const& ContentFrameXml::Targets()
+{
+    static std::vector<std::string> const targets = {
+        "Interface/FrameXML/ContentManagerWorldMapFloorNames.lua",
+        "Interface/FrameXML/FrameXML.toc"};
+    return targets;
+}

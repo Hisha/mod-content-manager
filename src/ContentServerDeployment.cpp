@@ -271,7 +271,7 @@ bool ContentServerDeployment::Inspect(
 					parity, realm, build, parityObject.at("baselineSha256"),
 					record->sha256, status.bundleSha256, rows, allocations,
 									 error, costs, vendors, creatures, gameObjects, spawns, spells,
-					declared.worldMapDbcSha256),
+					declared.worldMapDbcSha256, declared.frameXmlSha256),
 				error);
         if(parityObject.contains("baselines"))
 			for (auto const &snapshot : parityObject.at("baselines")) {
@@ -456,7 +456,7 @@ bool ContentServerDeployment::Apply(
 				parity, realm, build, baseline, record->sha256,
 				status.bundleSha256, rows, allocations, error, costs, vendors,
 				creatures, gameObjects, spawns, spells,
-				declared.worldMapDbcSha256))
+				declared.worldMapDbcSha256, declared.frameXmlSha256))
 			return false;
         std::vector<std::string> provenanceGuards;
         if (parityObject.contains("baselines"))

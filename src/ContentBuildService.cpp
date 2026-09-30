@@ -8,6 +8,7 @@
 #include "ContentClientRequirement.h"
 #include "ContentCurrencyServer.h"
 #include "ContentExtendedCostServer.h"
+#include "ContentFrameXml.h"
 #include "ContentManagedServer.h"
 #include "ContentManager.h"
 #include "ContentPackage.h"
@@ -204,6 +205,60 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 						"Raw " + entry.first + ".dbc conflicts with semantic composition");
 				owners.emplace(key, "world-map composer");
 			}
+		// Declared floor labels from every participating package fold into one
+		// build-wide set. A second package may add a map or a locale, but may not
+		// restate a level another package already owns: two owners for one label
+		// is a build conflict, not something to resolve silently.
+		ContentFrameXml::Declared declaredFloors;
+		ContentPackageManifest const* stockTocOwner = nullptr;
+		std::filesystem::path stockTocPackage;
+		std::string floorError;
+		for (auto const &source : selected) {
+			auto const &m = source.validation.manifest;
+			ContentFrameXml::Declared packageFloors;
+			if (!ContentFrameXml::Collect(m.worldMaps, packageFloors, floorError))
+				throw std::runtime_error("Package '" + m.packageKey +
+										 "': " + floorError);
+			if (!ContentFrameXml::Merge(packageFloors, m.packageKey,
+										declaredFloors, floorError))
+				throw std::runtime_error(floorError);
+			if (!m.clientFrameXml) continue;
+			if (stockTocOwner) {
+				// Both packages pin the same verified stock build-12340 TOC, so the
+				// bytes must be byte-identical. Reading both proves it instead of
+				// assuming it from the declared digest.
+				std::vector<std::uint8_t> other;
+				Require(ContentPackage::ReadMember(source.candidate.path,
+					m.clientFrameXml->stockTocSource, other, floorError),
+					"Package '" + m.packageKey + "': " + floorError);
+				std::vector<std::uint8_t> first;
+				Require(ContentPackage::ReadMember(stockTocPackage,
+					stockTocOwner->clientFrameXml->stockTocSource, first,
+					floorError),
+					"Package '" + stockTocOwner->packageKey + "': " + floorError);
+				Require(first == other,
+						"Packages '" + stockTocOwner->packageKey + "' and '" +
+						m.packageKey + "' declare different stock FrameXML.toc "
+						"bytes for the same pinned digest");
+			} else {
+				stockTocOwner = &m;
+				stockTocPackage = source.candidate.path;
+			}
+		}
+		bool composingFrameXml = !declaredFloors.empty();
+		if (composingFrameXml) {
+			Require(stockTocOwner,
+					"Declared floor labels require a clientFrameXml stock FrameXML.toc");
+			for (auto const &target : ContentFrameXml::Targets()) {
+				auto key = Fold(target);
+				auto conflict = owners.find(key);
+				Require(conflict == owners.end(),
+						"Raw " + target + " from package '" +
+						(conflict == owners.end() ? "" : conflict->second) +
+						"' conflicts with generated FrameXML content");
+				owners.emplace(key, "FrameXML composer");
+			}
+		}
 		bool composingSpell=!spellRequests.empty();
 		if(composingSpell){auto key=Fold("DBFilesClient/Spell.dbc");Require(!owners.count(key),"Raw Spell.dbc conflicts with semantic composition");owners.emplace(key,"Spell composer");}
         bool composingCost = !costRequests.empty();
@@ -886,10 +941,12 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 		std::size_t worldMapFileCount = 0;
 		for (auto const &table : WorldMapDbcTables())
 			if (composingWorldMap[table]) ++worldMapFileCount;
+		std::size_t frameXmlFileCount = composingFrameXml
+			? ContentFrameXml::Targets().size() : 0;
 		Require(result.fileCount + (composingItem ? 1 : 0) +
 						(composingCurrency ? 1 : 0) +
 						(composingCategory ? 1 : 0) + (composingCost ? 1 : 0) + (composingSpell ? 1 : 0) +
-						worldMapFileCount ==
+						worldMapFileCount + frameXmlFileCount ==
 					owners.size(),
             "Staged file count does not match the declared cumulative set");
 		if (composingItem) {
@@ -1079,6 +1136,49 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 			++result.fileCount;
 			report("Composed " + table + ".dbc SHA-256: " + worldMapHashes[table]);
 		}
+		// The generated FrameXML module and the stock TOC it is inserted into.
+		// The stock bytes are verified against the pinned digest before anything
+		// is written, so the generated TOC is provably the stock file plus one
+		// inserted line and nothing else.
+		std::map<std::string, std::string> frameXmlHashes;
+		if (composingFrameXml) {
+			std::vector<std::uint8_t> stockToc;
+			Require(ContentPackage::ReadMember(stockTocPackage,
+				stockTocOwner->clientFrameXml->stockTocSource, stockToc, error),
+				"Could not read stock FrameXML.toc: " + error);
+			auto stockDigest = ContentBuildHash::Bytes(stockToc);
+			Require(stockDigest == ContentFrameXml::VerifiedStockTocSha256(),
+				"Stock FrameXML.toc SHA-256 " + stockDigest +
+				" is not the verified build-12340 FrameXML.toc " +
+				ContentFrameXml::VerifiedStockTocSha256());
+			Require(stockDigest == stockTocOwner->clientFrameXml->stockTocSha256,
+				"Package '" + stockTocOwner->packageKey +
+				"' declares stock FrameXML.toc digest " +
+				stockTocOwner->clientFrameXml->stockTocSha256 +
+				" but its bytes hash to " + stockDigest);
+			std::string generated;
+			Require(ContentFrameXml::ComposeLua(declaredFloors, generated, error),
+				"Could not generate dungeon floor names: " + error);
+			Require(ContentFrameXml::Stage(ContentFrameXml::GeneratedLuaTarget(),
+				generated, result.workspace, error),
+				"Could not stage generated floor names: " + error);
+			std::string toc;
+			Require(ContentFrameXml::ComposeToc(stockToc, toc, error),
+				"Could not generate FrameXML.toc: " + error);
+			Require(ContentFrameXml::Stage(ContentFrameXml::StockTocTarget(), toc,
+				result.workspace, error),
+				"Could not stage generated FrameXML.toc: " + error);
+			Require(ContentBuildHash::Calculate(
+					result.workspace / std::filesystem::path(
+						ContentFrameXml::GeneratedLuaTarget()).generic_string(),
+					frameXmlHashes[ContentFrameXml::GeneratedLuaTarget()], error), error);
+			Require(ContentBuildHash::Calculate(
+					result.workspace / std::filesystem::path(
+						ContentFrameXml::StockTocTarget()).generic_string(),
+					frameXmlHashes[ContentFrameXml::StockTocTarget()], error), error);
+			for (auto const& entry : frameXmlHashes)
+				report("Generated " + entry.first + " SHA-256: " + entry.second);
+		}
 		// Recheck every accepted snapshot immediately before artifact assembly.
 		// The commit also guards registry identities.
 		for (auto const &baseline : baselines) {			auto current = ContentBaselineRegistry::Inspect(
@@ -1131,7 +1231,7 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 							 categoryHash, categories, baselines, costHash,
 							 costs, vendors, creatureTemplates,
 							 gameObjectTemplates, creatureSpawns, spells, spellHash,
-							 true, worldMapHashes));
+							 true, worldMapHashes, frameXmlHashes));
             serverRecord.parityFilename = parityPath.filename().string();
 			Require(ContentBuildHash::Calculate(
 						parityPath, serverRecord.paritySha256, error),

@@ -74,16 +74,31 @@ tests['world_map'] = ['WorldMapDbcComposer', 'ContentResourceAllocator', 'Conten
                       'ContentServerBundle', 'ContentVendorRow', 'ContentManagedServerDescriptor',
                       'ServerTableDescriptor', 'CurrencyCategoryDbcComposer', 'CurrencyDbcComposer',
                       'ItemExtendedCostDbc', 'DbcReader', 'DbcDescriptor', 'SpellDbcComposer']
+tests['frame_xml'] = ['ContentFrameXml', 'ContentBuildHash', 'ContentPackage',
+                      'ContentServerBundle', 'ContentResourceAllocator', 'ContentVendorRow',
+                      'ContentManagedServerDescriptor', 'ServerTableDescriptor',
+                      'CurrencyCategoryDbcComposer', 'CurrencyDbcComposer',
+                      'ItemExtendedCostDbc', 'DbcReader', 'DbcDescriptor',
+                      'WorldMapDbcComposer', 'SpellDbcComposer']
 for name in ['server_bundle','schema2','schema3','extended_cost','managed_server','currency']:
     if 'SpellDbcComposer' not in tests[name]: tests[name].append('SpellDbcComposer')
+# Declared floor labels compose generated FrameXML from inside ContentPackage
+# validation, so every unit that links the parser or the parity writer needs the
+# composer too or the link fails.
+for name in ['package_lifecycle','server_bundle','schema2','schema3','extended_cost',
+             'managed_server','currency','world_map']:
+    if 'ContentFrameXml' not in tests[name]: tests[name].append('ContentFrameXml')
 with tempfile.TemporaryDirectory(prefix='content-phase4-tests-') as directory:
     for name, units in tests.items():
         binary = Path(directory) / name
         command = [compiler, '-std=c++17', '-O0', '-g', '-I' + str(root / 'src'),
                    str(root / 'tests' / (name + '_tests.cpp'))]
         command += [str(root / 'src' / (unit + '.cpp')) for unit in units]
-        if name in ['schema2','schema3','extended_cost','managed_server','world_map']:
+        if name in ['schema2','schema3','extended_cost','managed_server','world_map',
+                    'frame_xml']:
             command.append(str(root / 'src/third_party/miniz/miniz.c'))
+        if 'ContentBuildHash' in units:
+            command.append('-lcrypto')
         subprocess.run(command + ['-o', str(binary)], check=True)
         inputs = []
         if name == 'currency' and args.currency_dbc:

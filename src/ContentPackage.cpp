@@ -1,5 +1,6 @@
 #include "ContentPackage.h"
 #include "ContentBuildPaths.h"
+#include "ContentFrameXml.h"
 #include "CurrencyCategoryDbcComposer.h"
 #include "ItemExtendedCostDbc.h"
 #include "SpellDbcComposer.h"
@@ -159,12 +160,111 @@ bool ReadWorldMapChunk(json const &declaration, ContentDungeonMapChunk &chunk,
     return true;
 }
 
+// Canonical decimal spelling of a dungeon level index. "0", "01", "+1", "1.0"
+// and " 1" are all refused so one level can never be declared under two
+// spellings that then sort or compare differently.
+bool ReadFloorLevelKey(std::string const& key, std::uint32_t &out)
+{
+    if (key.empty() || key.size() > 4) return false;
+    std::uint32_t value = 0;
+    for (char c : key)
+    {
+        if (c < '0' || c > '9') return false;
+        value = value * 10 + static_cast<std::uint32_t>(c - '0');
+    }
+    if (!value || value > 1023) return false;
+    if (key.size() > 1 && key.front() == '0') return false;
+    out = value;
+    return true;
+}
+
+// Locale -> level -> label. A level key is the exact index the stock
+// WorldMapLevelDropDown_Initialize loop numbers, so it must be the canonical
+// decimal spelling of a value the loop can produce: 1..1023 with no leading
+// zero, no sign and no exponent. Anything else is refused rather than guessed.
+bool ReadWorldMapFloorNames(json const &declaration, ContentWorldMapArea &area,
+                            std::string &error)
+{
+    if (!declaration.is_object() || declaration.empty())
+    {
+        error = "worldMaps floorNames must be a nonempty locale object";
+        return false;
+    }
+    for (auto locale = declaration.begin(); locale != declaration.end();
+         ++locale)
+    {
+        auto const& name = locale.key();
+        if (!ContentFrameXml::SupportedLocale(name))
+        {
+            error = "worldMaps floorNames locale '" + name +
+                    "' is not a locale the build-12340 client can select";
+            return false;
+        }
+        if (!locale.value().is_object() || locale.value().empty())
+        {
+            error = "worldMaps floorNames locale '" + name +
+                    "' must be a nonempty level object";
+            return false;
+        }
+        for (auto level = locale.value().begin();
+             level != locale.value().end(); ++level)
+        {
+        std::uint32_t index = 0;
+        if (!ReadFloorLevelKey(level.key(), index))
+        {
+            error = "worldMaps floorNames level '" + level.key() +
+                    "' for locale '" + name +
+                    "' must be the canonical decimal spelling of 1..1023";
+            return false;
+        }
+        if (!level.value().is_string())
+        {
+            error = "worldMaps floorNames label for locale '" + name +
+                    "' level " + std::to_string(index) + " must be a string";
+            return false;
+        }
+        auto label = level.value().get<std::string>();
+        if (label.empty() || label.size() > 255 ||
+            std::any_of(label.begin(), label.end(),
+                        [](unsigned char c) { return c < 32 || c == 127; }))
+        {
+            error = "worldMaps floorNames label for locale '" + name +
+                    "' level " + std::to_string(index) +
+                    " must be 1..255 UTF-8 bytes with no control characters";
+            return false;
+        }
+        try
+        {
+            (void)json(label).dump(); // strict UTF-8, no normalization
+        }
+        catch (std::exception const &)
+        {
+            error = "worldMaps floorNames label for locale '" + name +
+                    "' level " + std::to_string(index) +
+                    " is not valid UTF-8";
+            return false;
+        }
+        auto &names = area.floorNames[name];
+        if (names.labels.count(index))
+        {
+            error = "Duplicate worldMaps floorNames entry for locale '" + name +
+                    "' level " + std::to_string(index) +
+                    " in area " + std::to_string(area.id);
+            return false;
+        }
+        names.labels.emplace(index, std::move(label));
+        }
+    }
+    return true;
+}
+
 bool ReadWorldMapArea(json const &declaration, ContentWorldMapArea &area,
 					  std::string &error) {
     static std::set<std::string> const keys = {
         "id",           "areaId",         "internalName",     "y1",
         "y2",           "x1",             "x2",               "virtualMapId",
-        "dungeonMapId", "parentMapId",    "floors",           "chunks"};
+        "dungeonMapId", "parentMapId",    "floors",           "chunks",
+        "floorNames"};
 	if (!declaration.is_object()) {
 		error = "worldMaps area must be an object";
 		return false;
@@ -231,6 +331,9 @@ bool ReadWorldMapArea(json const &declaration, ContentWorldMapArea &area,
 			return false;
 		area.chunks.push_back(std::move(row));
 	}
+	if (declaration.contains("floorNames") &&
+		!ReadWorldMapFloorNames(declaration["floorNames"], area, error))
+		return false;
     return true;
 }
 
@@ -446,6 +549,61 @@ bool ReadWorldMaps(json const &manifest, ContentPackageManifest &result,
 			return false;
 		}
 	}
+    return true;
+}
+// True when any declared area carries a floor label. Used for the Schema 3
+// gating below, where the question is only whether the author asked for labels.
+bool DeclaredFloorNames(std::vector<ContentWorldMap> const& maps)
+{
+	for (auto const& map : maps)
+		for (auto const& area : map.areas)
+			if (!area.floorNames.empty()) return true;
+	return false;
+}
+
+// Verified stock FrameXML.toc reference. The manifest records which stock bytes
+// the author vendored; the pinned digest is what actually authorizes an
+// insertion, so a package can never name a TOC this build would not have
+// produced itself.
+bool ReadClientFrameXml(json const& declaration, ContentClientFrameXml& out,
+                        std::string& error)
+{
+    static std::set<std::string> const keys = {"stockTocSource", "stockTocSha256"};
+    if (!declaration.is_object())
+    {
+        error = "clientFrameXml must be an object";
+        return false;
+    }
+    if (!ClosedKeys(declaration, keys, error))
+    {
+        error = "Unsupported or allocator-owned clientFrameXml field: " + error;
+        return false;
+    }
+    if (!declaration.contains("stockTocSource") ||
+        !declaration["stockTocSource"].is_string() ||
+        !declaration.contains("stockTocSha256") ||
+        !declaration["stockTocSha256"].is_string())
+    {
+        error = "clientFrameXml requires string stockTocSource and stockTocSha256";
+        return false;
+    }
+    out.stockTocSource = declaration["stockTocSource"].get<std::string>();
+    out.stockTocSha256 = declaration["stockTocSha256"].get<std::string>();
+    if (!IsSafeRelativePath(out.stockTocSource))
+    {
+        error = "Unsafe clientFrameXml stockTocSource path: " + out.stockTocSource;
+        return false;
+    }
+    // Comparing against the pinned digest is also the format check: any value
+    // that is not exactly those 64 lowercase hex characters is refused, so there
+    // is no separate "is this a digest" case to get wrong.
+    if (out.stockTocSha256 != ContentFrameXml::VerifiedStockTocSha256())
+    {
+        error = "clientFrameXml stockTocSha256 is not the verified stock "
+                "build-12340 FrameXML.toc digest " +
+                ContentFrameXml::VerifiedStockTocSha256();
+        return false;
+    }
     return true;
 }
 } // namespace
@@ -1548,6 +1706,47 @@ ContentPackageValidationResult ContentPackage::Validate() const {
 			!ReadWorldMaps(manifest["worldMaps"], result.manifest,
 						   result.error))
 			return result;
+		if (result.manifest.schema < 3 &&
+			(manifest.contains("clientFrameXml") ||
+			 DeclaredFloorNames(result.manifest.worldMaps))) {
+			result.error = "worldMaps floorNames and clientFrameXml require Schema 3";
+			return result;
+		}
+		if (manifest.contains("clientFrameXml") &&
+			!ReadClientFrameXml(manifest["clientFrameXml"],
+								result.manifest.clientFrameXml.emplace(),
+								result.error))
+			return result;
+		ContentFrameXml::Declared declared;
+		if (!ContentFrameXml::Collect(result.manifest.worldMaps, declared,
+									 result.error))
+			return result;
+		bool hasFloorNames = !declared.empty();
+		if (hasFloorNames && !result.manifest.clientFrameXml)
+		{
+			result.error = "worldMaps floorNames require clientFrameXml with the "
+						   "verified stock FrameXML.toc";
+			return result;
+		}
+		if (!hasFloorNames && result.manifest.clientFrameXml)
+		{
+			result.error = "clientFrameXml requires at least one "
+						   "worldMaps[].areas[].floorNames declaration";
+			return result;
+		}
+		if (hasFloorNames)
+		{
+			// The capability a build needs is a consequence of the floor names, not
+			// a separate author claim: recording it here means a package cannot ship
+			// labels against a client that would silently drop them, and a package
+			// without labels is never marked as needing FrameXML override support.
+			std::set<std::string> requirements(
+				result.manifest.clientRequirements.begin(),
+				result.manifest.clientRequirements.end());
+			requirements.insert(ContentClientRequirement::ProtectedFrameXml);
+			result.manifest.clientRequirements.assign(requirements.begin(),
+													  requirements.end());
+		}
 		if (result.manifest.content.empty() &&
 			result.manifest.itemRows.empty() &&
 			result.manifest.extendedCosts.empty() &&
@@ -1562,6 +1761,52 @@ ContentPackageValidationResult ContentPackage::Validate() const {
     }
     result.valid = true;
     return result;
+}
+
+bool ContentPackage::ReadMember(std::filesystem::path const &epf,
+                                std::string const &member,
+                                std::vector<std::uint8_t> &out, std::string &error) {
+    namespace fs = std::filesystem;
+	out.clear();
+	try {
+        ContentBuildPaths::RejectLinks(epf);
+		ContentBuildPaths::Require(fs::is_regular_file(epf),
+								   "EPF source is not a regular file");
+		if (!IsSafeRelativePath(member)) {
+			error = "Unsafe EPF member path: " + member;
+			return false;
+		}
+        mz_zip_archive zip{};
+		ContentBuildPaths::Require(
+			mz_zip_reader_init_file(&zip, epf.string().c_str(), 0),
+			"Could not open EPF archive");
+		struct ZipCloser {
+			mz_zip_archive* zip;
+			~ZipCloser() { mz_zip_reader_end(zip); }
+		} closer{&zip};
+
+		auto index = mz_zip_reader_locate_file(&zip, member.c_str(), nullptr, 0);
+		if (index < 0 || !IsRegularZipEntry(zip, index)) {
+			error = "Missing or non-regular EPF member: " + member;
+			return false;
+		}
+		size_t size = 0;
+		auto* data = mz_zip_reader_extract_to_heap(&zip, index, &size, 0);
+		if (!data) {
+			error = "Could not read EPF member: " + member;
+			return false;
+		}
+		// The caller verifies the bytes; a member this large is never a stock
+		// FrameXML file and is refused before it is copied.
+		out.assign(reinterpret_cast<std::uint8_t const *>(data),
+				   reinterpret_cast<std::uint8_t const *>(data) + size);
+		mz_free(data);
+		return true;
+	} catch (std::exception const &exception) {
+		out.clear();
+		error = exception.what();
+		return false;
+	}
 }
 
 ContentPackageStageResult
@@ -1615,6 +1860,7 @@ ContentPackage::StageInto(std::filesystem::path const &stagingDirectory,
 			actual.version == expected.version &&
 			actual.content.size() == expected.content.size() &&
 			actual.clientRequirements == expected.clientRequirements &&
+			actual.clientFrameXml == expected.clientFrameXml &&
 			actual.itemRows == expected.itemRows &&
 			actual.serverItemRows == expected.serverItemRows &&
 			actual.currencyRows == expected.currencyRows &&
