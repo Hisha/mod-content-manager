@@ -58,12 +58,15 @@ std::string const& ContentFrameXml::TocInsertionMarker()
 
 std::string const& ContentFrameXml::VerifiedStockTocSha256()
 {
-    // Verified stock 3.3.5a build-12340 locale-enUS.MPQ Interface/FrameXML/
-    // FrameXML.toc: 2456 bytes, CRLF line endings, no trailing newline. The
-    // digest is pinned so a generated TOC can only ever be this exact file plus
-    // one inserted line.
+    // Verified stock 3.3.5a build-12340 Interface/FrameXML/FrameXML.toc as the
+    // client actually resolves it: the highest-precedence archive that carries
+    // the member is enUS/patch-enUS-3.MPQ (2820 bytes, "## Interface: 30300",
+    // CRLF, trailing newline).  Base locale archives also carry an older
+    // 30000-era copy, but they lose to the patch archives, so pinning one of
+    // those would ship a regressed load list.  The digest is pinned so a
+    // generated TOC can only ever be this exact file plus one inserted line.
     static std::string const digest =
-        "36ccfed8ad8e424fb312c942a75bd17c6091dd264df8653f117dcfe8417d91a3";
+        "3158bea13225ae51137a389f0f3ab8566e94b6be84196dd2c1fda27024677754";
     return digest;
 }
 
