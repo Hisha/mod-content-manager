@@ -3,6 +3,7 @@
 #include "ContentAllocationRegistry.h"
 #include "ContentResourceAllocator.h"
 #include "DatabaseEnv.h"
+#include "WorldMapDbcComposer.h"
 
 #include <cassert>
 #include <iostream>
@@ -119,6 +120,48 @@ int main(int argc, char** argv)
     auto original = Find(rolledBack, "package-a", 384);
     assert(original && original->firstBuild == 13 && original->lastBuild == 13);
     assert(!Find(rolledBack, "package-b", 384));
+
+    // Growing the release renumbered the map's manifest position, so the rebuilt
+    // package now requests the very same authored row as worldmap/13. This is the
+    // build that failed in production. The lease keeps its persisted symbol, its
+    // owner and its first_build, so the commit updates the existing row instead of
+    // inserting a second lease for the same row ID.
+    auto relocated = allocator.PlanFixed(Realm, policy,
+        {{"package-b", "worldmap/13/area/799/floor/383", Kind, 383}},
+        Read(), {}, 702, Hash, {}, {}, WorldMapDbcComposer::SameRow);
+    assert(relocated.size() == 1);
+    assert(relocated[0].symbol == "worldmap/1/area/799/floor/383");
+    assert(relocated[0].firstBuild == 12);
+    assert(registry.CommitComposed(Build(702, "relocated.mpq", 'g'), relocated,
+        Server("relocated.mpq", 'h'), error));
+    auto const afterRelocation = Read();
+    std::size_t rowsFor383 = 0;
+    for (auto const& row : afterRelocation)
+        if (row.value == 383) ++rowsFor383;
+    assert(rowsFor383 == 1);
+    auto const kept = Find(afterRelocation, "package-b", 383);
+    assert(kept && kept->symbol == "worldmap/1/area/799/floor/383"
+        && kept->firstBuild == 12 && kept->lastBuild == 702);
+
+    // A relocated row does not stop the same build claiming further fixed rows.
+    auto grown = allocator.PlanFixed(Realm, policy,
+        {{"package-b", "worldmap/13/area/799/floor/383", Kind, 383},
+         {"package-b", "worldmap/14/area/756/floor/166", Kind, 166}},
+        afterRelocation, {}, 703, Hash, {}, {}, WorldMapDbcComposer::SameRow);
+    assert(grown.size() == 2);
+    assert(registry.CommitComposed(Build(703, "grown.mpq", 'i'), grown,
+        Server("grown.mpq", 'j'), error));
+    auto const afterGrowth = Read();
+    rowsFor383 = 0;
+    for (auto const& row : afterGrowth)
+        if (row.value == 383) ++rowsFor383;
+    assert(rowsFor383 == 1);
+    auto const stillKept = Find(afterGrowth, "package-b", 383);
+    assert(stillKept && stillKept->symbol == "worldmap/1/area/799/floor/383"
+        && stillKept->firstBuild == 12 && stillKept->lastBuild == 703);
+    auto const added = Find(afterGrowth, "package-b", 166);
+    assert(added && added->firstBuild == 703
+        && added->symbol == "worldmap/14/area/756/floor/166");
 
     std::cout << "PASS allocation replacement commit, persistence and rollback\n";
     return 0;

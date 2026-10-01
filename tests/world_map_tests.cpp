@@ -618,6 +618,173 @@ static void AllocationTests()
 // the package claiming its own ID under a second symbol and rejected the build.
 // Planning is exercised here through the composer, which is the same request
 // builder the build service calls, so the two can no longer drift apart.
+// Regression: expanding mod-native-instance-maps from four maps to forty-three
+// renumbered every map's manifest position, so Karazhan's authored floor stopped
+// matching the symbol its own allocation had been persisted under. PlanFixed
+// looked the lease up by (package, symbol, kind), missed, and then rejected the
+// build because the package appeared to already own ID 383 under another symbol.
+// The persisted row was correct the whole time. Only the row path identifies an
+// authored row, so the composer now reports when two symbols name the same one
+// and the planner reuses that lease verbatim.
+static void RelocatedRowTests()
+{
+	auto const policy = ContentResourceAllocator::FixedRowIdPolicy(
+		WorldMapDbcComposer::ResourceKind("DungeonMap"));
+	auto const kind = policy.resourceKind;
+	ItemAllocation persisted;
+	persisted.realm = "realm";
+	persisted.packageKey = "mod-native-instance-maps";
+	persisted.symbol = "worldmap/1/area/799/floor/383";
+	persisted.value = 383;
+	persisted.state = "reserved";
+	persisted.firstBuild = 49;
+	persisted.lastBuild = 53;
+	persisted.baselineSha256 = kHash;
+	persisted.resourceKind = kind;
+	persisted.policyVersion = 1;
+
+	// Only the row path is identity; the manifest position is not.
+	assert(WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383",
+		"worldmap/13/area/799/floor/383"));
+	assert(WorldMapDbcComposer::SameRow("worldmap/0/area/799/floor/383",
+		"worldmap/0/area/799/floor/383"));
+	// A different authored row is never the same row, however similar it looks.
+	assert(!WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383",
+		"worldmap/13/area/799/floor/384"));
+	assert(!WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383",
+		"worldmap/13/area/800/floor/383"));
+	assert(!WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383",
+		"worldmap/13/area/799/chunk/383"));
+	// Malformed symbols are equivalent to nothing, so the rule cannot be
+	// satisfied by an empty or hand-written path.
+	assert(!WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383", ""));
+	assert(!WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383",
+		"worldmap//area/799/floor/383"));
+	assert(!WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383",
+		"worldmap/1x/area/799/floor/383"));
+	assert(!WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383",
+		"worldmap/1/"));
+	assert(!WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383",
+		"floor/383"));
+	assert(!WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383",
+		"worldmap/1/area/799/floor/383/extra"));
+
+	// The rebuild that failed in production now reuses the canonical allocation
+	// and keeps its persisted symbol, owner and first build.
+	auto const reused = ContentResourceAllocator::PlanFixed("realm", policy,
+		{{"mod-native-instance-maps", "worldmap/13/area/799/floor/383", kind, 383}},
+		{persisted}, {}, 54, kHash, {}, {}, WorldMapDbcComposer::SameRow);
+	assert(reused.size() == 1);
+	assert(reused[0].packageKey == "mod-native-instance-maps");
+	assert(reused[0].value == 383);
+	assert(reused[0].symbol == "worldmap/1/area/799/floor/383");
+	assert(reused[0].firstBuild == 49 && reused[0].lastBuild == 54);
+	// Reusing the returned plan is stable: the same build plans identically and
+	// a later build only advances last_build.
+	auto const again = ContentResourceAllocator::PlanFixed("realm", policy,
+		{{"mod-native-instance-maps", "worldmap/13/area/799/floor/383", kind, 383}},
+		reused, {}, 55, kHash, {}, {}, WorldMapDbcComposer::SameRow);
+	assert(again.size() == 1 && again[0].symbol == "worldmap/1/area/799/floor/383"
+		&& again[0].firstBuild == 49 && again[0].lastBuild == 55);
+	// A relocated row does not stop the build claiming further fixed rows.
+	auto const grown = ContentResourceAllocator::PlanFixed("realm", policy,
+		{{"mod-native-instance-maps", "worldmap/13/area/799/floor/383", kind, 383},
+		 {"mod-native-instance-maps", "worldmap/14/area/756/floor/166", kind, 166}},
+		reused, {}, 56, kHash, {}, {}, WorldMapDbcComposer::SameRow);
+	assert(grown.size() == 2);
+	// The plan is ordered by symbol, so worldmap/13 precedes worldmap/14.
+	assert(grown[0].value == 383 && grown[0].symbol == "worldmap/1/area/799/floor/383"
+		&& grown[0].firstBuild == 49 && grown[0].lastBuild == 56);
+	assert(grown[1].value == 166 && grown[1].firstBuild == 56
+		&& grown[1].lastBuild == 56);
+
+	// Without the caller-supplied equivalence nothing is relaxed: the pre-fix
+	// collision is still reported, so no other resource kind gains the rule.
+	assert(Throws([&] {
+		(void)ContentResourceAllocator::PlanFixed("realm", policy,
+			{{"mod-native-instance-maps", "worldmap/13/area/799/floor/383", kind, 383}},
+			{persisted}, {}, 54, kHash);
+	}));
+	// The same package and row ID under a genuinely different row is a manifest
+	// error, not a relocation, and keeps failing.
+	assert(Throws([&] {
+		(void)ContentResourceAllocator::PlanFixed("realm", policy,
+			{{"mod-native-instance-maps", "worldmap/13/area/800/floor/383", kind, 383}},
+			{persisted}, {}, 54, kHash, {}, {}, WorldMapDbcComposer::SameRow);
+	}));
+	// The row path carries no row ID for a transform, so the declared ID is the
+	// only thing that can pair a relocation up. A different transform ID is a
+	// new row and must not adopt the retained one.
+	auto transformPolicy = ContentResourceAllocator::FixedRowIdPolicy(
+		WorldMapDbcComposer::ResourceKind("WorldMapTransforms"));
+	auto transform = persisted;
+	transform.symbol = "worldmap/1/transform";
+	transform.value = 45;
+	transform.resourceKind = transformPolicy.resourceKind;
+	assert(WorldMapDbcComposer::SameRow("worldmap/1/transform", "worldmap/9/transform"));
+	auto const movedTransform =
+		ContentResourceAllocator::PlanFixed("realm", transformPolicy,
+			{{"mod-native-instance-maps", "worldmap/9/transform",
+			  transformPolicy.resourceKind, 45}},
+			{transform}, {}, 54, kHash, {}, {}, WorldMapDbcComposer::SameRow);
+	assert(movedTransform.size() == 1 && movedTransform[0].value == 45
+		&& movedTransform[0].symbol == "worldmap/1/transform"
+		&& movedTransform[0].firstBuild == 49);
+	auto const otherTransform =
+		ContentResourceAllocator::PlanFixed("realm", transformPolicy,
+			{{"mod-native-instance-maps", "worldmap/9/transform",
+			  transformPolicy.resourceKind, 46}},
+			{transform}, {}, 54, kHash, {}, {}, WorldMapDbcComposer::SameRow);
+	assert(otherTransform.size() == 1 && otherTransform[0].value == 46
+		&& otherTransform[0].symbol == "worldmap/9/transform"
+		&& otherTransform[0].firstBuild == 54);
+	// One retained row may not be adopted by two declarations in one build.
+	assert(Throws([&] {
+		(void)ContentResourceAllocator::PlanFixed("realm", policy,
+			{{"mod-native-instance-maps", "worldmap/13/area/799/floor/383", kind, 383},
+			 {"mod-native-instance-maps", "worldmap/4/area/799/floor/383", kind, 383}},
+			{persisted}, {}, 54, kHash, {}, {}, WorldMapDbcComposer::SameRow);
+	}));
+	// Relocation never crosses an owner: another package's row stays its own.
+	auto foreign = persisted;
+	foreign.packageKey = "mod-another-package";
+	assert(Throws([&] {
+		(void)ContentResourceAllocator::PlanFixed("realm", policy,
+			{{"mod-native-instance-maps", "worldmap/13/area/799/floor/383", kind, 383}},
+			{foreign}, {}, 54, kHash, {}, {}, WorldMapDbcComposer::SameRow);
+	}));
+	// Every validation a fresh allocation would face still applies, because a
+	// relocated row is checked exactly like an inherited one.
+	assert(Throws([&] {
+		(void)ContentResourceAllocator::PlanFixed("realm", policy,
+			{{"mod-native-instance-maps", "worldmap/13/area/799/floor/383", kind, 383}},
+			{persisted}, {383}, 54, kHash, {}, {}, WorldMapDbcComposer::SameRow);
+	}));
+	assert(Throws([&] {
+		(void)ContentResourceAllocator::PlanFixed("realm", policy,
+			{{"mod-native-instance-maps", "worldmap/13/area/799/floor/383", kind, 383}},
+			{persisted}, {}, 54, std::string(64, 'b'), {}, {},
+			WorldMapDbcComposer::SameRow);
+	}));
+	auto wrongPolicy = persisted;
+	wrongPolicy.policyVersion = 2;
+	assert(Throws([&] {
+		(void)ContentResourceAllocator::PlanFixed("realm", policy,
+			{{"mod-native-instance-maps", "worldmap/13/area/799/floor/383", kind, 383}},
+			{wrongPolicy}, {}, 54, kHash, {}, {}, WorldMapDbcComposer::SameRow);
+	}));
+	// Resource kinds are independent allocation spaces, so a retained row can
+	// never be adopted across kinds: the DungeonMap request below is planned as
+	// a fresh lease rather than reusing the transform row.
+	auto const crossKind = ContentResourceAllocator::PlanFixed("realm", policy,
+		{{"mod-native-instance-maps", "worldmap/13/area/799/floor/45", kind, 45}},
+		{transform}, {}, 54, kHash, {}, {}, WorldMapDbcComposer::SameRow);
+	assert(crossKind.size() == 1 && crossKind[0].value == 45
+		&& crossKind[0].symbol == "worldmap/13/area/799/floor/45"
+		&& crossKind[0].firstBuild == 54);
+	std::cout << "  world-map relocated row reuse: PASS\n";
+}
+
 static void FirstBuildPlanningTests()
 {
 	auto const fixture = fs::path(__FILE__).parent_path() / "fixtures" / "deadmines";
@@ -1747,6 +1914,7 @@ int main(int argc, char **argv)
 {
 	DescriptorTests();
 	AllocationTests();
+	RelocatedRowTests();
 	FirstBuildPlanningTests();
 	ActivationTests();
 	auto const scratch = Scratch();

@@ -162,7 +162,8 @@ std::vector<ItemAllocation> ContentResourceAllocator::PlanFixed(std::string cons
     std::vector<ItemAllocation> const& retained, std::set<std::uint32_t> const& occupiedExternal,
     std::uint32_t build, std::string const& hash,
     std::set<std::string> const& acceptedHistory,
-    AllocationReplacements const& replacements)
+    AllocationReplacements const& replacements,
+    SymbolEquivalence const& sameRow)
 {
     if (policy.resourceKind.empty() || !policy.version || !policy.firstCandidate
         || policy.lastCandidate < policy.firstCandidate)
@@ -256,6 +257,42 @@ std::vector<ItemAllocation> ContentResourceAllocator::PlanFixed(std::string cons
             lease.lastBuild = build;
             plan.push_back(std::move(lease));
             continue;
+        }
+        // A release that grows or reorders its manifest can renumber the
+        // positional part of a symbol without changing which authored row is
+        // being declared, which would otherwise orphan the row ID the package
+        // already owns. Reuse is limited to a lease this same package already
+        // holds for this same kind and row ID whose symbol the caller confirms
+        // addresses the same row, so a relocated row keeps its owner, its
+        // persisted symbol and its first build. Every other retained row stays
+        // occupied and is never adopted.
+        if (sameRow) {
+            std::vector<ItemAllocation const*> relocations;
+            for (auto const& lease : retained)
+                if (lease.packageKey == request.packageKey
+                    && lease.resourceKind == request.resourceKind
+                    && lease.value == request.fixedValue
+                    && sameRow(lease.symbol, request.symbol))
+                    relocations.push_back(&lease);
+            if (relocations.size() > 1)
+                throw std::runtime_error("Ambiguous relocated allocation for "
+                    + request.packageKey + "/" + request.symbol);
+            if (!relocations.empty()) {
+                if (std::any_of(plan.begin(), plan.end(), [&](auto const& prior) {
+                        return prior.resourceKind == request.resourceKind &&
+                            prior.value == request.fixedValue; }))
+                    throw std::runtime_error(
+                        "Multiple declarations claim one relocated allocation: "
+                        + request.packageKey + "/" + request.resourceKind + "/"
+                        + std::to_string(request.fixedValue));
+                auto lease = *relocations.front();
+                // The lease keeps the symbol it was persisted under, so the
+                // registry matches the existing row and advances last_build only.
+                ValidateInherited(lease, policy, occupiedExternal, hash, acceptedHistory);
+                lease.lastBuild = build;
+                plan.push_back(std::move(lease));
+                continue;
+            }
         }
         // Reached only by a genuinely new identity (the retained-identity case
         // returned above), so an existing byValue entry with a different symbol

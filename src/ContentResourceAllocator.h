@@ -2,6 +2,7 @@
 #define CONTENT_RESOURCE_ALLOCATOR_H
 #include "ContentAllocationRegistry.h"
 #include <cstdint>
+#include <functional>
 #include <set>
 #include <string>
 #include <vector>
@@ -25,6 +26,16 @@ struct ResourceAllocationPolicy
     std::uint32_t lastCandidate = 0;
     std::uint32_t version = 1;
 };
+
+// Optional caller-supplied equivalence over author-declared symbols. It reports
+// whether two symbols of the same resource kind address one authored row, so a
+// release that inserts or reorders manifest entries can still recognise the row
+// IDs it already owns. The caller owns the symbol grammar, so the rule can never
+// be widened to a resource family that caller does not compose. The retained
+// lease is reused verbatim: owner, symbol, row ID and first build are never
+// rewritten, so only last_build advances.
+using SymbolEquivalence =
+    std::function<bool(std::string const&, std::string const&)>;
 
 class ContentResourceAllocator
 {
@@ -67,6 +78,7 @@ public:
         std::set<std::uint32_t> const& occupiedExternal,
         std::uint32_t build, std::string const& baselineSha256,
         std::set<std::string> const& acceptedHistory = {},
-        AllocationReplacements const& replacements = {});
+        AllocationReplacements const& replacements = {},
+        SymbolEquivalence const& sameRow = nullptr);
 };
 #endif

@@ -59,6 +59,12 @@ public:
     static void AppendRequests(std::string const& packageKey,
         std::vector<ContentWorldMap> const& maps,
         std::map<std::string, std::vector<ResourceAllocationRequest>>& out);
+    // Reports whether two world-map symbols of the same kind name one authored
+    // row, ignoring the manifest position. Only the row path is identity, so this
+    // is what lets the planner reuse the row ID a package already owns after the
+    // release grows or reorders. It never treats two different rows as one, and
+    // never reports a malformed symbol as equivalent to anything.
+    static bool SameRow(std::string const& a, std::string const& b);
     // Validates the stock baseline dimensions for `table` and returns its row IDs.
     static std::set<std::uint32_t> Inspect(std::string const& table, DbcDocument const& baseline);
     // Contributed row IDs for `table`, in deterministic composition order.

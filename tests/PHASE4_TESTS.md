@@ -111,11 +111,17 @@ It seeds the real Karazhan dungeon-map ID 383 under package A, proves package B 
 refused without replacement metadata, transfers the row to B while retaining its
 numeric ID and `first_build`, and proves a later B-only rebuild needs no migration
 input. It then injects a duplicate-build failure after a second migration UPDATE
-and verifies the complete transaction rollback leaves A's row unchanged.
+and verifies the complete transaction rollback leaves A's row unchanged. Finally
+it rebuilds the migrated package after the release renumbered that map's manifest
+position, and verifies the persisted symbol, owner, `first_build` and single-row
+ownership of ID 383 all survive, including a build that also claims a new floor.
 
 Load `content_manager_schema.sql` into a fresh `phase4_test` database and compile
 the harness with the test MySQL adapter plus the same production source list used
-by `package_lifecycle_mysql_tests.cpp`. Run it with the private Unix socket as its
+by `package_lifecycle_mysql_tests.cpp`, plus `WorldMapDbcComposer.cpp`,
+`ContentFrameXml.cpp`, `ContentManagedServerDescriptor.cpp` and
+`SpellDbcComposer.cpp`, which the relocated-row case needs for the composer's
+`SameRow` symbol-equivalence rule. Run it with the private Unix socket as its
 only argument. The harness creates only the five empty occupancy tables it needs;
 never point it at an existing server database.
 

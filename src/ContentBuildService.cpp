@@ -478,7 +478,8 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 				auto plan = ContentResourceAllocator::PlanFixed(
 					realmName, ContentResourceAllocator::FixedRowIdPolicy(kind),
 					worldMapRequests[table], retained, stockIds, result.buildNumber,
-					baseline.hash, acceptedHistory[table], replacements);
+					baseline.hash, acceptedHistory[table], replacements,
+					WorldMapDbcComposer::SameRow);
 				for (auto const &lease : plan)
 					report("Planned " + lease.resourceKind + ": " + lease.packageKey
 						+ "/" + lease.symbol + " = " + std::to_string(lease.value));

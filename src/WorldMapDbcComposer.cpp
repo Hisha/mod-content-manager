@@ -79,6 +79,28 @@ void WorldMapDbcComposer::AppendRequests(std::string const& packageKey,
     }
 }
 
+bool WorldMapDbcComposer::SameRow(std::string const& a, std::string const& b)
+{
+    // A world-map symbol is "worldmap/<manifest position>/<row path>", and only
+    // the row path identifies an authored row: it names the area, floor, chunk
+    // or transform by the very IDs that row already carries. The position is
+    // just where the map happens to sit in this release, so adding or reordering
+    // a map renumbers it without changing the row. Stripping it therefore makes
+    // the two symbols comparable, and the planner can then tell a moved row
+    // apart from a genuinely different one. A symbol without a well-formed
+    // position, or with an empty row path, is never equivalent to anything.
+    auto rowPath = [](std::string const& symbol) {
+        if (symbol.compare(0, 9, "worldmap/") != 0) return std::string();
+        auto const slash = symbol.find('/', 9);
+        if (slash == std::string::npos || slash == 9 || slash + 1 == symbol.size())
+            return std::string();
+        for (auto i = std::size_t(9); i < slash; ++i)
+            if (symbol[i] < '0' || symbol[i] > '9') return std::string();
+        return symbol.substr(slash + 1);
+    };
+    return !rowPath(a).empty() && rowPath(a) == rowPath(b);
+}
+
 std::string const& WorldMapDbcComposer::VerifiedBaselineSha256(std::string const& table)
 {
     static std::map<std::string, std::string> const pins = {
