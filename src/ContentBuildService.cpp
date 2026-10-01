@@ -146,6 +146,7 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 		// Replacement declarations are build-wide package lifecycle metadata.
 		// One historical identity may have only one selected successor, and the
 		// predecessor may not participate in the same build.
+		std::string error;
 		AllocationReplacements replacements;
 		std::vector<ContentPackageManifest const*> selectedManifests;
 		for (auto const& source : selected)
@@ -324,7 +325,6 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 		Require(owners.size() <= std::numeric_limits<std::uint32_t>::max(),
 				"Too many cumulative files");
         ContentBuildRegistry builds;
-        std::string error;
         if (!builds.NextNumber(result.buildNumber, error))
             throw std::runtime_error(error);
         std::vector<ItemAllocation> allocationPlan;
