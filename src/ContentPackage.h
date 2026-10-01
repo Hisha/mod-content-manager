@@ -221,17 +221,31 @@ struct ContentWorldMapFloorNames {
     }
 };
 
+// One additive load-list contribution to the stock build-12340 FrameXML.toc.
+// Both paths are canonical MPQ targets below Interface/FrameXML. `target` is
+// emitted immediately after `after` (or after earlier deterministic siblings)
+// without giving the package ownership of FrameXML.toc itself.
+struct ContentFrameXmlLoadEntry {
+    std::string target;
+    std::string after;
+    bool operator==(ContentFrameXmlLoadEntry const &o) const {
+        return target == o.target && after == o.after;
+    }
+};
+
 // The verified stock FrameXML.toc this package's floor labels will be inserted
 // into. The package carries the bytes because only it knows which client build
-// its labels were authored against; Content Manager refuses any digest other
-// than the pinned build-12340 one, so the generated TOC is always the stock TOC
-// plus exactly one inserted line.
+// its content was authored against; Content Manager refuses any digest other
+// than the pinned build-12340 one. loadEntries are additive and may anchor to a
+// stock entry or another managed contribution.
 struct ContentClientFrameXml {
     std::string stockTocSource; // member path inside the package EPF
     std::string stockTocSha256; // pinned digest of those exact bytes
+    std::vector<ContentFrameXmlLoadEntry> loadEntries;
     bool operator==(ContentClientFrameXml const &o) const {
         return stockTocSource == o.stockTocSource &&
-               stockTocSha256 == o.stockTocSha256;
+               stockTocSha256 == o.stockTocSha256 &&
+               loadEntries == o.loadEntries;
     }
 };
 
@@ -314,9 +328,8 @@ struct ContentPackageManifest {
 	// Schema 3: sorted, deduplicated immutable client requirements (e.g.
 	// protected-framexml).
     std::vector<std::string> clientRequirements;
-    // Schema 3: the verified stock FrameXML.toc these floor labels are inserted
-    // into. Present exactly when some worldMaps[].areas[].floorNames is declared,
-    // because the two are the same declaration seen from its client side.
+    // Schema 3: the verified stock FrameXML.toc used by floor labels and/or
+    // additive package load entries.
     std::optional<ContentClientFrameXml> clientFrameXml;
 
     std::vector<ContentPackageEntry> content;

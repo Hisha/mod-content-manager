@@ -574,6 +574,68 @@ unchanged: it inspects runtime/native-content capabilities, while Schema 3
 requirements are an immutable build property. See
 [tests/PHASE4_TESTS.md](tests/PHASE4_TESTS.md) for the parser and MySQL harnesses.
 
+## Additive FrameXML.toc load entries
+
+Schema 3 packages can add files to the build-12340 stock FrameXML load sequence
+without shipping a replacement `Interface/FrameXML/FrameXML.toc`. The package
+carries an independently verified copy of the stock TOC as an EPF input, pins its
+SHA-256, ships its files through the normal `content` array, and declares their
+ordering under `clientFrameXml.loadEntries`:
+
+```json
+{
+  "schema": 3,
+  "package": "mod-native-hunts",
+  "name": "Native Hunts",
+  "version": "7",
+  "content": [
+    {
+      "type": "file",
+      "source": "client/Interface/FrameXML/NativeHuntsFrame.xml",
+      "target": "Interface/FrameXML/NativeHuntsFrame.xml"
+    },
+    {
+      "type": "file",
+      "source": "client/Interface/FrameXML/NativeHuntsFrame.lua",
+      "target": "Interface/FrameXML/NativeHuntsFrame.lua"
+    }
+  ],
+  "clientFrameXml": {
+    "stockTocSource": "upstream/FrameXML.toc",
+    "stockTocSha256": "3158bea13225ae51137a389f0f3ab8566e94b6be84196dd2c1fda27024677754",
+    "loadEntries": [
+      {
+        "target": "Interface/FrameXML/NativeHuntsFrame.xml",
+        "after": "Interface/FrameXML/LFDFrame.xml"
+      }
+    ]
+  }
+}
+```
+
+The stock TOC input is not a `content` entry and is never copied directly into
+the MPQ. Content Manager accepts only the pinned 2,820-byte build-12340 TOC,
+preserves its bytes and line endings, and owns the final composed TOC target.
+A raw content target of `Interface/FrameXML/FrameXML.toc` therefore conflicts
+and fails safely.
+
+Both `target` and `after` are full MPQ paths below `Interface/FrameXML`. The
+target must exist in the cumulative managed file set. An anchor can be a unique
+stock entry or another contributed entry. Missing or ambiguous anchors,
+ordering cycles, duplicate logical targets, case aliases, and attempts to add a
+stock entry again are rejected. Contributions sharing an anchor are ordered by
+their case-folded logical target, so output does not depend on package discovery
+or installation order. The composed TOC and any other generated FrameXML file
+are hashed in the normal parity manifest and are covered by the final MPQ hash.
+
+Any nonempty `clientFrameXml` composition automatically adds
+`protected-framexml` to that package's normalized client requirements. Consumers
+must not repeat it in `clientRequirements`, though an explicit duplicate is
+harmless because requirement sets are deduplicated. The corresponding
+Portalkeeper Schema v1 realm configuration must continue to publish
+`[Client] Requirements=protected-framexml` so it prepares and selects the
+required generation-2 executable for the isolated realm.
+
 ## Native world map DBCs (Deadmines and other pre-Cataclysm instances)
 
 Schema 2 and 3 packages may declare `worldMaps[]`, which lets a mod define an instance's

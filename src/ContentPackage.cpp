@@ -581,7 +581,8 @@ bool DeclaredFloorNames(std::vector<ContentWorldMap> const& maps)
 bool ReadClientFrameXml(json const& declaration, ContentClientFrameXml& out,
                         std::string& error)
 {
-    static std::set<std::string> const keys = {"stockTocSource", "stockTocSha256"};
+    static std::set<std::string> const keys = {
+        "stockTocSource", "stockTocSha256", "loadEntries"};
     if (!declaration.is_object())
     {
         error = "clientFrameXml must be an object";
@@ -617,6 +618,66 @@ bool ReadClientFrameXml(json const& declaration, ContentClientFrameXml& out,
                 ContentFrameXml::VerifiedStockTocSha256();
         return false;
     }
+    if (declaration.contains("loadEntries") &&
+        !declaration["loadEntries"].is_array())
+    {
+        error = "clientFrameXml loadEntries must be an array";
+        return false;
+    }
+    std::set<std::string> targets;
+    for (auto const& item : (declaration.contains("loadEntries")
+            ? declaration["loadEntries"] : json::array()))
+    {
+        static std::set<std::string> const entryKeys = {"target", "after"};
+        if (!item.is_object() || !ClosedKeys(item, entryKeys, error) ||
+            !item.contains("target") || !item["target"].is_string() ||
+            !item.contains("after") || !item["after"].is_string())
+        {
+            error = "clientFrameXml load entry requires only string target and after";
+            return false;
+        }
+        ContentFrameXmlLoadEntry entry{item["target"].get<std::string>(),
+                                       item["after"].get<std::string>()};
+        try
+        {
+            entry.target = ContentBuildPaths::Target(entry.target);
+            entry.after = ContentBuildPaths::Target(entry.after);
+        }
+        catch (std::exception const& exception)
+        {
+            error = "Unsafe clientFrameXml load entry: " +
+                    std::string(exception.what());
+            return false;
+        }
+        auto prefix = ContentBuildPaths::Fold("Interface/FrameXML/");
+        auto targetFolded = ContentBuildPaths::Fold(entry.target);
+        auto afterFolded = ContentBuildPaths::Fold(entry.after);
+        if (targetFolded.compare(0, prefix.size(), prefix) != 0 ||
+            afterFolded.compare(0, prefix.size(), prefix) != 0 ||
+            entry.target.size() <= prefix.size() || entry.after.size() <= prefix.size())
+        {
+            error = "clientFrameXml load entry paths must be files below "
+                    "Interface/FrameXML/";
+            return false;
+        }
+        if (targetFolded == ContentBuildPaths::Fold(ContentFrameXml::StockTocTarget()))
+        {
+            error = "clientFrameXml load entry cannot own FrameXML.toc";
+            return false;
+        }
+        if (!targets.insert(targetFolded).second)
+        {
+            error = "Duplicate or case-alias clientFrameXml load entry target: " +
+                    entry.target;
+            return false;
+        }
+        out.loadEntries.push_back(std::move(entry));
+    }
+    std::sort(out.loadEntries.begin(), out.loadEntries.end(),
+        [](auto const& left, auto const& right) {
+            return ContentBuildPaths::Fold(left.target) <
+                   ContentBuildPaths::Fold(right.target);
+        });
     return true;
 }
 } // namespace
@@ -1770,13 +1831,15 @@ ContentPackageValidationResult ContentPackage::Validate() const {
 						   "verified stock FrameXML.toc";
 			return result;
 		}
-		if (!hasFloorNames && result.manifest.clientFrameXml)
+		if (!hasFloorNames && result.manifest.clientFrameXml &&
+			result.manifest.clientFrameXml->loadEntries.empty())
 		{
-			result.error = "clientFrameXml requires at least one "
+			result.error = "clientFrameXml requires at least one loadEntries or "
 						   "worldMaps[].areas[].floorNames declaration";
 			return result;
 		}
-		if (hasFloorNames)
+		if (hasFloorNames || (result.manifest.clientFrameXml &&
+			!result.manifest.clientFrameXml->loadEntries.empty()))
 		{
 			// The capability a build needs is a consequence of the floor names, not
 			// a separate author claim: recording it here means a package cannot ship

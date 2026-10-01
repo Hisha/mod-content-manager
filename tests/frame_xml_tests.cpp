@@ -12,6 +12,7 @@
 #include "ContentServerBundle.h"
 #include "third_party/json/json.hpp"
 #include "third_party/miniz/miniz.h"
+#include <algorithm>
 #include <cassert>
 #include <filesystem>
 #include <fstream>
@@ -56,10 +57,12 @@ json Map(json floorNames)
                              {"areas", json::array({area})}}});
 }
 
-json ClientFrameXml()
+json ClientFrameXml(json loadEntries = json::array())
 {
-    return json{{"stockTocSource", "upstream/FrameXML.toc"},
+    json value = {{"stockTocSource", "upstream/FrameXML.toc"},
         {"stockTocSha256", ContentFrameXml::VerifiedStockTocSha256()}};
+    if (!loadEntries.empty()) value["loadEntries"] = std::move(loadEntries);
+    return value;
 }
 
 void Save(std::filesystem::path const& path, json const& manifest)
@@ -75,6 +78,10 @@ void Save(std::filesystem::path const& path, json const& manifest)
                                reinterpret_cast<char const*>(toc.data()), toc.size(),
                                MZ_BEST_COMPRESSION) ||
         !mz_zip_writer_add_mem(&zip, "assets/readme.txt", "ok", 2,
+                               MZ_BEST_COMPRESSION) ||
+        !mz_zip_writer_add_mem(&zip, "assets/NativeHuntsFrame.xml", "<Ui/>", 5,
+                               MZ_BEST_COMPRESSION) ||
+        !mz_zip_writer_add_mem(&zip, "assets/NativeHuntsFrame.lua", "-- lua", 6,
                                MZ_BEST_COMPRESSION) ||
         !mz_zip_writer_finalize_archive(&zip))
         throw std::runtime_error("zip write failed");
@@ -99,6 +106,20 @@ json Labels()
     return json{{"enUS", {{"1", "Servant's Quarters"},
                           {"2", "Upper Livery Stables"}}},
                 {"deDE", {{"1", "Dienerquartier"}}}};
+}
+
+json NativeHuntsManifest()
+{
+    return {{"schema", 3}, {"package", "native-hunts"},
+        {"name", "Native Hunts"}, {"version", "1"},
+        {"content", json::array({
+            {{"type", "file"}, {"source", "assets/NativeHuntsFrame.xml"},
+             {"target", "Interface/FrameXML/NativeHuntsFrame.xml"}},
+            {{"type", "file"}, {"source", "assets/NativeHuntsFrame.lua"},
+             {"target", "Interface/FrameXML/NativeHuntsFrame.lua"}}})},
+        {"clientFrameXml", ClientFrameXml(json::array({
+            {{"target", "Interface/FrameXML/NativeHuntsFrame.xml"},
+             {"after", "Interface/FrameXML/LFDFrame.xml"}}}))}};
 }
 
 // The parity writer and verifier take their whole context positionally; these
@@ -156,6 +177,20 @@ int main()
         auto const& area = validation.manifest.worldMaps.at(0).areas.at(0);
         assert(area.floorNames.at("enUS").labels.at(1) == "Servant's Quarters");
         assert(area.floorNames.at("deDE").labels.size() == 1);
+    }
+
+    // A raw package file can independently contribute a TOC load entry. The
+    // capability follows from composition and is not an extra author claim.
+    Save(path, NativeHuntsManifest());
+    {
+        auto validation = ContentPackage(path).Validate();
+        assert(validation.valid);
+        assert(validation.manifest.clientFrameXml->loadEntries.size() == 1);
+        auto const& entry = validation.manifest.clientFrameXml->loadEntries.front();
+        assert(entry.target == "Interface/FrameXML/NativeHuntsFrame.xml");
+        assert(entry.after == "Interface/FrameXML/LFDFrame.xml");
+        assert(validation.manifest.clientRequirements ==
+               std::vector<std::string>{ContentClientRequirement::ProtectedFrameXml});
     }
 
     // 3. No floor names means no clientFrameXml and no requirement: a package
@@ -398,6 +433,78 @@ int main()
                                                 toc, error));
             assert(!error.empty());
         }
+    }
+
+
+    // Generic package entries preserve every stock byte and land at their
+    // declared anchors. Siblings are sorted by logical path, and a dependency
+    // on a contributed entry remains adjacent to that parent.
+    std::vector<ContentFrameXml::LoadEntry> loads = {
+        {"Interface/FrameXML/Zeta.xml", "Interface/FrameXML/LFDFrame.xml"},
+        {"Interface/FrameXML/NativeHuntsFrame.xml", "Interface/FrameXML/LFDFrame.xml"},
+        {"Interface/FrameXML/NativeHuntsAfter.lua",
+         "Interface/FrameXML/NativeHuntsFrame.xml"}};
+    std::string packageToc, reorderedToc;
+    assert(ContentFrameXml::ComposeToc(stock, loads, false, packageToc, error));
+    std::reverse(loads.begin(), loads.end());
+    assert(ContentFrameXml::ComposeToc(stock, loads, false, reorderedToc, error));
+    assert(packageToc == reorderedToc);
+    assert(packageToc.find("LFDFrame.xml\r\nNativeHuntsFrame.xml\r\n"
+                           "NativeHuntsAfter.lua\r\nZeta.xml\r\nLFRFrame.xml") !=
+           std::string::npos);
+    assert(packageToc.find("NativeHuntsFrame.xml") ==
+           packageToc.rfind("NativeHuntsFrame.xml"));
+
+    // Duplicate logical entries, case aliases, stock duplicates, missing and
+    // ambiguous anchors, and contribution cycles all fail closed.
+    for (auto const& bad : std::vector<std::vector<ContentFrameXml::LoadEntry>>{
+             {{"Interface/FrameXML/A.xml", "Interface/FrameXML/LFDFrame.xml"},
+              {"Interface/FrameXML/A.xml", "Interface/FrameXML/LFDFrame.xml"}},
+             {{"Interface/FrameXML/A.xml", "Interface/FrameXML/LFDFrame.xml"},
+              {"interface/framexml/a.XML", "Interface/FrameXML/LFDFrame.xml"}},
+             {{"Interface/FrameXML/LFRFrame.xml", "Interface/FrameXML/LFDFrame.xml"}},
+             {{"Interface/FrameXML/A.xml", "Interface/FrameXML/Missing.xml"}},
+             {{"Interface/FrameXML/A.xml", "Interface/FrameXML/B.xml"},
+              {"Interface/FrameXML/B.xml", "Interface/FrameXML/A.xml"}}})
+        assert(!ContentFrameXml::ComposeToc(stock, bad, false, packageToc, error));
+    {
+        std::string ambiguous = "LFDFrame.xml\r\nlfdframe.XML\r\n";
+        std::vector<ContentFrameXml::LoadEntry> one = {
+            {"Interface/FrameXML/A.xml", "Interface/FrameXML/LFDFrame.xml"}};
+        assert(!ContentFrameXml::ComposeToc(
+            {ambiguous.begin(), ambiguous.end()}, one, false, packageToc, error));
+        assert(error.find("Ambiguous") != std::string::npos);
+    }
+
+    // A declaration is only loadable when its file is owned by the cumulative
+    // managed target set; aliases in that set compare case-insensitively.
+    {
+        std::vector<ContentFrameXml::LoadEntry> one = {
+            {"Interface/FrameXML/NativeHuntsFrame.xml",
+             "Interface/FrameXML/LFDFrame.xml"}};
+        assert(!ContentFrameXml::ValidateTargets(one, {}, error));
+        assert(error.find("absent") != std::string::npos);
+        assert(ContentFrameXml::ValidateTargets(one,
+            {"INTERFACE/FRAMEXML/NATIVEHUNTSFRAME.XML"}, error));
+        assert(!ContentFrameXml::ValidateTargets(one,
+            {"INTERFACE/FRAMEXML/NATIVEHUNTSFRAME.XML",
+             "INTERFACE/FRAMEXML/FRAMEXML.TOC"}, error));
+        assert(error.find("Raw Interface/FrameXML/FrameXML.toc") !=
+               std::string::npos);
+        assert(ContentFrameXml::Targets(false) ==
+               std::vector<std::string>{ContentFrameXml::StockTocTarget()});
+    }
+
+    // Parser-level duplicate and case-alias contributions are authoring errors.
+    {
+        auto manifest = NativeHuntsManifest();
+        manifest["clientFrameXml"]["loadEntries"].push_back(
+            {{"target", "interface/framexml/nativehuntsframe.XML"},
+             {"after", "Interface/FrameXML/LFDFrame.xml"}});
+        Save(path, manifest);
+        auto validation = ContentPackage(path).Validate();
+        assert(!validation.valid);
+        assert(validation.error.find("case-alias") != std::string::npos);
     }
 
     // 17. Staging writes under the workspace and refuses to overwrite.

@@ -221,6 +221,7 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 		// restate a level another package already owns: two owners for one label
 		// is a build conflict, not something to resolve silently.
 		ContentFrameXml::Declared declaredFloors;
+		std::vector<ContentFrameXml::LoadEntry> frameXmlLoadEntries;
 		ContentPackageManifest const* stockTocOwner = nullptr;
 		std::filesystem::path stockTocPackage;
 		std::string floorError;
@@ -234,6 +235,9 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 										declaredFloors, floorError))
 				throw std::runtime_error(floorError);
 			if (!m.clientFrameXml) continue;
+			frameXmlLoadEntries.insert(frameXmlLoadEntries.end(),
+				m.clientFrameXml->loadEntries.begin(),
+				m.clientFrameXml->loadEntries.end());
 			if (stockTocOwner) {
 				// Both packages pin the same verified stock build-12340 TOC, so the
 				// bytes must be byte-identical. Reading both proves it instead of
@@ -256,11 +260,18 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 				stockTocPackage = source.candidate.path;
 			}
 		}
-		bool composingFrameXml = !declaredFloors.empty();
+		bool composingFloorNames = !declaredFloors.empty();
+		bool composingFrameXml = composingFloorNames || !frameXmlLoadEntries.empty();
 		if (composingFrameXml) {
+			Require(manager.GetClientBuild() == 12340,
+					"FrameXML.toc composition supports only client build 12340");
 			Require(stockTocOwner,
-					"Declared floor labels require a clientFrameXml stock FrameXML.toc");
-			for (auto const &target : ContentFrameXml::Targets()) {
+					"FrameXML composition requires a clientFrameXml stock FrameXML.toc");
+			std::set<std::string> cumulativeTargets;
+			for (auto const& owner : owners) cumulativeTargets.insert(owner.first);
+			Require(ContentFrameXml::ValidateTargets(frameXmlLoadEntries,
+				cumulativeTargets, floorError), floorError);
+			for (auto const &target : ContentFrameXml::Targets(composingFloorNames)) {
 				auto key = Fold(target);
 				auto conflict = owners.find(key);
 				Require(conflict == owners.end(),
@@ -952,7 +963,7 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 		for (auto const &table : WorldMapDbcTables())
 			if (composingWorldMap[table]) ++worldMapFileCount;
 		std::size_t frameXmlFileCount = composingFrameXml
-			? ContentFrameXml::Targets().size() : 0;
+			? ContentFrameXml::Targets(composingFloorNames).size() : 0;
 		Require(result.fileCount + (composingItem ? 1 : 0) +
 						(composingCurrency ? 1 : 0) +
 						(composingCategory ? 1 : 0) + (composingCost ? 1 : 0) + (composingSpell ? 1 : 0) +
@@ -1166,22 +1177,25 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 				"' declares stock FrameXML.toc digest " +
 				stockTocOwner->clientFrameXml->stockTocSha256 +
 				" but its bytes hash to " + stockDigest);
-			std::string generated;
-			Require(ContentFrameXml::ComposeLua(declaredFloors, generated, error),
-				"Could not generate dungeon floor names: " + error);
-			Require(ContentFrameXml::Stage(ContentFrameXml::GeneratedLuaTarget(),
-				generated, result.workspace, error),
-				"Could not stage generated floor names: " + error);
+			if (composingFloorNames) {
+				std::string generated;
+				Require(ContentFrameXml::ComposeLua(declaredFloors, generated, error),
+					"Could not generate dungeon floor names: " + error);
+				Require(ContentFrameXml::Stage(ContentFrameXml::GeneratedLuaTarget(),
+					generated, result.workspace, error),
+					"Could not stage generated floor names: " + error);
+				Require(ContentBuildHash::Calculate(
+						result.workspace / std::filesystem::path(
+							ContentFrameXml::GeneratedLuaTarget()).generic_string(),
+						frameXmlHashes[ContentFrameXml::GeneratedLuaTarget()], error), error);
+			}
 			std::string toc;
-			Require(ContentFrameXml::ComposeToc(stockToc, toc, error),
+			Require(ContentFrameXml::ComposeToc(stockToc, frameXmlLoadEntries,
+				composingFloorNames, toc, error),
 				"Could not generate FrameXML.toc: " + error);
 			Require(ContentFrameXml::Stage(ContentFrameXml::StockTocTarget(), toc,
 				result.workspace, error),
 				"Could not stage generated FrameXML.toc: " + error);
-			Require(ContentBuildHash::Calculate(
-					result.workspace / std::filesystem::path(
-						ContentFrameXml::GeneratedLuaTarget()).generic_string(),
-					frameXmlHashes[ContentFrameXml::GeneratedLuaTarget()], error), error);
 			Require(ContentBuildHash::Calculate(
 					result.workspace / std::filesystem::path(
 						ContentFrameXml::StockTocTarget()).generic_string(),

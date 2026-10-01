@@ -1,7 +1,9 @@
 #include "ContentFrameXml.h"
 #include "ContentBuildHash.h"
 #include "ContentBuildPaths.h"
+#include <algorithm>
 #include <cstdio>
+#include <functional>
 #include <fstream>
 
 namespace
@@ -34,6 +36,33 @@ std::string LuaString(std::string const& value)
 std::string Number(std::uint32_t value)
 {
     return std::to_string(value);
+}
+
+std::string const FrameXmlPrefix = "Interface/FrameXML/";
+
+bool FrameXmlTarget(std::string const& value, std::string& canonical,
+                    std::string& relative, std::string& error)
+{
+    try
+    {
+        canonical = ContentBuildPaths::Target(value);
+    }
+    catch (std::exception const& exception)
+    {
+        error = exception.what();
+        return false;
+    }
+    auto folded = ContentBuildPaths::Fold(canonical);
+    auto prefix = ContentBuildPaths::Fold(FrameXmlPrefix);
+    if (folded.compare(0, prefix.size(), prefix) != 0 ||
+        canonical.size() <= FrameXmlPrefix.size())
+    {
+        error = "FrameXML load path must be a file below " + FrameXmlPrefix +
+                ": " + value;
+        return false;
+    }
+    relative = canonical.substr(FrameXmlPrefix.size());
+    return true;
 }
 }
 
@@ -246,15 +275,143 @@ bool ContentFrameXml::ComposeLua(Declared const& floors, std::string& text,
 }
 
 bool ContentFrameXml::ComposeToc(std::vector<std::uint8_t> const& stock,
-                                 std::string& text, std::string& error)
+                                 std::vector<LoadEntry> const& entries,
+                                 bool includeGeneratedLua, std::string& text,
+                                 std::string& error)
 {
     std::string const source(stock.begin(), stock.end());
     std::string const moduleName =
         GeneratedLuaTarget().substr(GeneratedLuaTarget().rfind('/') + 1);
 
+    struct Node
+    {
+        std::string target;
+        std::string relative;
+        std::string anchor;
+    };
+    std::map<std::string, Node> additions;
+    for (auto const& entry : entries)
+    {
+        std::string target, relative, anchor, anchorRelative;
+        if (!FrameXmlTarget(entry.target, target, relative, error) ||
+            !FrameXmlTarget(entry.after, anchor, anchorRelative, error))
+            return false;
+        auto key = ContentBuildPaths::Fold(target);
+        if (!additions.emplace(key, Node{target, relative,
+                ContentBuildPaths::Fold(anchor)}).second)
+        {
+            error = "Duplicate or case-alias FrameXML load entry: " + target;
+            return false;
+        }
+        if (includeGeneratedLua &&
+            key == ContentBuildPaths::Fold(GeneratedLuaTarget()))
+        {
+            error = "FrameXML load entry conflicts with generated target: " + target;
+            return false;
+        }
+        if (key == ContentBuildPaths::Fold(StockTocTarget()))
+        {
+            error = "FrameXML load entry cannot own the composed TOC target";
+            return false;
+        }
+    }
+
+    // Index the pinned stock list by logical, case-insensitive MPQ path. The
+    // original bytes stay untouched; this index is only for anchor resolution.
+    std::map<std::string, std::vector<std::size_t>> stockAnchors;
+    std::vector<std::string> lineKeys;
+    for (std::size_t position = 0; position < source.size();)
+    {
+        auto newline = source.find('\n', position);
+        auto stop = newline == std::string::npos ? source.size() : newline + 1;
+        std::string line = source.substr(position, stop - position);
+        position = stop;
+        if (!line.empty() && line.back() == '\n') line.pop_back();
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        std::string key;
+        if (!line.empty() && line.front() != '#')
+        {
+            std::string canonical, relative, parseError;
+            if (!FrameXmlTarget(FrameXmlPrefix + line, canonical, relative,
+                                parseError))
+            {
+                error = "Invalid stock FrameXML.toc load entry '" + line +
+                        "': " + parseError;
+                return false;
+            }
+            key = ContentBuildPaths::Fold(canonical);
+            stockAnchors[key].push_back(lineKeys.size());
+        }
+        lineKeys.push_back(std::move(key));
+    }
+
+    for (auto const& addition : additions)
+    {
+        auto stockTarget = stockAnchors.find(addition.first);
+        if (stockTarget != stockAnchors.end())
+        {
+            error = "FrameXML load entry already exists in stock TOC: " +
+                    addition.second.target;
+            return false;
+        }
+        auto stockAnchor = stockAnchors.find(addition.second.anchor);
+        if (stockAnchor != stockAnchors.end() && stockAnchor->second.size() != 1)
+        {
+            error = "Ambiguous FrameXML ordering anchor for " +
+                    addition.second.target;
+            return false;
+        }
+        if (stockAnchor == stockAnchors.end() &&
+            !additions.count(addition.second.anchor))
+        {
+            error = "Missing FrameXML ordering anchor for " +
+                    addition.second.target;
+            return false;
+        }
+    }
+
+    // A contribution can anchor to another contribution. Detect cycles before
+    // writing so no discovery/install ordering can affect the outcome.
+    std::map<std::string, unsigned> state;
+    std::function<bool(std::string const&)> visit = [&](std::string const& key) {
+        if (state[key] == 2) return true;
+        if (state[key] == 1)
+        {
+            error = "FrameXML load-entry ordering cycle at " +
+                    additions.at(key).target;
+            return false;
+        }
+        state[key] = 1;
+        auto anchor = additions.at(key).anchor;
+        if (additions.count(anchor) && !visit(anchor)) return false;
+        state[key] = 2;
+        return true;
+    };
+    for (auto const& addition : additions)
+        if (!visit(addition.first)) return false;
+
+    std::map<std::string, std::vector<std::string>> children;
+    for (auto const& addition : additions)
+        children[addition.second.anchor].push_back(addition.first);
+    // `additions` is already keyed byte-wise by folded logical path, but keep
+    // the ordering explicit at the emission boundary.
+    for (auto& group : children)
+        std::sort(group.second.begin(), group.second.end());
+
+    std::function<void(std::string const&, std::string const&, std::string&)> emit =
+        [&](std::string const& anchor, std::string const& ending,
+            std::string& output) {
+            for (auto const& key : children[anchor])
+            {
+                output += additions.at(key).relative + ending;
+                emit(key, ending, output);
+            }
+        };
+
     std::string out;
-    out.reserve(source.size() + moduleName.size() + 4);
+    out.reserve(source.size() + moduleName.size() + entries.size() * 48 + 4);
     std::size_t insertions = 0;
+    std::size_t lineIndex = 0;
     for (std::size_t position = 0; position < source.size();)
     {
         auto newline = source.find('\n', position);
@@ -270,10 +427,23 @@ bool ContentFrameXml::ComposeToc(std::vector<std::uint8_t> const& stock,
             return false;
         }
         out += raw;
-        if (line != TocInsertionMarker()) continue;
+        std::string ending = raw.size() >= 2 &&
+            raw.compare(raw.size() - 2, 2, "\r\n") == 0 ? "\r\n" :
+            (!raw.empty() && raw.back() == '\n' ? "\n" : "");
+        if (!lineKeys.at(lineIndex).empty() && children.count(lineKeys.at(lineIndex)))
+        {
+            if (ending.empty())
+            {
+                error = "FrameXML ordering anchor is not a terminated line: " + line;
+                return false;
+            }
+            emit(lineKeys.at(lineIndex), ending, out);
+        }
+        ++lineIndex;
+        if (!includeGeneratedLua || line != TocInsertionMarker()) continue;
         // Reuse this TOC's own line ending for the inserted entry rather than
         // normalizing the whole file, so the diff against stock stays one line.
-        if (raw.size() < 2 || raw.compare(raw.size() - 2, 2, "\r\n") != 0)
+        if (ending != "\r\n")
         {
             error = "Stock FrameXML.toc insertion marker is not a terminated "
                     "line";
@@ -282,7 +452,7 @@ bool ContentFrameXml::ComposeToc(std::vector<std::uint8_t> const& stock,
         out += moduleName + "\r\n";
         ++insertions;
     }
-    if (insertions != 1)
+    if (includeGeneratedLua && insertions != 1)
     {
         error = "Stock FrameXML.toc must contain exactly one '" +
                 TocInsertionMarker() + "' line, found " +
@@ -290,6 +460,36 @@ bool ContentFrameXml::ComposeToc(std::vector<std::uint8_t> const& stock,
         return false;
     }
     text = std::move(out);
+    return true;
+}
+
+bool ContentFrameXml::ComposeToc(std::vector<std::uint8_t> const& stock,
+                                 std::string& text, std::string& error)
+{
+    return ComposeToc(stock, {}, true, text, error);
+}
+
+bool ContentFrameXml::ValidateTargets(std::vector<LoadEntry> const& entries,
+                                      std::set<std::string> const& foldedTargets,
+                                      std::string& error)
+{
+    if (foldedTargets.count(ContentBuildPaths::Fold(StockTocTarget())))
+    {
+        error = "Raw " + StockTocTarget() +
+                " conflicts with generated FrameXML content";
+        return false;
+    }
+    for (auto const& entry : entries)
+    {
+        std::string target, relative;
+        if (!FrameXmlTarget(entry.target, target, relative, error)) return false;
+        if (!foldedTargets.count(ContentBuildPaths::Fold(target)))
+        {
+            error = "FrameXML load entry target is absent from the cumulative "
+                    "managed build: " + target;
+            return false;
+        }
+    }
     return true;
 }
 
@@ -332,10 +532,9 @@ bool ContentFrameXml::Stage(std::string const& target, std::string const& text,
     }
 }
 
-std::vector<std::string> const& ContentFrameXml::Targets()
+std::vector<std::string> ContentFrameXml::Targets(bool includeGeneratedLua)
 {
-    static std::vector<std::string> const targets = {
-        "Interface/FrameXML/ContentManagerWorldMapFloorNames.lua",
-        "Interface/FrameXML/FrameXML.toc"};
+    std::vector<std::string> targets = {StockTocTarget()};
+    if (includeGeneratedLua) targets.insert(targets.begin(), GeneratedLuaTarget());
     return targets;
 }
