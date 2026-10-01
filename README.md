@@ -645,7 +645,17 @@ instance placement only from `DungeonMap.dbc`, `DungeonMapChunk.dbc`, `WorldMapA
 on the world map or in the instance map. Build 12340 only.
 
 Every contributed row keeps an author-declared ID leased durably per table, because the client bakes
-map geometry: reassigning an ID would silently repaint an existing map. Composition is therefore
+map geometry: reassigning an ID would silently repaint an existing map. That durable lease is keyed by
+a symbol derived only from immutable facts about the authored row — `worldmap/area/<areaId>`,
+`worldmap/area/<areaId>/floor/<floorId>`, `worldmap/area/<areaId>/chunk/<chunkId>` and
+`worldmap/transform/<transformId>`. A map's position inside `worldMaps[]` is never part of its
+identity, so adding, removing or reordering maps cannot change the ownership of the rows they do not
+themselves change. Leases persisted under the older positional symbols are still matched and reused in
+place — owner, row ID, symbol and `first_build` preserved — but a migration that cannot be proven
+unambiguous fails the build rather than guessing. See
+[docs/WORLD_MAP_DBC.md](docs/WORLD_MAP_DBC.md#durable-identity-is-derived-from-the-row-never-from-manifest-position).
+
+Composition is therefore
 strictly append-only — the verified stock rows and the stock string block are preserved byte for
 byte, `WorldMapArea` string offsets are appended (offset 0 stays the empty string so no existing
 offset can move), and package rows follow in a deterministic package-key then declaration order.

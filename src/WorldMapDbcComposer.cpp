@@ -44,61 +44,138 @@ std::vector<ResolvedWorldMap> Ordered(std::vector<ResolvedWorldMap> const& maps)
 }
 }
 
+std::string WorldMapDbcComposer::CanonicalSymbol(std::string const& table,
+    std::uint32_t areaId, std::uint32_t rowId)
+{
+    if (table == "DungeonMap")
+        return "worldmap/area/" + std::to_string(areaId) + "/floor/"
+            + std::to_string(rowId);
+    if (table == "DungeonMapChunk")
+        return "worldmap/area/" + std::to_string(areaId) + "/chunk/"
+            + std::to_string(rowId);
+    if (table == "WorldMapArea")
+        return "worldmap/area/" + std::to_string(areaId);
+    if (table == "WorldMapTransforms")
+        return "worldmap/transform/" + std::to_string(rowId);
+    throw std::runtime_error("Unsupported world-map DBC table: " + table);
+}
+
 void WorldMapDbcComposer::AppendRequests(std::string const& packageKey,
     std::vector<ContentWorldMap> const& maps,
     std::map<std::string, std::vector<ResourceAllocationRequest>>& out)
 {
-    // Symbols are derived from the manifest position, which is stable for a
-    // fixed EPF and independent of database row order. Each authored row is
-    // requested exactly once: a duplicate request for one row would be a
-    // different symbol claiming an ID the package already holds, which PlanFixed
-    // must keep rejecting rather than silently deduplicate.
-    std::size_t mapIndex = 0;
+    // A symbol is durable ownership, so it is derived only from immutable facts
+    // about the authored row: the declaring area's row ID and the row's own ID.
+    // The map's position in worldMaps[] is used for nothing here. A previous
+    // release minted "worldmap/<array index>/..." instead, which made a row's
+    // identity change whenever the manifest was reordered or a map was inserted,
+    // and let a single symbol name two different transforms. Canonical identity
+    // removes that coupling instead of compensating for it.
+    //
+    // Each authored row is requested exactly once. A duplicate request for one
+    // row would be a different symbol claiming an ID the package already holds,
+    // which PlanFixed must keep rejecting rather than silently deduplicate.
     for (auto const& map : maps) {
-        auto const prefix = "worldmap/" + std::to_string(mapIndex) + "/";
         // A map with no declared transform contributes no WorldMapTransforms row
         // at all: no request, no fixed ID, no lease, no composed record. Nothing
         // is synthesised for it, and NewDungeonMapID is never guessed.
         if (map.transform)
-            out["WorldMapTransforms"].push_back({packageKey, prefix + "transform",
+            out["WorldMapTransforms"].push_back({packageKey,
+                CanonicalSymbol("WorldMapTransforms", 0, map.transform->id),
                 ResourceKind("WorldMapTransforms"), map.transform->id});
         for (auto const& area : map.areas) {
-            auto const areaPrefix = prefix + "area/" + std::to_string(area.id) + "/";
-            out["WorldMapArea"].push_back({packageKey, prefix + "area/" +
-                std::to_string(area.id), ResourceKind("WorldMapArea"), area.id});
+            out["WorldMapArea"].push_back({packageKey,
+                CanonicalSymbol("WorldMapArea", area.id, area.id),
+                ResourceKind("WorldMapArea"), area.id});
             // A DungeonMap row belongs to the area that declares the floor, so
             // the floor is requested here and nowhere else.
             for (auto const& floor : area.floors)
-                out["DungeonMap"].push_back({packageKey, areaPrefix + "floor/" +
-                    std::to_string(floor.id), ResourceKind("DungeonMap"), floor.id});
+                out["DungeonMap"].push_back({packageKey,
+                    CanonicalSymbol("DungeonMap", area.id, floor.id),
+                    ResourceKind("DungeonMap"), floor.id});
             for (auto const& chunk : area.chunks)
-                out["DungeonMapChunk"].push_back({packageKey, areaPrefix + "chunk/" +
-                    std::to_string(chunk.id), ResourceKind("DungeonMapChunk"), chunk.id});
+                out["DungeonMapChunk"].push_back({packageKey,
+                    CanonicalSymbol("DungeonMapChunk", area.id, chunk.id),
+                    ResourceKind("DungeonMapChunk"), chunk.id});
         }
-        ++mapIndex;
     }
 }
 
-bool WorldMapDbcComposer::SameRow(std::string const& a, std::string const& b)
+namespace {
+// Normalises a world-map symbol to the canonical identity grammar, or returns
+// an empty string when the symbol is not a well-formed identity of any form.
+//
+// `rowId` is the declared or retained row ID of the symbol's row. It is only
+// consulted for the historical transform path, which carries no row identity of
+// its own.
+std::string CanonicalIdentity(std::string const& symbol, std::uint32_t rowId)
 {
-    // A world-map symbol is "worldmap/<manifest position>/<row path>", and only
-    // the row path identifies an authored row: it names the area, floor, chunk
-    // or transform by the very IDs that row already carries. The position is
-    // just where the map happens to sit in this release, so adding or reordering
-    // a map renumbers it without changing the row. Stripping it therefore makes
-    // the two symbols comparable, and the planner can then tell a moved row
-    // apart from a genuinely different one. A symbol without a well-formed
-    // position, or with an empty row path, is never equivalent to anything.
-    auto rowPath = [](std::string const& symbol) {
-        if (symbol.compare(0, 9, "worldmap/") != 0) return std::string();
-        auto const slash = symbol.find('/', 9);
-        if (slash == std::string::npos || slash == 9 || slash + 1 == symbol.size())
-            return std::string();
-        for (auto i = std::size_t(9); i < slash; ++i)
-            if (symbol[i] < '0' || symbol[i] > '9') return std::string();
-        return symbol.substr(slash + 1);
+    static std::string const prefix = "worldmap/";
+    if (symbol.compare(0, prefix.size(), prefix) != 0)
+        return std::string();
+    auto const rest = symbol.substr(prefix.size());
+    auto digits = [](std::string const& text) {
+        if (text.empty()) return false;
+        for (auto const c : text)
+            if (c < '0' || c > '9') return false;
+        return true;
     };
-    return !rowPath(a).empty() && rowPath(a) == rowPath(b);
+    // Historical positional form: worldmap/<array index>/<row path>. The index is
+    // a manifest position, not identity, so it is dropped.
+    if (auto const slash = rest.find('/'); slash != std::string::npos
+        && digits(rest.substr(0, slash))) {
+        auto const rowPath = rest.substr(slash + 1);
+        // Every transform in a package shares the row path "transform", so the
+        // symbol alone cannot say which row it owns. The retained row ID is the
+        // only fact that can, which is exactly why this case needs rowId.
+        if (rowPath == "transform")
+            return WorldMapDbcComposer::CanonicalSymbol("WorldMapTransforms", 0, rowId);
+        if (rowPath.compare(0, 5, "area/") != 0)
+            return std::string();
+        return "worldmap/" + rowPath;
+    }
+    // Canonical form. Its components must be well formed. The identity is the
+    // symbol itself: it is already the canonical grammar, so it is compared as
+    // text rather than reparsed into numbers, which keeps a malformed symbol
+    // from throwing out of a predicate that must be total.
+    auto const words = [](std::string const& text) {
+        std::vector<std::string> out;
+        std::size_t at = 0;
+        while (at <= text.size()) {
+            auto const next = text.find('/', at);
+            out.push_back(text.substr(at, next == std::string::npos
+                ? std::string::npos : next - at));
+            if (next == std::string::npos) break;
+            at = next + 1;
+        }
+        return out;
+    };
+    auto const parts = words(rest);
+    if (parts.size() == 2 && parts[0] == "area" && digits(parts[1]))
+        return symbol;
+    if (parts.size() == 4 && parts[0] == "area" && digits(parts[1])
+        && (parts[2] == "floor" || parts[2] == "chunk") && digits(parts[3]))
+        return symbol;
+    if (parts.size() == 2 && parts[0] == "transform" && digits(parts[1]))
+        return symbol;
+    return std::string();
+}
+}
+
+bool WorldMapDbcComposer::SameRow(std::string const& retainedSymbol,
+    std::uint32_t retainedValue, std::string const& requestSymbol,
+    std::uint32_t requestValue)
+{
+    // Two different row IDs are two different rows. A retained lease may never
+    // be adopted by a declaration of another row, so a value mismatch is a plain
+    // negative answer; the caller keeps the surrounding collision reporting.
+    if (retainedValue != requestValue)
+        return false;
+    auto const retained = CanonicalIdentity(retainedSymbol, retainedValue);
+    auto const requested = CanonicalIdentity(requestSymbol, requestValue);
+    // A malformed or unknown symbol is equivalent to nothing, so the rule can
+    // never be satisfied by an empty or hand-written path.
+    return !retained.empty() && retained == requested;
 }
 
 std::string const& WorldMapDbcComposer::VerifiedBaselineSha256(std::string const& table)

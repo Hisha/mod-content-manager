@@ -214,6 +214,70 @@ that is already occupied by stock or by another package's lease. Retired leases 
 removed package's row ID is never handed to another owner, so IDs are effectively permanent. The
 historical lease and composed file hash also stay in the parity artifact.
 
+### Durable identity is derived from the row, never from manifest position
+
+A lease is keyed by (package, **symbol**, kind), so the symbol *is* durable identity. It is built
+only from immutable facts about the authored row — the declaring area's row ID and the row's own
+client-baked ID:
+
+| Table | Canonical symbol |
+|---|---|
+| `WorldMapArea` | `worldmap/area/<areaId>` |
+| `DungeonMap` | `worldmap/area/<areaId>/floor/<floorId>` |
+| `DungeonMapChunk` | `worldmap/area/<areaId>/chunk/<chunkId>` |
+| `WorldMapTransforms` | `worldmap/transform/<transformId>` |
+
+The position of a map inside `worldMaps[]` appears in **no** symbol. Inserting, removing or reordering
+entries therefore cannot change the identity of any row they do not themselves change, and two builds
+that declare the same rows mint byte-identical symbols. A transform is keyed by its own declared
+transform ID, so two genuinely different transform rows stay distinct identities even when they belong
+to the same map.
+
+Earlier releases minted `worldmap/<array index>/...` instead. That coupled ownership to a manifest
+ordering, and it failed in production twice, in both directions:
+
+- **Same resource, different symbol.** Growing `mod-native-instance-maps` from four maps to
+  forty-three moved Karazhan from index 1 to index 13, so its floor 383 no longer matched the symbol
+  its own lease was persisted under.
+- **Same symbol, different resource.** The historical transform symbol was the bare word `transform`,
+  which names no row at all, so every transform in a package shared it. After the reorder,
+  `worldmap/0/transform` came to mean Ahn'Qiraj's transform 13 while the lease persisted under it still
+  held DeeprunTram's transform 12, and the build was refused on the retained row ID.
+
+The canonical grammar removes that coupling instead of compensating for it. Matching is the safety
+net, not the mechanism: `WorldMapDbcComposer::SameRow()` understands both the canonical form and the
+historical positional form so leases persisted under the old grammar keep working, and it is given both
+the retained and the declared row ID because a historical transform symbol cannot identify its own row.
+
+### Migration of existing installations
+
+A legacy lease is **reused in place**, never rewritten. Its numeric ID, package owner, persisted
+symbol and `first_build` are preserved and only `last_build` advances, so historical completed builds
+stay coherent. This is deliberate: `ContentAllocationRegistry` never deletes a lease, so writing a
+canonical symbol alongside a retained legacy row would leave two leases for one (package, value) and
+the next build would abort with *Duplicate retained resource value*. Rewriting in place would need a
+reconciliation path that does not exist. New allocations are minted canonically, so the registry
+converges to canonical symbols as rows are added and legacy symbols persist only for rows that were
+really allocated under them.
+
+Migration is only attempted when it can be proven. If a legacy identity cannot be unambiguously matched
+to the current stable resource, the build **fails rather than guessing**.
+
+All genuine conflicts still fail, unchanged:
+
+| Conflict | Outcome |
+|---|---|
+| Fixed numeric ID owned by an unrelated package | rejected |
+| Same package claiming one numeric ID for different resources | rejected |
+| Two declarations claiming one row | rejected |
+| Ambiguous legacy migration (two legacy leases collapse onto one identity) | rejected |
+| Resource-kind mismatch | rejected |
+| Baseline/stock collision | rejected |
+| Different baseline hash, policy version, or externally occupied ID | rejected |
+| Schema 3 replacement-source/target conflicts | rejected |
+
+Relocation never crosses an owner: another package's row stays its own, whatever its symbol says.
+
 ## Append-only composition and string-block safety
 
 `src/WorldMapDbcComposer.cpp` composes each table from the verified stock baseline:

@@ -618,14 +618,24 @@ static void AllocationTests()
 // the package claiming its own ID under a second symbol and rejected the build.
 // Planning is exercised here through the composer, which is the same request
 // builder the build service calls, so the two can no longer drift apart.
+//
 // Regression: expanding mod-native-instance-maps from four maps to forty-three
-// renumbered every map's manifest position, so Karazhan's authored floor stopped
-// matching the symbol its own allocation had been persisted under. PlanFixed
-// looked the lease up by (package, symbol, kind), missed, and then rejected the
-// build because the package appeared to already own ID 383 under another symbol.
-// The persisted row was correct the whole time. Only the row path identifies an
-// authored row, so the composer now reports when two symbols name the same one
-// and the planner reuses that lease verbatim.
+// renumbered every map's manifest position. The persisted symbols were
+// "worldmap/<array index>/...", so Karazhan's authored floor stopped matching the
+// symbol its own allocation had been persisted under, and PlanFixed rejected the
+// build. Same resource, different symbol.
+//
+// This is the same bug in its inverse form, and it is the one that reached PTR:
+// the historical transform symbol is the bare word "transform", so every transform
+// in a package shared it and it carried no row identity at all. After the reorder
+// worldmap/0/transform came to mean Ahn'Qiraj's transform 13 while the lease
+// persisted under it still held DeeprunTram's transform 12. Same symbol,
+// different resource, and PlanFixed refused the build on the retained row ID.
+//
+// So no persisted world-map identity may depend on the worldMaps[] position. The
+// composer now mints canonical symbols built only from immutable row facts, and
+// the equivalence rule understands both the canonical form and the historical
+// positional form so leases persisted under the old grammar keep working.
 static void RelocatedRowTests()
 {
 	auto const policy = ContentResourceAllocator::FixedRowIdPolicy(
@@ -643,36 +653,85 @@ static void RelocatedRowTests()
 	persisted.resourceKind = kind;
 	persisted.policyVersion = 1;
 
-	// Only the row path is identity; the manifest position is not.
-	assert(WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383",
-		"worldmap/13/area/799/floor/383"));
-	assert(WorldMapDbcComposer::SameRow("worldmap/0/area/799/floor/383",
-		"worldmap/0/area/799/floor/383"));
+	// The canonical symbol of a row names the area that owns it and the row's own
+	// ID, and carries no manifest position.
+	assert(WorldMapDbcComposer::CanonicalSymbol("WorldMapArea", 799, 799) ==
+		"worldmap/area/799");
+	assert(WorldMapDbcComposer::CanonicalSymbol("DungeonMap", 799, 383) ==
+		"worldmap/area/799/floor/383");
+	assert(WorldMapDbcComposer::CanonicalSymbol("DungeonMapChunk", 799, 4435) ==
+		"worldmap/area/799/chunk/4435");
+	assert(WorldMapDbcComposer::CanonicalSymbol("WorldMapTransforms", 0, 13) ==
+		"worldmap/transform/13");
+	// A transform is keyed by its own declared transform ID, so two genuinely
+	// different transforms of the same map stay distinct identities.
+	assert(WorldMapDbcComposer::CanonicalSymbol("WorldMapTransforms", 0, 12) !=
+		WorldMapDbcComposer::CanonicalSymbol("WorldMapTransforms", 0, 13));
+
+	// A historical lease and the canonical symbol of the same row are the same
+	// row, whatever position either side was minted at.
+	assert(WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383", 383,
+		"worldmap/area/799/floor/383", 383));
+	assert(WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383", 383,
+		"worldmap/13/area/799/floor/383", 383));
+	assert(WorldMapDbcComposer::SameRow("worldmap/13/area/799/floor/383", 383,
+		"worldmap/area/799/floor/383", 383));
+	// Two historical symbols at different positions are still the same row.
+	assert(WorldMapDbcComposer::SameRow("worldmap/0/area/799/floor/383", 383,
+		"worldmap/34/area/799/floor/383", 383));
+	// A historical transform lease is identified by its retained row ID, because
+	// the bare "transform" row path names no row at all. This is the PTR case.
+	assert(WorldMapDbcComposer::SameRow("worldmap/0/transform", 12,
+		"worldmap/transform/12", 12));
+	assert(WorldMapDbcComposer::SameRow("worldmap/0/transform", 12,
+		"worldmap/8/transform", 12));
+	assert(WorldMapDbcComposer::SameRow("worldmap/2/transform", 11,
+		"worldmap/transform/11", 11));
+	// The same symbol naming a different row is never the same row. This is the
+	// exact PTR failure: worldmap/0/transform now requests Ahn'Qiraj's 13 while
+	// the lease under it still holds DeeprunTram's 12.
+	assert(!WorldMapDbcComposer::SameRow("worldmap/0/transform", 12,
+		"worldmap/0/transform", 13));
+	assert(!WorldMapDbcComposer::SameRow("worldmap/0/transform", 12,
+		"worldmap/transform/13", 13));
+	assert(!WorldMapDbcComposer::SameRow("worldmap/0/transform", 12,
+		"worldmap/transform/12", 13));
+	// Two transforms of one map are two rows.
+	assert(!WorldMapDbcComposer::SameRow("worldmap/0/transform", 12,
+		"worldmap/transform/13", 13));
 	// A different authored row is never the same row, however similar it looks.
-	assert(!WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383",
-		"worldmap/13/area/799/floor/384"));
-	assert(!WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383",
-		"worldmap/13/area/800/floor/383"));
-	assert(!WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383",
-		"worldmap/13/area/799/chunk/383"));
-	// Malformed symbols are equivalent to nothing, so the rule cannot be
+	assert(!WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383", 383,
+		"worldmap/area/799/floor/384", 384));
+	assert(!WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383", 383,
+		"worldmap/area/800/floor/383", 383));
+	assert(!WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383", 383,
+		"worldmap/area/799/chunk/383", 383));
+	// A floor is owned by the area that declares it, so the same floor ID under a
+	// different area is a different row.
+	assert(!WorldMapDbcComposer::SameRow("worldmap/area/799/floor/383", 383,
+		"worldmap/area/756/floor/383", 383));
+	// Malformed symbols are equivalent to nothing, so the rule can never be
 	// satisfied by an empty or hand-written path.
-	assert(!WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383", ""));
-	assert(!WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383",
-		"worldmap//area/799/floor/383"));
-	assert(!WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383",
-		"worldmap/1x/area/799/floor/383"));
-	assert(!WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383",
-		"worldmap/1/"));
-	assert(!WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383",
-		"floor/383"));
-	assert(!WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383",
-		"worldmap/1/area/799/floor/383/extra"));
+	assert(!WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383", 383, "", 383));
+	assert(!WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383", 383,
+		"worldmap//area/799/floor/383", 383));
+	assert(!WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383", 383,
+		"worldmap/1x/area/799/floor/383", 383));
+	assert(!WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383", 383,
+		"worldmap/1/", 383));
+	assert(!WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383", 383,
+		"floor/383", 383));
+	assert(!WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383", 383,
+		"worldmap/1/area/799/floor/383/extra", 383));
+	assert(!WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383", 383,
+		"worldmap/area/799/floor/0383", 383));
+	assert(!WorldMapDbcComposer::SameRow("worldmap/1/area/799/floor/383", 383,
+		"worldmap/area/99999999999999999999/floor/383", 383));
 
 	// The rebuild that failed in production now reuses the canonical allocation
 	// and keeps its persisted symbol, owner and first build.
 	auto const reused = ContentResourceAllocator::PlanFixed("realm", policy,
-		{{"mod-native-instance-maps", "worldmap/13/area/799/floor/383", kind, 383}},
+		{{"mod-native-instance-maps", "worldmap/area/799/floor/383", kind, 383}},
 		{persisted}, {}, 54, kHash, {}, {}, WorldMapDbcComposer::SameRow);
 	assert(reused.size() == 1);
 	assert(reused[0].packageKey == "mod-native-instance-maps");
@@ -682,67 +741,119 @@ static void RelocatedRowTests()
 	// Reusing the returned plan is stable: the same build plans identically and
 	// a later build only advances last_build.
 	auto const again = ContentResourceAllocator::PlanFixed("realm", policy,
-		{{"mod-native-instance-maps", "worldmap/13/area/799/floor/383", kind, 383}},
+		{{"mod-native-instance-maps", "worldmap/area/799/floor/383", kind, 383}},
 		reused, {}, 55, kHash, {}, {}, WorldMapDbcComposer::SameRow);
 	assert(again.size() == 1 && again[0].symbol == "worldmap/1/area/799/floor/383"
 		&& again[0].firstBuild == 49 && again[0].lastBuild == 55);
 	// A relocated row does not stop the build claiming further fixed rows.
 	auto const grown = ContentResourceAllocator::PlanFixed("realm", policy,
-		{{"mod-native-instance-maps", "worldmap/13/area/799/floor/383", kind, 383},
-		 {"mod-native-instance-maps", "worldmap/14/area/756/floor/166", kind, 166}},
+		{{"mod-native-instance-maps", "worldmap/area/799/floor/383", kind, 383},
+		 {"mod-native-instance-maps", "worldmap/area/756/floor/166", kind, 166}},
 		reused, {}, 56, kHash, {}, {}, WorldMapDbcComposer::SameRow);
 	assert(grown.size() == 2);
-	// The plan is ordered by symbol, so worldmap/13 precedes worldmap/14.
-	assert(grown[0].value == 383 && grown[0].symbol == "worldmap/1/area/799/floor/383"
-		&& grown[0].firstBuild == 49 && grown[0].lastBuild == 56);
-	assert(grown[1].value == 166 && grown[1].firstBuild == 56
-		&& grown[1].lastBuild == 56);
+	// The plan is ordered by symbol, so the area 756 row precedes area 799.
+	assert(grown[0].value == 166 && grown[0].symbol == "worldmap/area/756/floor/166"
+		&& grown[0].firstBuild == 56 && grown[0].lastBuild == 56);
+	assert(grown[1].value == 383 && grown[1].symbol == "worldmap/1/area/799/floor/383"
+		&& grown[1].firstBuild == 49 && grown[1].lastBuild == 56);
 
 	// Without the caller-supplied equivalence nothing is relaxed: the pre-fix
 	// collision is still reported, so no other resource kind gains the rule.
 	assert(Throws([&] {
 		(void)ContentResourceAllocator::PlanFixed("realm", policy,
-			{{"mod-native-instance-maps", "worldmap/13/area/799/floor/383", kind, 383}},
+			{{"mod-native-instance-maps", "worldmap/area/799/floor/383", kind, 383}},
 			{persisted}, {}, 54, kHash);
 	}));
 	// The same package and row ID under a genuinely different row is a manifest
 	// error, not a relocation, and keeps failing.
 	assert(Throws([&] {
 		(void)ContentResourceAllocator::PlanFixed("realm", policy,
-			{{"mod-native-instance-maps", "worldmap/13/area/800/floor/383", kind, 383}},
+			{{"mod-native-instance-maps", "worldmap/area/800/floor/383", kind, 383}},
 			{persisted}, {}, 54, kHash, {}, {}, WorldMapDbcComposer::SameRow);
 	}));
-	// The row path carries no row ID for a transform, so the declared ID is the
-	// only thing that can pair a relocation up. A different transform ID is a
-	// new row and must not adopt the retained one.
-	auto transformPolicy = ContentResourceAllocator::FixedRowIdPolicy(
+
+	// The PTR transform regression. A lease persisted under the historical
+	// worldmap/0/transform holds DeeprunTram's transform 12. The reordered release
+	// asks for Ahn'Qiraj's transform 13 there, which is a different row, so it is
+	// allocated freshly instead of adopting the retained row ID.
+	auto const transformPolicy = ContentResourceAllocator::FixedRowIdPolicy(
 		WorldMapDbcComposer::ResourceKind("WorldMapTransforms"));
+	auto const transformKind = transformPolicy.resourceKind;
 	auto transform = persisted;
-	transform.symbol = "worldmap/1/transform";
-	transform.value = 45;
-	transform.resourceKind = transformPolicy.resourceKind;
-	assert(WorldMapDbcComposer::SameRow("worldmap/1/transform", "worldmap/9/transform"));
-	auto const movedTransform =
-		ContentResourceAllocator::PlanFixed("realm", transformPolicy,
-			{{"mod-native-instance-maps", "worldmap/9/transform",
-			  transformPolicy.resourceKind, 45}},
+	transform.symbol = "worldmap/0/transform";
+	transform.value = 12;
+	transform.resourceKind = transformKind;
+	// The row the package genuinely still declares under that lease is reused.
+	auto const kept = ContentResourceAllocator::PlanFixed("realm", transformPolicy,
+		{{"mod-native-instance-maps", "worldmap/transform/12", transformKind, 12}},
+		{transform}, {}, 54, kHash, {}, {}, WorldMapDbcComposer::SameRow);
+	assert(kept.size() == 1 && kept[0].value == 12
+		&& kept[0].symbol == "worldmap/0/transform"
+		&& kept[0].firstBuild == 49 && kept[0].lastBuild == 54);
+	// The reordered release asks for both transforms by their canonical identity.
+	// Ahn'Qiraj's 13 is a row this package has never owned, so it is allocated
+	// fresh; DeeprunTram's 12 is the row the retained lease already holds, so that
+	// lease is reused. Neither row is painted by the other's identity.
+	auto const newcomer = ContentResourceAllocator::PlanFixed("realm", transformPolicy,
+		{{"mod-native-instance-maps", "worldmap/transform/13", transformKind, 13},
+		 {"mod-native-instance-maps", "worldmap/transform/12", transformKind, 12}},
+		{transform}, {}, 54, kHash, {}, {}, WorldMapDbcComposer::SameRow);
+	assert(newcomer.size() == 2);
+	for (auto const &lease : newcomer) {
+		if (lease.value == 12) {
+			assert(lease.symbol == "worldmap/0/transform"
+				&& lease.firstBuild == 49 && lease.lastBuild == 54);
+		} else {
+			assert(lease.value == 13 && lease.symbol == "worldmap/transform/13"
+				&& lease.firstBuild == 54 && lease.lastBuild == 54);
+		}
+	}
+	// A declaration arriving under the retained historical symbol but claiming a
+	// different row ID cannot be proven to be the same row, so it is refused
+	// rather than guessed at. The composer never mints a historical symbol, so
+	// this is the allocator's own guard against a hand-built or stale request.
+	assert(Throws([&] {
+		(void)ContentResourceAllocator::PlanFixed("realm", transformPolicy,
+			{{"mod-native-instance-maps", "worldmap/0/transform", transformKind, 13}},
 			{transform}, {}, 54, kHash, {}, {}, WorldMapDbcComposer::SameRow);
-	assert(movedTransform.size() == 1 && movedTransform[0].value == 45
-		&& movedTransform[0].symbol == "worldmap/1/transform"
-		&& movedTransform[0].firstBuild == 49);
-	auto const otherTransform =
-		ContentResourceAllocator::PlanFixed("realm", transformPolicy,
-			{{"mod-native-instance-maps", "worldmap/9/transform",
-			  transformPolicy.resourceKind, 46}},
+	}));
+	// A malformed cross-family symbol cannot be adopted by the transform lease
+	// either: it names a different row, so it is allocated fresh.
+	auto const crossed = ContentResourceAllocator::PlanFixed("realm", transformPolicy,
+		{{"mod-native-instance-maps", "worldmap/1/area/799/floor/383", transformKind, 383}},
+		{transform}, {}, 54, kHash, {}, {}, WorldMapDbcComposer::SameRow);
+	assert(crossed.size() == 1 && crossed[0].value == 383
+		&& crossed[0].firstBuild == 54);
+	// Two current declarations claiming one retained transform row is ambiguous
+	// and must fail rather than pick a winner.
+	assert(Throws([&] {
+		(void)ContentResourceAllocator::PlanFixed("realm", transformPolicy,
+			{{"mod-native-instance-maps", "worldmap/transform/12", transformKind, 12},
+			 {"mod-native-instance-maps", "worldmap/7/transform", transformKind, 12}},
 			{transform}, {}, 54, kHash, {}, {}, WorldMapDbcComposer::SameRow);
-	assert(otherTransform.size() == 1 && otherTransform[0].value == 46
-		&& otherTransform[0].symbol == "worldmap/9/transform"
-		&& otherTransform[0].firstBuild == 54);
+	}));
+	// Two historical leases that would both collapse onto one canonical identity
+	// incompatibly are ambiguous too, and must fail rather than guess.
+	auto second = transform;
+	second.symbol = "worldmap/3/transform";
+	assert(Throws([&] {
+		(void)ContentResourceAllocator::PlanFixed("realm", transformPolicy,
+			{{"mod-native-instance-maps", "worldmap/transform/12", transformKind, 12}},
+			{transform, second}, {}, 54, kHash, {}, {}, WorldMapDbcComposer::SameRow);
+	}));
+
 	// One retained row may not be adopted by two declarations in one build.
 	assert(Throws([&] {
 		(void)ContentResourceAllocator::PlanFixed("realm", policy,
-			{{"mod-native-instance-maps", "worldmap/13/area/799/floor/383", kind, 383},
+			{{"mod-native-instance-maps", "worldmap/area/799/floor/383", kind, 383},
 			 {"mod-native-instance-maps", "worldmap/4/area/799/floor/383", kind, 383}},
+			{persisted}, {}, 54, kHash, {}, {}, WorldMapDbcComposer::SameRow);
+	}));
+	// Two canonical declarations claiming one row is the same manifest error.
+	assert(Throws([&] {
+		(void)ContentResourceAllocator::PlanFixed("realm", policy,
+			{{"mod-native-instance-maps", "worldmap/area/799/floor/383", kind, 383},
+			 {"mod-native-instance-maps", "worldmap/area/799/floor/0383", kind, 383}},
 			{persisted}, {}, 54, kHash, {}, {}, WorldMapDbcComposer::SameRow);
 	}));
 	// Relocation never crosses an owner: another package's row stays its own.
@@ -750,19 +861,27 @@ static void RelocatedRowTests()
 	foreign.packageKey = "mod-another-package";
 	assert(Throws([&] {
 		(void)ContentResourceAllocator::PlanFixed("realm", policy,
-			{{"mod-native-instance-maps", "worldmap/13/area/799/floor/383", kind, 383}},
+			{{"mod-native-instance-maps", "worldmap/area/799/floor/383", kind, 383}},
 			{foreign}, {}, 54, kHash, {}, {}, WorldMapDbcComposer::SameRow);
+	}));
+	// The same for a historical transform lease held by an unrelated package.
+	auto foreignTransform = transform;
+	foreignTransform.packageKey = "mod-another-package";
+	assert(Throws([&] {
+		(void)ContentResourceAllocator::PlanFixed("realm", transformPolicy,
+			{{"mod-native-instance-maps", "worldmap/transform/12", transformKind, 12}},
+			{foreignTransform}, {}, 54, kHash, {}, {}, WorldMapDbcComposer::SameRow);
 	}));
 	// Every validation a fresh allocation would face still applies, because a
 	// relocated row is checked exactly like an inherited one.
 	assert(Throws([&] {
 		(void)ContentResourceAllocator::PlanFixed("realm", policy,
-			{{"mod-native-instance-maps", "worldmap/13/area/799/floor/383", kind, 383}},
+			{{"mod-native-instance-maps", "worldmap/area/799/floor/383", kind, 383}},
 			{persisted}, {383}, 54, kHash, {}, {}, WorldMapDbcComposer::SameRow);
 	}));
 	assert(Throws([&] {
 		(void)ContentResourceAllocator::PlanFixed("realm", policy,
-			{{"mod-native-instance-maps", "worldmap/13/area/799/floor/383", kind, 383}},
+			{{"mod-native-instance-maps", "worldmap/area/799/floor/383", kind, 383}},
 			{persisted}, {}, 54, std::string(64, 'b'), {}, {},
 			WorldMapDbcComposer::SameRow);
 	}));
@@ -770,19 +889,323 @@ static void RelocatedRowTests()
 	wrongPolicy.policyVersion = 2;
 	assert(Throws([&] {
 		(void)ContentResourceAllocator::PlanFixed("realm", policy,
-			{{"mod-native-instance-maps", "worldmap/13/area/799/floor/383", kind, 383}},
+			{{"mod-native-instance-maps", "worldmap/area/799/floor/383", kind, 383}},
 			{wrongPolicy}, {}, 54, kHash, {}, {}, WorldMapDbcComposer::SameRow);
+	}));
+	// A relocated historical transform is held to the same validation.
+	assert(Throws([&] {
+		(void)ContentResourceAllocator::PlanFixed("realm", transformPolicy,
+			{{"mod-native-instance-maps", "worldmap/transform/12", transformKind, 12}},
+			{transform}, {12}, 54, kHash, {}, {}, WorldMapDbcComposer::SameRow);
+	}));
+	assert(Throws([&] {
+		(void)ContentResourceAllocator::PlanFixed("realm", transformPolicy,
+			{{"mod-native-instance-maps", "worldmap/transform/12", transformKind, 12}},
+			{transform}, {}, 54, std::string(64, 'b'), {}, {},
+			WorldMapDbcComposer::SameRow);
 	}));
 	// Resource kinds are independent allocation spaces, so a retained row can
 	// never be adopted across kinds: the DungeonMap request below is planned as
 	// a fresh lease rather than reusing the transform row.
 	auto const crossKind = ContentResourceAllocator::PlanFixed("realm", policy,
-		{{"mod-native-instance-maps", "worldmap/13/area/799/floor/45", kind, 45}},
+		{{"mod-native-instance-maps", "worldmap/area/799/floor/45", kind, 45}},
 		{transform}, {}, 54, kHash, {}, {}, WorldMapDbcComposer::SameRow);
 	assert(crossKind.size() == 1 && crossKind[0].value == 45
-		&& crossKind[0].symbol == "worldmap/13/area/799/floor/45"
+		&& crossKind[0].symbol == "worldmap/area/799/floor/45"
 		&& crossKind[0].firstBuild == 54);
-	std::cout << "  world-map relocated row reuse: PASS\n";
+	// A baseline/stock collision on a relocated row still fails.
+	assert(Throws([&] {
+		(void)ContentResourceAllocator::PlanFixed("realm", transformPolicy,
+			{{"mod-native-instance-maps", "worldmap/transform/12", transformKind, 12}},
+			{}, {12}, 54, kHash, {}, {}, WorldMapDbcComposer::SameRow);
+	}));
+	std::cout << "  world-map stable identity equivalence: PASS\n";
+}
+
+
+// The world-map allocation store, modelled on ContentAllocationRegistry: a lease
+// is keyed by (package, symbol, kind); committing advances last_build when that
+// identity already exists and inserts otherwise; nothing is ever deleted, so a
+// retired row ID stays occupied. That no-delete rule is why a legacy lease is
+// reused in place rather than rewritten under a canonical symbol.
+struct LeaseStore
+{
+	std::vector<ItemAllocation> rows;
+	std::uint32_t build = 0;
+
+	void Commit(std::vector<ItemAllocation> const &plan, std::uint32_t next)
+	{
+		build = next;
+		for (auto const &row : plan) {
+			auto found = std::find_if(rows.begin(), rows.end(), [&](auto const &old) {
+				return old.packageKey == row.packageKey && old.symbol == row.symbol &&
+					old.resourceKind == row.resourceKind;
+			});
+			if (found != rows.end()) {
+				found->lastBuild = next;
+				continue;
+			}
+			rows.push_back(row);
+		}
+	}
+
+	ItemAllocation const *Find(std::string const &package, std::string const &kind,
+		std::uint32_t value) const
+	{
+		auto found = std::find_if(rows.begin(), rows.end(), [&](auto const &row) {
+			return row.packageKey == package && row.resourceKind == kind &&
+				row.value == value;
+		});
+		return found == rows.end() ? nullptr : &*found;
+	}
+};
+
+// Plans every world-map table for one release and commits the result, exactly as
+// the build service does. Returns the plan so a test can inspect it.
+std::vector<ItemAllocation> PlanAndCommit(LeaseStore &store,
+	std::string const &packageKey, std::vector<ContentWorldMap> const &maps,
+	std::map<std::string, std::vector<ResourceAllocationRequest>> const &requestsByTable,
+	fs::path const &baselineDirectory, std::uint32_t build,
+	SymbolEquivalence const &sameRow = nullptr,
+	AllocationReplacements const &replacements = {})
+{
+	std::vector<ItemAllocation> plan;
+	for (auto const &table : WorldMapDbcTables()) {
+		auto const &kind = WorldMapDbcComposer::ResourceKind(table);
+		auto stock = WorldMapDbcComposer::Inspect(table, Stock(table, baselineDirectory));
+		auto const policy = ContentResourceAllocator::FixedRowIdPolicy(kind);
+		auto const hash = WorldMapDbcComposer::VerifiedBaselineSha256(table);
+		std::vector<ResourceAllocationRequest> const &requests = requestsByTable.at(table);
+		(void)maps;
+		auto const built = ContentResourceAllocator::PlanFixed("realm", policy,
+			requests, store.rows, stock, build, hash, {}, replacements, sameRow);
+		plan.insert(plan.end(), built.begin(), built.end());
+	}
+	store.Commit(plan, build);
+	return plan;
+}
+
+// Mints the request set the historical positional grammar produced, so a
+// lifecycle test can reproduce an allocation state that real installations
+// already hold. The composer never mints these any more; this exists so the
+// regression can start from the state PTR actually had.
+void AppendHistoricalRequests(std::string const &packageKey,
+	std::vector<ContentWorldMap> const &maps,
+	std::map<std::string, std::vector<ResourceAllocationRequest>> &out)
+{
+	std::size_t index = 0;
+	for (auto const &map : maps) {
+		auto const prefix = "worldmap/" + std::to_string(index++) + "/";
+		if (map.transform)
+			out["WorldMapTransforms"].push_back({packageKey, prefix + "transform",
+				WorldMapDbcComposer::ResourceKind("WorldMapTransforms"),
+				map.transform->id});
+		for (auto const &area : map.areas) {
+			auto const areaPrefix = prefix + "area/" + std::to_string(area.id) + "/";
+			out["WorldMapArea"].push_back({packageKey, prefix + "area/" +
+				std::to_string(area.id), WorldMapDbcComposer::ResourceKind("WorldMapArea"),
+				area.id});
+			for (auto const &floor : area.floors)
+				out["DungeonMap"].push_back({packageKey, areaPrefix + "floor/" +
+					std::to_string(floor.id),
+					WorldMapDbcComposer::ResourceKind("DungeonMap"), floor.id});
+			for (auto const &chunk : area.chunks)
+				out["DungeonMapChunk"].push_back({packageKey, areaPrefix + "chunk/" +
+					std::to_string(chunk.id),
+					WorldMapDbcComposer::ResourceKind("DungeonMapChunk"), chunk.id});
+		}
+	}
+}
+
+std::map<std::string, std::vector<ResourceAllocationRequest>> ComposerRequests(
+	std::string const &packageKey, std::vector<ContentWorldMap> const &maps)
+{
+	std::map<std::string, std::vector<ResourceAllocationRequest>> out;
+	WorldMapDbcComposer::AppendRequests(packageKey, maps, out);
+	return out;
+}
+
+// The regression that reached PTR, reproduced against the real published release
+// rather than a synthetic manifest.
+//
+// BUILD A is the historical four-map package in the order it actually published:
+// DeeprunTram, Karazhan, TheDeadmines, TheTempleOfAtalHakkar. Its allocations are
+// persisted under the historical positional grammar, so worldmap/0/transform
+// holds DeeprunTram's transform 12.
+//
+// BUILD B is the current forty-three map release. Ahn'Qiraj sorts before
+// DeeprunTram, so it now owns array index 0, and the transform 13 the release
+// declares there is a different row from the 12 persisted under that symbol.
+// Karazhan has moved from index 1 to index 13.
+//
+// BUILD C reorders the same forty-three maps again without changing a single
+// resource, which is what proves the result depends on the rows and not on
+// where they sit.
+static void ReleaseLifecycleTests(fs::path const &releaseEpf,
+	fs::path const &baselineDirectory)
+{
+	auto const validated = ContentPackage(releaseEpf).Validate();
+	if (!validated.valid)
+		std::cerr << "  combined release rejected: " << validated.error << "\n";
+	assert(validated.valid);
+	// A mutable copy, because BUILD C reorders the very array the release ships.
+	auto all = validated.manifest.worldMaps;
+	auto const package = validated.manifest.packageKey;
+
+	// The four maps that were published before the release grew, in their
+	// historical alphabetical order, which is the order the package built them.
+	static char const *const historical[] = {"DeeprunTram", "Karazhan",
+		"TheDeadmines", "TheTempleOfAtalHakkar"};
+	std::vector<ContentWorldMap> four;
+	for (auto const *name : historical) {
+		auto found = std::find_if(all.begin(), all.end(), [&](auto const &map) {
+			return map.areas.size() == 1 && map.areas[0].internalName == name;
+		});
+		if (found == all.end()) {
+			std::cout << "  world-map release lifecycle: SKIP (release has no "
+					  << name << ")\n";
+			return;
+		}
+		four.push_back(*found);
+	}
+
+	auto const transformKind = WorldMapDbcComposer::ResourceKind("WorldMapTransforms");
+	auto const floorKind = WorldMapDbcComposer::ResourceKind("DungeonMap");
+	auto const chunkKind = WorldMapDbcComposer::ResourceKind("DungeonMapChunk");
+	auto const areaKind = WorldMapDbcComposer::ResourceKind("WorldMapArea");
+
+	// ---- BUILD A: the historical four-map package, persisted positionally.
+	LeaseStore store;
+	std::map<std::string, std::vector<ResourceAllocationRequest>> buildA;
+	AppendHistoricalRequests(package, four, buildA);
+	PlanAndCommit(store, package, four, buildA, baselineDirectory, 54);
+
+	// The forensic fact this whole regression rests on: index 0 was DeeprunTram,
+	// and its transform 12 is what worldmap/0/transform still owns.
+	auto const historicalFirst = store.Find(package, transformKind, 12);
+	assert(historicalFirst && historicalFirst->symbol == "worldmap/0/transform");
+	auto const karazhan = std::find_if(four.begin(), four.end(), [](auto const &map) {
+		return map.areas.size() == 1 && map.areas[0].internalName == "Karazhan";
+	});
+	assert(karazhan != four.end() && !karazhan->transform);
+	auto const karazhanFloor = karazhan->areas[0].floors.front().id;
+	assert(karazhanFloor == 383);
+	auto const karazhanFirst = store.Find(package, floorKind, karazhanFloor);
+	assert(karazhanFirst && karazhanFirst->symbol ==
+		"worldmap/1/area/799/floor/383");
+
+	// The failure this regression exists for. Planning BUILD B with the historical
+	// positional grammar against the BUILD A store is exactly what PTR did: the
+	// release requests Ahn'Qiraj's transform 13 at worldmap/0/transform while the
+	// lease persisted there holds DeeprunTram's 12, and the build is refused. No
+	// equivalence layer can rescue that, because the identity itself is what moved,
+	// which is why the fix had to change the identity rather than the matching.
+	auto const retainedBefore = store.rows.size();
+	assert(Throws([&] {
+		std::map<std::string, std::vector<ResourceAllocationRequest>> legacyB;
+		AppendHistoricalRequests(package, all, legacyB);
+		PlanAndCommit(store, package, all, legacyB, baselineDirectory, 55,
+			WorldMapDbcComposer::SameRow);
+	}));
+	// A refused build leaves the store exactly as it was.
+	assert(store.rows.size() == retainedBefore);
+
+	// ---- BUILD B: the same package grown and reordered to forty-three maps.
+	// This is the build that failed on PTR. It must now succeed.
+	auto const planB = PlanAndCommit(store, package, all,
+		ComposerRequests(package, all), baselineDirectory, 55,
+		WorldMapDbcComposer::SameRow);
+
+	// Karazhan's floor, chunks and area all survive the reorder, keeping the
+	// numeric ID and the first build they were allocated with.
+	auto const bFloor = store.Find(package, floorKind, karazhanFloor);
+	assert(bFloor && bFloor->value == karazhanFloor);
+	assert(bFloor->firstBuild == 54 && bFloor->lastBuild == 55);
+	assert(bFloor->symbol == "worldmap/1/area/799/floor/383");
+	assert(store.Find(package, areaKind, karazhan->areas[0].id));
+	for (auto const &chunk : karazhan->areas[0].chunks)
+		assert(store.Find(package, chunkKind, chunk.id));
+
+	// Every historical transform is still held, and the transform the release
+	// newly declares at the old index 0 is a separate row that never adopted the
+	// retained lease.
+	auto const b12 = store.Find(package, transformKind, 12);
+	assert(b12 && b12->symbol == "worldmap/0/transform");
+	assert(b12->firstBuild == 54 && b12->lastBuild == 55);
+	auto const b11 = store.Find(package, transformKind, 11);
+	assert(b11 && b11->firstBuild == 54 && b11->lastBuild == 55);
+	auto const b14 = store.Find(package, transformKind, 14);
+	assert(b14 && b14->firstBuild == 54 && b14->lastBuild == 55);
+	auto const b13 = store.Find(package, transformKind, 13);
+	assert(b13 && b13->firstBuild == 55 && b13->lastBuild == 55);
+	// The three historical transforms were reused in place, so they still carry
+	// the exact symbols they were persisted under. Nothing was rewritten and
+	// nothing was duplicated. The transform the release newly declares at the old
+	// index 0 is the only canonical symbol among the four.
+	std::set<std::string> reused;
+	for (auto const &lease : planB)
+		if (lease.resourceKind == transformKind && lease.firstBuild == 54)
+			reused.insert(lease.symbol);
+	assert(reused == std::set<std::string>({"worldmap/0/transform",
+		"worldmap/2/transform", "worldmap/3/transform"}));
+	assert(store.rows.size() == 4 + 1310 + 113 + 43);
+
+	// The whole release planned: every floor, chunk, area and transform of all
+	// forty-three maps is owned exactly once, and no identity is duplicated.
+	std::set<std::tuple<std::string, std::string, std::string>> identities;
+	for (auto const &row : store.rows)
+		assert(identities.emplace(row.packageKey, row.symbol, row.resourceKind).second);
+	auto const floors = std::count_if(store.rows.begin(), store.rows.end(),
+		[&](auto const &row) { return row.resourceKind == floorKind; });
+	auto const chunks = std::count_if(store.rows.begin(), store.rows.end(),
+		[&](auto const &row) { return row.resourceKind == chunkKind; });
+	auto const areas = std::count_if(store.rows.begin(), store.rows.end(),
+		[&](auto const &row) { return row.resourceKind == areaKind; });
+	auto const transforms = std::count_if(store.rows.begin(), store.rows.end(),
+		[&](auto const &row) { return row.resourceKind == transformKind; });
+	assert(floors == 113 && chunks == 1310 && areas == 43 && transforms == 4);
+	// Every lease this build created is canonical: none of them is minted from a
+	// worldMaps[] position. The three historical leases above keep their old
+	// symbols precisely so their rows are not rewritten.
+	for (auto const &row : store.rows) {
+		if (row.firstBuild != 55) continue;
+		auto const slash = row.symbol.find('/', 9);
+		assert(slash == std::string::npos || row.symbol[9] < '0' ||
+			row.symbol[9] > '9');
+		assert(row.symbol.compare(0, 19, "worldmap/transform/") != 0 ||
+			row.resourceKind == transformKind);
+	}
+
+	// ---- BUILD C: the same forty-three maps, reordered again.
+	// The result must be semantically identical to BUILD B: the same rows owned,
+	// under the same identities, with no new lease and no lost one.
+	auto before = store.rows;
+	std::reverse(all.begin(), all.end());
+	auto const planC = PlanAndCommit(store, package, all,
+		ComposerRequests(package, all), baselineDirectory, 56,
+		WorldMapDbcComposer::SameRow);
+	assert(planC.size() == planB.size());
+	// Reordering allocates nothing new and retires nothing.
+	for (auto const &row : planC) {
+		auto prior = std::find_if(before.begin(), before.end(), [&](auto const &old) {
+			return old.packageKey == row.packageKey && old.symbol == row.symbol &&
+				old.resourceKind == row.resourceKind;
+		});
+		if (prior == before.end()) {
+			std::cerr << "  reorder created a lease: " << row.packageKey << "/"
+					  << row.symbol << "\n";
+			assert(false);
+		}
+		assert(prior->value == row.value);
+		assert(prior->firstBuild == row.firstBuild);
+	}
+	assert(store.rows.size() == before.size());
+	// Every reused row kept its first build and advanced last_build.
+	for (auto const &row : store.rows) {
+		assert(row.firstBuild == 54 || row.firstBuild == 55);
+		assert(row.lastBuild == 56);
+	}
+	std::cout << "  world-map release lifecycle (build A -> B -> C): PASS\n";
 }
 
 static void FirstBuildPlanningTests()
@@ -819,7 +1242,12 @@ static void FirstBuildPlanningTests()
 	for (auto const& request : requests.at("DungeonMap"))
 		assert(request.symbol.find("dungeonmap/") == std::string::npos);
 	assert(requests.at("DungeonMap")[0].symbol ==
-		"worldmap/0/area/" + std::to_string(area.id) + "/floor/166");
+		"worldmap/area/" + std::to_string(area.id) + "/floor/166");
+	// No symbol carries the map's position in worldMaps[], because that position
+	// is not part of the row's identity.
+	for (auto const& table : WorldMapDbcTables())
+		for (auto const& request : requests.at(table))
+			assert(request.symbol.compare(0, 10, "worldmap/0") != 0);
 	// No row ID is claimed twice under two different symbols of one package:
 	// that is exactly what the planner rejects.
 	for (auto const& table : WorldMapDbcTables()) {
@@ -1044,7 +1472,7 @@ static void NoTransformTests(fs::path const &scratch, fs::path const &baselineDi
 		orphaned.push_back(ContentResourceAllocator::PlanFixed("realm",
 			ContentResourceAllocator::FixedRowIdPolicy(
 				WorldMapDbcComposer::ResourceKind("WorldMapTransforms")),
-			{{validated.packageKey, "worldmap/0/transform",
+			{{validated.packageKey, "worldmap/transform/900",
 			  WorldMapDbcComposer::ResourceKind("WorldMapTransforms"), 900}},
 			{}, {}, 12,
 			WorldMapDbcComposer::VerifiedBaselineSha256("WorldMapTransforms")).front());
@@ -1932,6 +2360,12 @@ int main(int argc, char **argv)
 			GoldenTests(stockDirectory, golden, artwork);
 		else
 			std::cout << "  Deadmines golden fixture: SKIP (no --world-map-golden-dir)\n";
+		auto const release = fs::path(argc > 4 && argv[4][0] ? argv[4] : "");
+		if (fs::is_regular_file(release))
+			ReleaseLifecycleTests(release, stockDirectory);
+		else
+			std::cout << "  world-map release lifecycle: SKIP (no "
+						 "--world-map-release-epf)\n";
 	} else {
 		std::cout << "  world-map baseline checks: SKIP (no --world-map-baseline-dir)\n";
 	}

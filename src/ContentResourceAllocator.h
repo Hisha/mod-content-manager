@@ -28,14 +28,19 @@ struct ResourceAllocationPolicy
 };
 
 // Optional caller-supplied equivalence over author-declared symbols. It reports
-// whether two symbols of the same resource kind address one authored row, so a
-// release that inserts or reorders manifest entries can still recognise the row
-// IDs it already owns. The caller owns the symbol grammar, so the rule can never
-// be widened to a resource family that caller does not compose. The retained
-// lease is reused verbatim: owner, symbol, row ID and first build are never
-// rewritten, so only last_build advances.
+// whether a retained symbol and a requested symbol of the same resource kind
+// address one authored row, so a release that inserts or reorders manifest
+// entries can still recognise the row IDs it already owns. Both row IDs are
+// passed because a symbol need not carry its own row identity: the historical
+// world-map transform symbol names no row at all, and without the retained row
+// ID one transform's lease could be adopted by a different transform. The
+// caller owns the symbol grammar, so the rule can never be widened to a resource
+// family that caller does not compose. The retained lease is reused verbatim:
+// owner, symbol, row ID and first build are never rewritten, so only last_build
+// advances.
 using SymbolEquivalence =
-    std::function<bool(std::string const&, std::string const&)>;
+    std::function<bool(std::string const&, std::uint32_t, std::string const&,
+        std::uint32_t)>;
 
 class ContentResourceAllocator
 {

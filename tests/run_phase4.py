@@ -16,6 +16,9 @@ parser.add_argument('--world-map-golden-dir', type=Path,
                     help='Directory holding the expected composed world-map DBCs.')
 parser.add_argument('--world-map-artwork', type=Path,
                     help='Interface directory holding world-map .blp artwork.')
+parser.add_argument('--world-map-release-epf', type=Path,
+                    help='Combined multi-map release EPF, for the allocation '
+                         'lifecycle regression.')
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 compiler = os.environ.get('CXX', 'g++')
@@ -116,7 +119,7 @@ with tempfile.TemporaryDirectory(prefix='content-phase4-tests-') as directory:
             inputs.append(str((root / 'reference/dbc/Spell.dbc').resolve()))
         if name == 'world_map':
             for option in [args.world_map_baseline_dir, args.world_map_golden_dir,
-                           args.world_map_artwork]:
+                           args.world_map_artwork, args.world_map_release_epf]:
                 if option: inputs.append(str(option.resolve()))
         subprocess.run([str(binary), *inputs], check=True)
         print(name + ': PASS', flush=True)

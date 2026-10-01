@@ -259,20 +259,23 @@ std::vector<ItemAllocation> ContentResourceAllocator::PlanFixed(std::string cons
             continue;
         }
         // A release that grows or reorders its manifest can renumber the
-        // positional part of a symbol without changing which authored row is
-        // being declared, which would otherwise orphan the row ID the package
+        // positional part of a legacy symbol without changing which authored row
+        // is being declared, which would otherwise orphan the row ID the package
         // already owns. Reuse is limited to a lease this same package already
         // holds for this same kind and row ID whose symbol the caller confirms
         // addresses the same row, so a relocated row keeps its owner, its
         // persisted symbol and its first build. Every other retained row stays
-        // occupied and is never adopted.
+        // occupied and is never adopted. The row IDs are part of the identity
+        // question: a symbol is not required to carry its own row ID, so the
+        // caller's rule is given both the retained and the declared value.
         if (sameRow) {
             std::vector<ItemAllocation const*> relocations;
             for (auto const& lease : retained)
                 if (lease.packageKey == request.packageKey
                     && lease.resourceKind == request.resourceKind
                     && lease.value == request.fixedValue
-                    && sameRow(lease.symbol, request.symbol))
+                    && sameRow(lease.symbol, lease.value, request.symbol,
+                        request.fixedValue))
                     relocations.push_back(&lease);
             if (relocations.size() > 1)
                 throw std::runtime_error("Ambiguous relocated allocation for "

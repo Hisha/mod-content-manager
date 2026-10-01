@@ -56,15 +56,47 @@ public:
     // A world map that declares no transform requests no WorldMapTransforms row
     // at all, and an area's dungeonMapId is a reference that never requests the
     // DungeonMap row it names.
+    //
+    // The symbol is durable ownership, so it is built only from immutable facts
+    // about the authored row -- the declaring area's row ID and the row's own
+    // ID. The position of the map inside worldMaps[] never appears in it. That
+    // makes identity independent of manifest order by construction: inserting,
+    // removing or reordering entries cannot change the identity of any row they
+    // do not themselves change. See the canonical grammar below.
     static void AppendRequests(std::string const& packageKey,
         std::vector<ContentWorldMap> const& maps,
         std::map<std::string, std::vector<ResourceAllocationRequest>>& out);
-    // Reports whether two world-map symbols of the same kind name one authored
-    // row, ignoring the manifest position. Only the row path is identity, so this
-    // is what lets the planner reuse the row ID a package already owns after the
-    // release grows or reorders. It never treats two different rows as one, and
-    // never reports a malformed symbol as equivalent to anything.
-    static bool SameRow(std::string const& a, std::string const& b);
+    // The canonical, position-free identity of one authored row.
+    //
+    //   WorldMapArea        worldmap/area/<areaId>
+    //   DungeonMap          worldmap/area/<areaId>/floor/<floorId>
+    //   DungeonMapChunk     worldmap/area/<areaId>/chunk/<chunkId>
+    //   WorldMapTransforms  worldmap/transform/<transformId>
+    //
+    // Every component is an immutable property of the row: the area that owns a
+    // floor or chunk, and the row's own client-baked ID. No worldMaps[] ordinal
+    // participates. A transform is keyed by its own declared transform ID, which
+    // distinguishes two genuinely different transform rows even when they belong
+    // to the same map.
+    static std::string CanonicalSymbol(std::string const& table, std::uint32_t areaId,
+        std::uint32_t rowId);
+    // Reports whether a retained symbol and a requested symbol of the same kind
+    // name one authored row, so the planner can reuse a row ID a package already
+    // owns after its release grows or reorders.
+    //
+    // Both the canonical form and the historical positional form
+    // ("worldmap/<manifest position>/...") are understood, which is how leases
+    // persisted before the canonical grammar keep working. The historical form
+    // is accepted for matching only: no new symbol is ever minted from it.
+    //
+    // A historical transform symbol carries no row identity at all -- every
+    // transform in a package shares the row path "transform" -- so the retained
+    // row ID is the only fact that can identify it. That is why both row IDs are
+    // arguments. It is also why a bare "transform" equivalence would be unsafe:
+    // without them a retained transform could be adopted by a different
+    // transform's declaration.
+    static bool SameRow(std::string const& retainedSymbol, std::uint32_t retainedValue,
+        std::string const& requestSymbol, std::uint32_t requestValue);
     // Validates the stock baseline dimensions for `table` and returns its row IDs.
     static std::set<std::uint32_t> Inspect(std::string const& table, DbcDocument const& baseline);
     // Contributed row IDs for `table`, in deterministic composition order.
