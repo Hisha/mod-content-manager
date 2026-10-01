@@ -5,6 +5,32 @@
 #include <stdexcept>
 #include <tuple>
 
+namespace {
+bool Replaces(AllocationReplacements const& replacements,
+    std::string const& successor, std::string const& predecessor)
+{
+    auto found = replacements.find(successor);
+    return found != replacements.end() && found->second.count(predecessor);
+}
+
+void ValidateInherited(ItemAllocation const& lease,
+    ResourceAllocationPolicy const& policy, std::set<std::uint32_t> const& occupiedExternal,
+    std::string const& hash, std::set<std::string> const& acceptedHistory)
+{
+    if (lease.baselineSha256 != hash && !acceptedHistory.count(lease.baselineSha256))
+        throw std::runtime_error(
+            "Replacement allocation was pinned to an incompatible baseline");
+    if (lease.policyVersion != policy.version)
+        throw std::runtime_error(
+            "Replacement allocation uses another resource policy version");
+    if (lease.value < policy.firstCandidate || lease.value > policy.lastCandidate ||
+        occupiedExternal.count(lease.value))
+        throw std::runtime_error(
+            "Replacement resource ID is invalid or externally occupied: " +
+            std::to_string(lease.value));
+}
+}
+
 ResourceAllocationPolicy ContentResourceAllocator::ItemIdPolicy(std::set<std::uint32_t> const& baselineIDs)
 {
     if (baselineIDs.empty())
@@ -36,7 +62,9 @@ ResourceAllocationPolicy ContentResourceAllocator::SpellIdPolicy(std::set<std::u
 std::vector<ItemAllocation> ContentResourceAllocator::Plan(std::string const& realm,
     ResourceAllocationPolicy const& policy, std::vector<ResourceAllocationRequest> const& requests,
     std::vector<ItemAllocation> const& retained, std::set<std::uint32_t> const& occupiedExternal,
-    std::uint32_t build, std::string const& hash, std::set<std::string> const& acceptedHistory)
+    std::uint32_t build, std::string const& hash,
+    std::set<std::string> const& acceptedHistory,
+    AllocationReplacements const& replacements)
 {
     if (policy.resourceKind.empty() || !policy.version || !policy.firstCandidate
         || policy.lastCandidate < policy.firstCandidate)
@@ -85,6 +113,34 @@ std::vector<ItemAllocation> ContentResourceAllocator::Plan(std::string const& re
             plan.push_back(std::move(lease));
             continue;
         }
+        // Generated resources have no authored numeric ID. A successor can
+        // therefore identify exactly one historical lease only by the same
+        // semantic symbol and resource kind.
+        std::vector<ItemAllocation const*> inherited;
+        bool wrongKind = false;
+        for (auto const& lease : retained)
+            if (Replaces(replacements, request.packageKey, lease.packageKey) &&
+                lease.symbol == request.symbol) {
+                if (lease.resourceKind == request.resourceKind)
+                    inherited.push_back(&lease);
+                else
+                    wrongKind = true;
+            }
+        if (inherited.size() > 1)
+            throw std::runtime_error("Ambiguous replacement allocation for " +
+                request.packageKey + "/" + request.symbol + "/" + request.resourceKind);
+        if (inherited.empty() && wrongKind)
+            throw std::runtime_error("Replacement allocation resource kind mismatch for " +
+                request.packageKey + "/" + request.symbol);
+        if (!inherited.empty()) {
+            auto lease = *inherited.front();
+            ValidateInherited(lease, policy, occupiedExternal, hash, acceptedHistory);
+            lease.packageKey = request.packageKey;
+            lease.symbol = request.symbol;
+            lease.lastBuild = build;
+            plan.push_back(std::move(lease));
+            continue;
+        }
         std::uint64_t candidate = policy.firstCandidate;
         while (candidate <= policy.lastCandidate && occupied.count(static_cast<std::uint32_t>(candidate))) ++candidate;
         if (candidate > policy.lastCandidate)
@@ -104,7 +160,9 @@ std::vector<ItemAllocation> ContentResourceAllocator::Plan(std::string const& re
 std::vector<ItemAllocation> ContentResourceAllocator::PlanFixed(std::string const& realm,
     ResourceAllocationPolicy const& policy, std::vector<ResourceAllocationRequest> const& requests,
     std::vector<ItemAllocation> const& retained, std::set<std::uint32_t> const& occupiedExternal,
-    std::uint32_t build, std::string const& hash, std::set<std::string> const& acceptedHistory)
+    std::uint32_t build, std::string const& hash,
+    std::set<std::string> const& acceptedHistory,
+    AllocationReplacements const& replacements)
 {
     if (policy.resourceKind.empty() || !policy.version || !policy.firstCandidate
         || policy.lastCandidate < policy.firstCandidate)
@@ -158,6 +216,43 @@ std::vector<ItemAllocation> ContentResourceAllocator::PlanFixed(std::string cons
             if (occupiedExternal.count(lease.value))
                 throw std::runtime_error("Retained " + policy.resourceKind + " row ID is now externally occupied: "
                     + std::to_string(lease.value));
+            lease.lastBuild = build;
+            plan.push_back(std::move(lease));
+            continue;
+        }
+        // Fixed resources carry their stable identity in the manifest. The
+        // semantic path may legitimately move when packages are consolidated,
+        // so inheritance matches the declared value plus resource kind.
+        std::vector<ItemAllocation const*> inherited;
+        bool wrongKind = false;
+        for (auto const& lease : retained)
+            if (Replaces(replacements, request.packageKey, lease.packageKey) &&
+                lease.value == request.fixedValue) {
+                if (lease.resourceKind == request.resourceKind)
+                    inherited.push_back(&lease);
+                else
+                    wrongKind = true;
+            }
+        if (inherited.size() > 1)
+            throw std::runtime_error("Ambiguous replacement allocation for " +
+                request.packageKey + "/" + request.resourceKind + "/" +
+                std::to_string(request.fixedValue));
+        if (inherited.empty() && wrongKind)
+            throw std::runtime_error("Replacement allocation resource kind mismatch for " +
+                request.packageKey + "/" + request.resourceKind + "/" +
+                std::to_string(request.fixedValue));
+        if (!inherited.empty()) {
+            if (std::any_of(plan.begin(), plan.end(), [&](auto const& prior) {
+                    return prior.value == request.fixedValue;
+                }))
+                throw std::runtime_error(
+                    "Multiple successor declarations claim one replacement allocation: " +
+                    request.packageKey + "/" + request.resourceKind + "/" +
+                    std::to_string(request.fixedValue));
+            auto lease = *inherited.front();
+            ValidateInherited(lease, policy, occupiedExternal, hash, acceptedHistory);
+            lease.packageKey = request.packageKey;
+            lease.symbol = request.symbol;
             lease.lastBuild = build;
             plan.push_back(std::move(lease));
             continue;

@@ -103,6 +103,22 @@ The harness copies the EPFs into `FIXTURE_ROOT` and mutates/disables only those 
 It exercises production registry, build, lifecycle survey, parity and MPQ code; only
 ContentManager config/discovery is injected.
 
+## Allocation replacement transaction harness
+
+`allocation_replacement_mysql_tests.cpp` uses the production fixed-ID planner and
+`ContentAllocationRegistry::CommitComposed` against a fresh disposable database.
+It seeds the real Karazhan dungeon-map ID 383 under package A, proves package B is
+refused without replacement metadata, transfers the row to B while retaining its
+numeric ID and `first_build`, and proves a later B-only rebuild needs no migration
+input. It then injects a duplicate-build failure after a second migration UPDATE
+and verifies the complete transaction rollback leaves A's row unchanged.
+
+Load `content_manager_schema.sql` into a fresh `phase4_test` database and compile
+the harness with the test MySQL adapter plus the same production source list used
+by `package_lifecycle_mysql_tests.cpp`. Run it with the private Unix socket as its
+only argument. The harness creates only the five empty occupancy tables it needs;
+never point it at an existing server database.
+
 ## Schema 3 client requirement harness
 
 `client_requirement_mysql_tests.cpp` runs against the same fresh fixture schema and no

@@ -28,6 +28,12 @@ std::string SqlText(std::string const &value) {
 }
 char const *DbError = "Allocation registry query failed; apply module world "
 					  "SQL and check SQL logs";
+
+bool Replaces(AllocationReplacements const& replacements,
+	std::string const& successor, std::string const& predecessor) {
+	auto found = replacements.find(successor);
+	return found != replacements.end() && found->second.count(predecessor);
+}
 } // namespace
 
 bool ContentAllocationRegistry::Read(std::string const &realm,
@@ -145,7 +151,8 @@ bool ContentAllocationRegistry::CommitComposed(
 	ContentBuildRecord const &build, std::vector<ItemAllocation> const &plan,
 	ContentServerBuildRecord const &server, std::string &error,
 	std::vector<ContentBaseline> const &baselines,
-	std::vector<ResolvedExtendedCost> const &costs) const {
+	std::vector<ResolvedExtendedCost> const &costs,
+	AllocationReplacements const& replacements) const {
     std::lock_guard<std::mutex> lock(allocationWrites);
 	if (plan.empty() || build.state != "STAGED" ||
 		!ContentBuildHash::Valid(build.sha256) ||
@@ -160,6 +167,11 @@ bool ContentAllocationRegistry::CommitComposed(
     std::vector<ItemAllocation> before;
 	if (!Read(build.realmName, before, error))
 		return false;
+	struct Migration {
+		ItemAllocation before;
+		ItemAllocation after;
+	};
+	std::vector<Migration> migrations;
     std::set<std::uint32_t> occupied;
     // World-map kinds are derived from the composer so a new native world-map
     // table can never be allocated for without also being composable.
@@ -182,20 +194,34 @@ bool ContentAllocationRegistry::CommitComposed(
 			error = "Invalid allocation plan";
 			return false;
 		}
-        for (auto const& prior : before)
-			if (prior.resourceKind == row.resourceKind &&
-				((prior.packageKey == row.packageKey &&
-				  prior.symbol == row.symbol &&
-				  (prior.value != row.value ||
-				   prior.policyVersion != row.policyVersion ||
-				   prior.baselineSha256 != row.baselineSha256)) ||
-				 (prior.value == row.value &&
-				  (prior.packageKey != row.packageKey ||
-				   prior.symbol != row.symbol)))) {
-				error = "Allocation registry changed since planning; rebuild "
-						"required";
+		auto identity = std::find_if(before.begin(), before.end(),
+			[&](auto const& prior) {
+				return prior.packageKey == row.packageKey &&
+					prior.symbol == row.symbol &&
+					prior.resourceKind == row.resourceKind;
+			});
+		auto owner = std::find_if(before.begin(), before.end(),
+			[&](auto const& prior) {
+				return prior.resourceKind == row.resourceKind &&
+					prior.value == row.value;
+			});
+		if (identity != before.end()) {
+			if (identity->value != row.value ||
+				identity->policyVersion != row.policyVersion ||
+				identity->baselineSha256 != row.baselineSha256) {
+				error = "Allocation registry changed since planning; rebuild required";
 				return false;
 			}
+		} else if (owner != before.end()) {
+			if (!Replaces(replacements, row.packageKey, owner->packageKey) ||
+				owner->policyVersion != row.policyVersion ||
+				owner->baselineSha256 != row.baselineSha256) {
+				error = "Allocation registry changed or replacement ownership is not "
+					"authorized; rebuild required";
+				return false;
+			}
+			migrations.push_back({*owner, row});
+		}
 	}
 	if (!OccupiedWorldItems(occupied, error))
 		return false;
@@ -310,6 +336,32 @@ bool ContentAllocationRegistry::CommitComposed(
     auto tx = WorldDatabase.BeginTransaction();
 	tx->Append("INSERT INTO content_manager_build_lock (id) VALUES (1) ON "
 			   "DUPLICATE KEY UPDATE id=1");
+	// A migration is one guarded UPDATE inside the same transaction as the
+	// build and every other lease. If the predecessor row changed or vanished
+	// after planning, this deliberately collides with lock row 1 and rolls the
+	// complete transaction back.
+	for (auto const& migration : migrations) {
+		auto const& old = migration.before;
+		auto const& replacement = migration.after;
+		std::string condition =
+			"EXISTS(SELECT 1 FROM content_manager_allocation WHERE realm_name=" +
+			SqlText(old.realm) + " AND package_key=" + SqlText(old.packageKey) +
+			" AND symbol=" + SqlText(old.symbol) + " AND resource_kind=" +
+			SqlText(old.resourceKind) + " AND allocated_value=" +
+			std::to_string(old.value) + " AND baseline_sha256=" +
+			SqlText(old.baselineSha256) + " AND policy_version=" +
+			std::to_string(old.policyVersion) + ")";
+		tx->Append("INSERT INTO content_manager_build_lock (id) SELECT 1 WHERE NOT (" +
+			condition + ")");
+		tx->Append("UPDATE content_manager_allocation SET package_key=" +
+			SqlText(replacement.packageKey) + ",symbol=" +
+			SqlText(replacement.symbol) + ",last_build=" +
+			std::to_string(build.buildNumber) + " WHERE realm_name=" +
+			SqlText(old.realm) + " AND package_key=" + SqlText(old.packageKey) +
+			" AND symbol=" + SqlText(old.symbol) + " AND resource_kind=" +
+			SqlText(old.resourceKind) + " AND allocated_value=" +
+			std::to_string(old.value));
+	}
     for (auto const& condition : costGuards)
 		tx->Append(
 			"INSERT INTO content_manager_build_lock (id) SELECT 1 WHERE NOT (" +
@@ -324,7 +376,15 @@ bool ContentAllocationRegistry::CommitComposed(
 			if (old.packageKey == row.packageKey && old.symbol == row.symbol &&
 				old.resourceKind == row.resourceKind)
                 existing = true;
-        if (existing)
+		bool migrated = std::any_of(migrations.begin(), migrations.end(),
+			[&](auto const& migration) {
+				return migration.after.packageKey == row.packageKey &&
+					migration.after.symbol == row.symbol &&
+					migration.after.resourceKind == row.resourceKind;
+			});
+		if (migrated)
+			continue;
+		if (existing)
 			tx->Append("UPDATE content_manager_allocation SET last_build=" +
 					   std::to_string(build.buildNumber) +
 					   " WHERE realm_name=" + SqlText(row.realm) +

@@ -45,6 +45,34 @@ int main(int argc, char** argv)
     assert(sealAfterOther[0].value == 6951); // Package ordering cannot renumber Seal.
     auto reinstall = ContentResourceAllocator::Plan("Eitrigg", policy, requests, second, world, 5, hash);
     assert(reinstall[0].value == 6951); // Simulated restart/uninstall/reinstall from retained DB row.
+	// Generated namespaces migrate by stable semantic symbol because the new
+	// manifest does not author a numeric ID.
+	auto historical = second.front();
+	historical.packageKey = "mod-hunts.proof";
+	auto inherited = ContentResourceAllocator::Plan("Eitrigg", policy,
+		{{"mod-hunts", "seal"}}, {historical}, world, 6, hash, {},
+		{{"mod-hunts", {"mod-hunts.proof"}}});
+	assert(inherited.size() == 1 && inherited[0].packageKey == "mod-hunts" &&
+		inherited[0].symbol == "seal" && inherited[0].value == 6951);
+	auto rejects = [&](auto const& action) {
+		try { action(); } catch (std::exception const&) { return true; }
+		return false;
+	};
+	auto wrongKind = historical;
+	wrongKind.resourceKind = "spell.id";
+	assert(rejects([&] {
+		(void)ContentResourceAllocator::Plan("Eitrigg", policy,
+			{{"mod-hunts", "seal"}}, {wrongKind}, world, 6, hash, {},
+			{{"mod-hunts", {"mod-hunts.proof"}}});
+	}));
+	auto ambiguous = historical;
+	ambiguous.packageKey = "mod-hunts.other-proof";
+	ambiguous.value = 6953;
+	assert(rejects([&] {
+		(void)ContentResourceAllocator::Plan("Eitrigg", policy,
+			{{"mod-hunts", "seal"}}, {historical, ambiguous}, world, 6, hash, {},
+			{{"mod-hunts", {"mod-hunts.proof", "mod-hunts.other-proof"}}});
+	}));
     ResourceAllocationPolicy tiny{"item.id", 6949, 6951};
     bool exhausted = false;
     try { (void)ContentResourceAllocator::Plan("Eitrigg", tiny, {{"third", "x"}}, second,

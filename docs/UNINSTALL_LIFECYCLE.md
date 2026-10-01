@@ -37,6 +37,31 @@ Historical and ownership state is intentionally retained so rollback stays coher
 Reinstalling the package later (`install`, then `build`) is deterministic: the same
 logical leases and ownership persist, and the same content is re-derived.
 
+## Consolidating a retired package into a successor
+
+Schema 3 packages can explicitly claim compatible allocation history from one or
+more retired package identities:
+
+```json
+"replaces": ["old.package-key"]
+```
+
+This declaration does not uninstall anything and does not make simultaneous
+installation safe: remove the old package selection first. A build refuses an
+old/new pair selected together and refuses two successors that name the same old
+package. It also refuses a wrong resource kind, incompatible baseline or policy,
+external occupancy, unrelated-owner collision, or multiple possible predecessor
+leases.
+
+For allocator-generated IDs, the old and new declarations must have the same
+semantic symbol and resource kind. For manifest-fixed IDs, they must have the same
+numeric ID and resource kind; the semantic path may change during consolidation.
+On success, the retained allocation row changes package/symbol ownership inside the
+build transaction while retaining the numeric ID and `first_build`. On failure the
+old row remains intact. A later build needs only the successor identity. This is
+generic allocation lifecycle behavior; no package- or map-specific identity is
+encoded in Content Manager.
+
 ## Output walk-through
 
 ```text

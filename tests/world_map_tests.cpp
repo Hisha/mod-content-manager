@@ -467,6 +467,73 @@ static void AllocationTests()
 			{{"pkg-b", "floor/166", "worldmap.dungeon-map.id", 166},
 			 {"pkg-b", "floor/167", "worldmap.dungeon-map.id", 167}}, plan, {}, 1, kHash);
 	}));
+	// Explicit package consolidation may transfer one compatible fixed identity
+	// even when the semantic path changed (the real Karazhan map index did).
+	auto historical = plan.front();
+	historical.packageKey = "mod-native-instance-maps.karazhan";
+	historical.symbol = "worldmap/0/area/799/floor/383";
+	historical.value = 383;
+	historical.firstBuild = 49;
+	historical.lastBuild = 52;
+	assert(Throws([&] {
+		(void)ContentResourceAllocator::PlanFixed("realm", policy,
+			{{"mod-native-instance-maps", "worldmap/1/area/799/floor/383",
+			  "worldmap.dungeon-map.id", 383}}, {historical}, {}, 53, kHash);
+	}));
+	AllocationReplacements replacements = {{"mod-native-instance-maps",
+		{"mod-native-instance-maps.karazhan"}}};
+	auto migrated = ContentResourceAllocator::PlanFixed("realm", policy,
+		{{"mod-native-instance-maps", "worldmap/1/area/799/floor/383",
+		  "worldmap.dungeon-map.id", 383}}, {historical}, {}, 53, kHash, {},
+		replacements);
+	assert(migrated.size() == 1);
+	assert(migrated[0].packageKey == "mod-native-instance-maps");
+	assert(migrated[0].symbol == "worldmap/1/area/799/floor/383");
+	assert(migrated[0].value == 383 && migrated[0].firstBuild == 49 &&
+		migrated[0].lastBuild == 53);
+	// Once persisted under the successor, ordinary rebuilds no longer need the
+	// predecessor lease or special planning path.
+	auto persisted = ContentResourceAllocator::PlanFixed("realm", policy,
+		{{"mod-native-instance-maps", "worldmap/1/area/799/floor/383",
+		  "worldmap.dungeon-map.id", 383}}, migrated, {}, 54, kHash);
+	assert(persisted.size() == 1 && persisted[0].lastBuild == 54);
+	// Declaring replacement of some other package does not authorize stealing.
+	assert(Throws([&] {
+		(void)ContentResourceAllocator::PlanFixed("realm", policy,
+			{{"mod-native-instance-maps", "new", "worldmap.dungeon-map.id", 383}},
+			{historical}, {}, 53, kHash, {},
+			{{"mod-native-instance-maps", {"unrelated-old"}}});
+	}));
+	// Baseline, kind and ambiguity protections remain fail-closed.
+	auto incompatible = historical;
+	incompatible.baselineSha256 = std::string(64, 'b');
+	assert(Throws([&] {
+		(void)ContentResourceAllocator::PlanFixed("realm", policy,
+			{{"mod-native-instance-maps", "new", "worldmap.dungeon-map.id", 383}},
+			{incompatible}, {}, 53, kHash, {}, replacements);
+	}));
+	auto wrongKind = historical;
+	wrongKind.resourceKind = "worldmap.world-map-area.id";
+	assert(Throws([&] {
+		(void)ContentResourceAllocator::PlanFixed("realm", policy,
+			{{"mod-native-instance-maps", "new", "worldmap.dungeon-map.id", 383}},
+			{wrongKind}, {}, 53, kHash, {}, replacements);
+	}));
+	auto secondOwner = historical;
+	secondOwner.packageKey = "another-proof-package";
+	assert(Throws([&] {
+		(void)ContentResourceAllocator::PlanFixed("realm", policy,
+			{{"mod-native-instance-maps", "new", "worldmap.dungeon-map.id", 383}},
+			{historical, secondOwner}, {}, 53, kHash, {},
+			{{"mod-native-instance-maps",
+			  {"mod-native-instance-maps.karazhan", "another-proof-package"}}});
+	}));
+	assert(Throws([&] {
+		(void)ContentResourceAllocator::PlanFixed("realm", policy,
+			{{"mod-native-instance-maps", "new-a", "worldmap.dungeon-map.id", 383},
+			 {"mod-native-instance-maps", "new-b", "worldmap.dungeon-map.id", 383}},
+			{historical}, {}, 53, kHash, {}, replacements);
+	}));
 	// A different package may take a neighbouring ID in the same table.
 	assert(ContentResourceAllocator::PlanFixed("realm", policy,
 		{{"pkg-b", "floor/168", "worldmap.dungeon-map.id", 168}}, plan, {}, 1, kHash)

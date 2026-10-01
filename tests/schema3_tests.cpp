@@ -1,4 +1,5 @@
 #include "ContentPackage.h"
+#include "ContentPackageReplacement.h"
 #include "ContentClientRequirement.h"
 #include "third_party/json/json.hpp"
 #include "third_party/miniz/miniz.h"
@@ -65,7 +66,61 @@ int main()
         assert(validation.valid);
         assert(validation.manifest.schema == 3);
         assert(validation.manifest.clientRequirements.empty());
+        assert(validation.manifest.replaces.empty());
     }
+
+    // Explicit replacement metadata is schema-3-only, sorted, and preserved.
+    auto replacement = schema3;
+    replacement["replaces"] = json::array({"old-z", "old-a"});
+    Save(path, replacement, true);
+    {
+        auto validation = ContentPackage(path).Validate();
+        assert(validation.valid);
+        assert(validation.manifest.replaces ==
+            (std::vector<std::string>{"old-a", "old-z"}));
+    }
+    for (auto malformed : std::vector<json>{json("old-a"), json::array({1}),
+            json::array({"raw-c"}), json::array({"old-a", "old-a"}),
+            json::array({"../old-a"}), json::array({""})}) {
+        auto bad = schema3;
+        bad["replaces"] = malformed;
+        Save(path, bad, true);
+        assert(!ContentPackage(path).Validate().valid);
+    }
+    for (int schema : {1, 2}) {
+        auto older = schema == 1 ? schema1 : schema2;
+        older["replaces"] = json::array({"old-a"});
+        Save(path, older, true);
+        auto validation = ContentPackage(path).Validate();
+        assert(!validation.valid);
+        assert(validation.error.find("replaces requires Schema 3") !=
+            std::string::npos);
+    }
+
+    // Build selection rejects an old/new overlap and reverse ambiguity before
+    // allocation planning. A valid one-way declaration resolves deterministically.
+    ContentPackageManifest oldManifest;
+    oldManifest.packageKey = "old-a";
+    ContentPackageManifest successor;
+    successor.packageKey = "new-b";
+    successor.replaces = {"old-a"};
+    ContentPackageManifest competing;
+    competing.packageKey = "new-c";
+    competing.replaces = {"old-a"};
+    AllocationReplacements replacements;
+    std::string replacementError;
+    assert(ResolveContentPackageReplacements(
+        {&successor}, replacements, replacementError));
+    AllocationReplacements expectedReplacements{
+        {"new-b", std::set<std::string>{"old-a"}}};
+    assert(replacements == expectedReplacements);
+    assert(!ResolveContentPackageReplacements(
+        {&oldManifest, &successor}, replacements, replacementError));
+    assert(replacementError.find("both are selected") != std::string::npos);
+    assert(!ResolveContentPackageReplacements(
+        {&successor, &competing}, replacements, replacementError));
+    assert(replacementError.find("multiple selected packages") !=
+        std::string::npos);
 
     // 4. Empty clientRequirements array is valid and produces none.
     auto empty = schema3;

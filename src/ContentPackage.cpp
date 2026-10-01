@@ -31,6 +31,18 @@ bool ValidSymbol(std::string const &value) {
         return true;
     }
 
+bool ValidPackageKey(std::string const& value) {
+    if (value.empty() || value.size() > 191 || value.back() == ' ' ||
+        value.find('\0') != std::string::npos || value.find('/') != std::string::npos ||
+        value.find('\\') != std::string::npos)
+        return false;
+    try {
+        return ContentBuildPaths::Target(value) == value;
+    } catch (std::exception const&) {
+        return false;
+    }
+}
+
 bool IsSafeRelativePath(std::string const &value) {
 	try {
 		ContentBuildPaths::Target(value);
@@ -731,6 +743,10 @@ ContentPackageValidationResult ContentPackage::Validate() const {
 		result.error = "serverRows require Schema 2";
 		return result;
 	}
+	if (result.manifest.schema < 3 && manifest.contains("replaces")) {
+		result.error = "replaces requires Schema 3";
+		return result;
+	}
 
     // ---------------------------------------------------------
     // Schema 3 client capability requirements
@@ -785,6 +801,31 @@ ContentPackageValidationResult ContentPackage::Validate() const {
         result.error = "'version' cannot be empty";
         return result;
     }
+
+	// Explicit package-identity consolidation. Duplicates and self replacement
+	// are authoring errors rather than a set to normalize silently.
+	if (manifest.contains("replaces") && !manifest["replaces"].is_array()) {
+		result.error = "'replaces' must be an array";
+		return result;
+	}
+	std::set<std::string> replaced;
+	for (auto const& value : (manifest.contains("replaces")
+								? manifest["replaces"] : json::array())) {
+		if (!value.is_string() || !ValidPackageKey(value.get<std::string>())) {
+			result.error = "Replacement package key must be a safe 1..191-byte string";
+			return result;
+		}
+		auto key = value.get<std::string>();
+		if (key == result.manifest.packageKey) {
+			result.error = "Package cannot replace itself: " + key;
+			return result;
+		}
+		if (!replaced.insert(key).second) {
+			result.error = "Duplicate replacement package key: " + key;
+			return result;
+		}
+	}
+	result.manifest.replaces.assign(replaced.begin(), replaced.end());
 
     // ---------------------------------------------------------
     // Optional description
@@ -1859,6 +1900,7 @@ ContentPackage::StageInto(std::filesystem::path const &stagingDirectory,
 			actual.schema == expected.schema &&
 			actual.packageKey == expected.packageKey &&
 			actual.version == expected.version &&
+			actual.replaces == expected.replaces &&
 			actual.content.size() == expected.content.size() &&
 			actual.clientRequirements == expected.clientRequirements &&
 			actual.clientFrameXml == expected.clientFrameXml &&

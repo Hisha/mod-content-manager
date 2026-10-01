@@ -91,6 +91,33 @@ Installing a package again after uninstall restores its selection deterministica
 reinstalling a previously applied package keeps its leases and ownership records,
 and builds re-derive the same content.
 
+### Explicit allocation ownership replacement (Schema 3)
+
+A canonical successor may opt into retained-allocation migration with top-level
+Schema 3 metadata:
+
+```json
+"replaces": ["historical.package-key"]
+```
+
+This is an ownership transfer, not lease release or recycling. The predecessor
+must not be selected in the same build, and one predecessor cannot be claimed by
+two selected successors. Generated resources inherit only an exact
+`resource_kind` + semantic `symbol` match. Fixed-ID resources (including native
+world-map rows) inherit only an exact `resource_kind` + manifest-declared numeric
+ID match, allowing their semantic path to move when packages are consolidated.
+The retained baseline and allocator policy must still be compatible, and unrelated
+leases and externally occupied IDs remain unavailable.
+
+The allocation row is updated from predecessor identity to successor identity in
+the same guarded transaction that records the STAGED build. Its numeric value and
+`first_build` provenance are preserved; `last_build` advances. If any guard or
+later build write fails, the transaction keeps the predecessor row unchanged.
+After a successful transfer, ordinary successor rebuilds reuse the successor row
+without needing the historical EPF or repeating the declaration. Applied live
+server-row ownership remains governed by its separate provenance guards and is
+never silently deleted or reassigned.
+
 ## Current world schema
 
 The module has one schema file:

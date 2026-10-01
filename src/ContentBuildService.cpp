@@ -12,6 +12,7 @@
 #include "ContentManagedServer.h"
 #include "ContentManager.h"
 #include "ContentPackage.h"
+#include "ContentPackageReplacement.h"
 #include "ContentPackageRegistry.h"
 #include "ContentResourceAllocator.h"
 #include "ContentServerBundle.h"
@@ -142,6 +143,15 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
             }
             selected.push_back(std::move(source));
         }
+		// Replacement declarations are build-wide package lifecycle metadata.
+		// One historical identity may have only one selected successor, and the
+		// predecessor may not participate in the same build.
+		AllocationReplacements replacements;
+		std::vector<ContentPackageManifest const*> selectedManifests;
+		for (auto const& source : selected)
+			selectedManifests.push_back(&source.validation.manifest);
+		Require(ResolveContentPackageReplacements(
+			selectedManifests, replacements, error), error);
 		// Semantic composition owns the canonical Item.dbc MPQ target once
 		// requested.
         std::vector<ResourceAllocationRequest> itemRequests;
@@ -389,7 +399,7 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 				auto plan = ContentResourceAllocator::Plan(
 					realmName, policy, requests, retained, occupied,
 					result.buildNumber,
-					ContentManagedServer::DescriptorFingerprint(kind));
+					ContentManagedServer::DescriptorFingerprint(kind), {}, replacements);
 				allocationPlan.insert(allocationPlan.end(), plan.begin(),
 									  plan.end());
 				return plan;
@@ -412,7 +422,7 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 			std::set<std::uint32_t> occupied;
 			Require(ContentSpellServer::Occupancy(realmName,retained,occupied,error),error);
 			occupied.insert(baselineIds.begin(),baselineIds.end());
-			auto plan=ContentResourceAllocator::Plan(realmName,ContentResourceAllocator::SpellIdPolicy(baselineIds),spellRequests,retained,occupied,result.buildNumber,baseline.hash,acceptedHistory["Spell"]);
+			auto plan=ContentResourceAllocator::Plan(realmName,ContentResourceAllocator::SpellIdPolicy(baselineIds),spellRequests,retained,occupied,result.buildNumber,baseline.hash,acceptedHistory["Spell"],replacements);
 			allocationPlan.insert(allocationPlan.end(),plan.begin(),plan.end());
 			for(auto const&source:selected)for(auto const&d:source.validation.manifest.spells){auto lease=std::find_if(plan.begin(),plan.end(),[&](auto const&a){return a.packageKey==source.validation.manifest.packageKey&&a.symbol==d.symbol;});Require(lease!=plan.end(),"Spell allocation missing");spells.push_back(SpellDbcComposer::Resolve(baseline.document,d,source.validation.manifest.packageKey,source.validation.manifest.version,lease->value));report("Planned spell.id: "+lease->packageKey+"/"+lease->symbol+" = "+std::to_string(lease->value));}
 			composedSpellBytes=SpellDbcComposer::Compose(baseline.document,spells);expectedSpellRecords=baseline.document.recordCount+static_cast<std::uint32_t>(spells.size());
@@ -457,7 +467,7 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 				auto plan = ContentResourceAllocator::PlanFixed(
 					realmName, ContentResourceAllocator::FixedRowIdPolicy(kind),
 					worldMapRequests[table], retained, stockIds, result.buildNumber,
-					baseline.hash, acceptedHistory[table]);
+					baseline.hash, acceptedHistory[table], replacements);
 				for (auto const &lease : plan)
 					report("Planned " + lease.resourceKind + ": " + lease.packageKey
 						+ "/" + lease.symbol + " = " + std::to_string(lease.value));
@@ -613,7 +623,7 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
             auto policy = ContentResourceAllocator::ItemIdPolicy(baselineIDs);
 			auto itemPlan = ContentResourceAllocator::Plan(
 				realmName, policy, itemRequests, retained, worldIDs,
-				result.buildNumber, baselineHash, acceptedHistory["Item"]);
+				result.buildNumber, baselineHash, acceptedHistory["Item"], replacements);
 			allocationPlan.insert(allocationPlan.end(), itemPlan.begin(),
 								  itemPlan.end());
             for (auto const& source : selected)
@@ -686,7 +696,7 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 			auto plan = ContentResourceAllocator::Plan(
 				realmName, ContentResourceAllocator::CurrencyCategoryIdPolicy(),
 				categoryRequests, retained, occupied, result.buildNumber,
-				baseline.hash, acceptedHistory["CurrencyCategory"]);
+				baseline.hash, acceptedHistory["CurrencyCategory"], replacements);
             for (auto const& source : selected)
 				for (auto const &declaration :
 					 source.validation.manifest.currencyCategories) {
@@ -717,7 +727,7 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 				realmName, ContentResourceAllocator::CurrencyKnownBitPolicy(),
 				currencyRequests, retained, currencyExternalBits,
 				result.buildNumber, currencyBaselineHash,
-				acceptedHistory["CurrencyTypes"]);
+				acceptedHistory["CurrencyTypes"], replacements);
             std::vector<ResolvedCurrency> rows;
             for (auto const& source : selected)
 				for (auto const &declaration :
@@ -792,7 +802,7 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 			auto plan = ContentResourceAllocator::Plan(
 				realmName, ContentResourceAllocator::ItemExtendedCostIdPolicy(),
 				costRequests, retained, costOccupied, result.buildNumber,
-				costBaseline.hash, acceptedHistory["ItemExtendedCost"]);
+				costBaseline.hash, acceptedHistory["ItemExtendedCost"], replacements);
             for (auto const& source : selected)
 				for (auto const &declaration :
 					 source.validation.manifest.extendedCosts) {
@@ -1271,7 +1281,7 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 		bool committed = !allocationPlan.empty()
 							 ? ContentAllocationRegistry().CommitComposed(
 								   record, allocationPlan, serverRecord, error,
-								   baselines, costs)
+								   baselines, costs, replacements)
             : builds.Record(record, serverRecord, error);
         if (!committed)
 			throw std::runtime_error(

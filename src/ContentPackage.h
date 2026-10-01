@@ -308,6 +308,9 @@ struct ContentPackageManifest {
     std::string name;
     std::string version;
     std::string description;
+	// Schema 3: historical package identities whose compatible retained
+	// allocations this package may explicitly inherit during a build.
+	std::vector<std::string> replaces;
 	// Schema 3: sorted, deduplicated immutable client requirements (e.g.
 	// protected-framexml).
     std::vector<std::string> clientRequirements;

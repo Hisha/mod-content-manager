@@ -4,6 +4,7 @@
 #include "ItemExtendedCostDbc.h"
 #include "ContentBuildRegistry.h"
 #include <cstdint>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -21,6 +22,10 @@ struct ItemAllocation
     std::string resourceKind = "item.id";
     std::uint32_t policyVersion = 1;
 };
+
+// New package -> explicitly superseded historical package identities.
+using AllocationReplacements =
+    std::map<std::string, std::set<std::string>>;
 
 struct ContentServerBuildRecord
 {
@@ -40,6 +45,7 @@ public:
     bool CommitComposed(ContentBuildRecord const& build, std::vector<ItemAllocation> const& plan,
         ContentServerBuildRecord const& server, std::string& error,
         std::vector<ContentBaseline> const& baselines = {},
-        std::vector<ResolvedExtendedCost> const& costs = {}) const;
+        std::vector<ResolvedExtendedCost> const& costs = {},
+        AllocationReplacements const& replacements = {}) const;
 };
 #endif

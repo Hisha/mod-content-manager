@@ -27,9 +27,10 @@ subprocess.run([
     str(root / 'src/ContentSpellServer.cpp'),
     str(root / 'tests/currency_mysql_tests.cpp'),
     str(root / 'tests/managed_server_mysql_tests.cpp'),
+    str(root / 'tests/allocation_replacement_mysql_tests.cpp'),
     str(root / 'src/ContentBuildRegistry.cpp')
 ], check=True)
-print('managed_server_core_compile: PASS', flush=True)
+print('managed_server_core_and_replacement_mysql_compile: PASS', flush=True)
 
 with tempfile.TemporaryDirectory(prefix='content-spell-sql-test-') as directory:
     binary = Path(directory) / 'spell_server_sql'

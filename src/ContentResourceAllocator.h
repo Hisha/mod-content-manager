@@ -54,7 +54,8 @@ public:
         std::vector<ItemAllocation> const& retained,
         std::set<std::uint32_t> const& occupiedExternal,
         std::uint32_t build, std::string const& baselineSha256,
-        std::set<std::string> const& acceptedHistory = {});
+        std::set<std::string> const& acceptedHistory = {},
+        AllocationReplacements const& replacements = {});
     // Reserves the exact identity each request declares. Retained and retired
     // leases, the verified stock baseline and this build's own reservations all
     // stay occupied, so ownership is keyed deterministically by resource kind
@@ -65,6 +66,7 @@ public:
         std::vector<ItemAllocation> const& retained,
         std::set<std::uint32_t> const& occupiedExternal,
         std::uint32_t build, std::string const& baselineSha256,
-        std::set<std::string> const& acceptedHistory = {});
+        std::set<std::string> const& acceptedHistory = {},
+        AllocationReplacements const& replacements = {});
 };
 #endif
