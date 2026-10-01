@@ -19,9 +19,9 @@
 // entry inserted after a marker the stock file already carries.
 //
 // Index correspondence is deliberately literal: a declared floor key is the
-// same `i` the stock loop passes to string.format(FLOOR_NUMBER, i). Nothing
-// here reinterprets that index, so a label can never be attached to a different
-// level than the one the client itself numbers.
+// same dropdown row `i` the stock loop enumerates. The generated wrapper keeps
+// stock DungeonUsesTerrainMap/floorNum behavior for Blizzard's fallback label,
+// so a missing custom label behaves exactly like that row did before.
 class ContentFrameXml
 {
 public:

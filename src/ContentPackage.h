@@ -208,9 +208,10 @@ struct ContentDungeonMapChunk {
 
 // Locale-aware dungeon level labels declared for one WorldMapArea.
 //
-// A key is the exact level index the stock
-// WorldMapLevelDropDown_Initialize loop numbers, so a label can only ever land
-// on the level the client itself numbers that way. Labels are keyed by locale
+// A key is the exact dropdown row the stock
+// WorldMapLevelDropDown_Initialize loop enumerates, so a label can only ever
+// land on that row. Stock terrain-map floorNum adjustment is retained for any
+// missing custom label. Labels are keyed by locale
 // because the client selects them with GetLocale(); a locale the build-12340
 // client cannot return is refused at parse time.
 struct ContentWorldMapFloorNames {

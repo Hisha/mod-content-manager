@@ -284,7 +284,9 @@ int main()
     }
 
     // 13. Generated Lua is deterministic, ordered, escaped, and delegates to
-    //     the stock function when it has nothing to say.
+    //     the stock function when it has nothing to say. When a custom table is
+    //     present, only the displayed label is augmented: enumeration, terrain
+    //     floor adjustment, callback and checked state remain stock.
     ContentFrameXml::Declared declared;
     declared["enUS"]["KARAZHAN"][1] = "Servant's Quarters";
     declared["enUS"]["KARAZHAN"][2] = "A \"quoted\" \\ back\tTab";
@@ -297,8 +299,21 @@ int main()
     assert(lua.find("[\"deDE\"]") < lua.find("[\"enUS\"]"));
     assert(lua.find("[1] = \"Servant's Quarters\"") != std::string::npos);
     assert(lua.find("[2] = \"A \\\"quoted\\\" \\\\ back\\tTab\"") != std::string::npos);
-    assert(lua.find("info.text = labels[i] or string.format(FLOOR_NUMBER, i)") !=
+    assert(lua.find("local usesTerrainMap = DungeonUsesTerrainMap()") !=
            std::string::npos);
+    assert(lua.find("local mapname = strupper(mapInfo or \"\")") !=
+           std::string::npos);
+    assert(lua.find("local floorNum = i") != std::string::npos);
+    assert(lua.find("floorNum = i - 1") != std::string::npos);
+    assert(lua.find(
+        "local floorname = _G[\"DUNGEON_FLOOR_\" .. mapname .. floorNum]") !=
+        std::string::npos);
+    assert(lua.find(
+        "info.text = labels[i] or floorname or string.format(FLOOR_NUMBER, i)") !=
+        std::string::npos);
+    assert(lua.find("info.func = WorldMapLevelButton_OnClick") !=
+           std::string::npos);
+    assert(lua.find("info.checked = (i == level)") != std::string::npos);
     assert(lua.find("local stockInitialize = WorldMapLevelDropDown_Initialize") !=
            std::string::npos);
     assert(lua.find("return stockInitialize()") != std::string::npos);

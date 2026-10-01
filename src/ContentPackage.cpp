@@ -178,10 +178,11 @@ bool ReadFloorLevelKey(std::string const& key, std::uint32_t &out)
     return true;
 }
 
-// Locale -> level -> label. A level key is the exact index the stock
-// WorldMapLevelDropDown_Initialize loop numbers, so it must be the canonical
+// Locale -> level -> label. A level key is the exact dropdown row the stock
+// WorldMapLevelDropDown_Initialize loop enumerates, so it must be the canonical
 // decimal spelling of a value the loop can produce: 1..1023 with no leading
-// zero, no sign and no exponent. Anything else is refused rather than guessed.
+// zero, no sign and no exponent. Stock terrain-map floorNum adjustment remains
+// part of the fallback lookup and never renumbers this declaration.
 bool ReadWorldMapFloorNames(json const &declaration, ContentWorldMapArea &area,
                             std::string &error)
 {
