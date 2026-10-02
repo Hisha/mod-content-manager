@@ -9,6 +9,7 @@
 #include "third_party/miniz/miniz.h"
 #include <algorithm>
 #include <cassert>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -1110,7 +1111,7 @@ static void ReleaseLifecycleTests(fs::path const &releaseEpf,
 	// A refused build leaves the store exactly as it was.
 	assert(store.rows.size() == retainedBefore);
 
-	// ---- BUILD B: the same package grown and reordered to forty-three maps.
+	// ---- BUILD B: the same package grown and reordered to fifty maps.
 	// This is the build that failed on PTR. It must now succeed.
 	auto const planB = PlanAndCommit(store, package, all,
 		ComposerRequests(package, all), baselineDirectory, 55,
@@ -1148,10 +1149,10 @@ static void ReleaseLifecycleTests(fs::path const &releaseEpf,
 			reused.insert(lease.symbol);
 	assert(reused == std::set<std::string>({"worldmap/0/transform",
 		"worldmap/2/transform", "worldmap/3/transform"}));
-	assert(store.rows.size() == 4 + 1310 + 113 + 43);
+	assert(store.rows.size() == 4 + 1310 + 113 + 50);
 
 	// The whole release planned: every floor, chunk, area and transform of all
-	// forty-three maps is owned exactly once, and no identity is duplicated.
+	// fifty maps is owned exactly once, and no identity is duplicated.
 	std::set<std::tuple<std::string, std::string, std::string>> identities;
 	for (auto const &row : store.rows)
 		assert(identities.emplace(row.packageKey, row.symbol, row.resourceKind).second);
@@ -1163,7 +1164,7 @@ static void ReleaseLifecycleTests(fs::path const &releaseEpf,
 		[&](auto const &row) { return row.resourceKind == areaKind; });
 	auto const transforms = std::count_if(store.rows.begin(), store.rows.end(),
 		[&](auto const &row) { return row.resourceKind == transformKind; });
-	assert(floors == 113 && chunks == 1310 && areas == 43 && transforms == 4);
+	assert(floors == 113 && chunks == 1310 && areas == 50 && transforms == 4);
 	// Every lease this build created is canonical: none of them is minted from a
 	// worldMaps[] position. The three historical leases above keep their old
 	// symbols precisely so their rows are not rewritten.
@@ -1176,7 +1177,7 @@ static void ReleaseLifecycleTests(fs::path const &releaseEpf,
 			row.resourceKind == transformKind);
 	}
 
-	// ---- BUILD C: the same forty-three maps, reordered again.
+	// ---- BUILD C: the same fifty maps, reordered again.
 	// The result must be semantically identical to BUILD B: the same rows owned,
 	// under the same identities, with no new lease and no lost one.
 	auto before = store.rows;
@@ -1636,6 +1637,228 @@ static void DungeonMapIdCompositionTests(fs::path const &scratch,
 	std::cout << "  world-map dungeonMapId serialization: PASS\n";
 }
 
+// Zul'Farrak as WDM Stable ships it: WorldMapArea 686 for MapID 209, one
+// artwork directory, and no DungeonMap, DungeonMapChunk or WorldMapTransforms
+// row for MapID 209 in WDM or in stock. The client draws such a map from the
+// WorldMapArea row and its tiles alone, which is the reason `floors` may be
+// empty while the key itself stays mandatory. Every field below is the real WDM
+// value, including the corner ordering the zone tiles use (y1 > y2, x1 > x2).
+json FloorlessManifest()
+{
+	return json::parse(R"({
+      "schema": 3, "package": "test-floorless-map", "name": "Test Floorless Map",
+      "version": "1.0.0",
+      "worldMaps": [
+        {
+          "mapId": 209,
+          "areas": [
+            {"id": 686, "areaId": 1176, "internalName": "ZulFarrak",
+             "y1": 1624.9998779296875, "y2": 241.66665649414062,
+             "x1": 2052.083251953125, "x2": 1129.1666259765625,
+             "virtualMapId": -1, "dungeonMapId": 0, "parentMapId": 161,
+             "floors": [], "chunks": []}
+          ]
+        }
+      ]
+    })");
+}
+
+// Accepting an empty `floors` array must not become accepting anything: the
+// three references a floorless area cannot satisfy stay refused, and the
+// structural rules are unchanged.
+static void FloorlessAreaTests(fs::path const &scratch)
+{
+	auto const validated = Accept(scratch, "floorless", FloorlessManifest());
+	assert(validated.worldMaps.size() == 1);
+	auto const &area = validated.worldMaps[0].areas[0];
+	assert(area.floors.empty() && area.chunks.empty() && area.floorNames.empty());
+	assert(!validated.worldMaps[0].transform);
+	assert(area.dungeonMapId == 0 && area.virtualMapId == -1);
+	assert(area.parentMapId == 161 && area.areaId == 1176 && area.id == 686);
+	// The authored rectangle survives verbatim rather than being normalised.
+	assert(area.y1 == 1624.9998779296875f && area.y2 == 241.66665649414062f);
+	assert(area.x1 == 2052.083251953125f && area.x2 == 1129.1666259765625f);
+
+	// A floorless area has no floor for `dungeonMapId` to name. Every floorless
+	// row in stock (48) and in WDM (55) carries exactly 0, so 0 is the only
+	// accepted form; -1 is the documented unset sentinel for a *floored* area
+	// and is not widened here.
+	for (auto const value : {-1, 1, 900})
+		Reject(scratch, Replace(FloorlessManifest(),
+			{"worldMaps", "0", "areas", "0", "dungeonMapId"}, value),
+			"dungeonMapId must be 0 but is");
+	// A chunk belongs to a floor, so a floorless area owns none. The map-wide
+	// check would refuse the dangling reference anyway; the message names the
+	// actual cause.
+	{
+		auto manifest = FloorlessManifest();
+		manifest["worldMaps"][0]["areas"][0]["chunks"].push_back(
+			{{"id", 5000}, {"field2", 7}, {"dungeonMapId", 900}, {"field4", -10000.0}});
+		Reject(scratch, manifest, "cannot declare 1 DungeonMapChunk row");
+	}
+	// A floor label renames a row the client enumerates from the area's
+	// DungeonMap levels. With no level there is no row to rename.
+	{
+		auto manifest = FloorlessManifest();
+		manifest["worldMaps"][0]["areas"][0]["floorNames"] =
+			json::parse(R"({"enUS": {"1": "Level One"}})");
+		Reject(scratch, manifest, "cannot declare floorNames");
+	}
+	// A transform names a floor of its own map. A fully floorless map has none,
+	// so the pre-existing map-wide check refuses it without any new rule. A map
+	// that mixes a floorless area with a floored one keeps its transform.
+	{
+		auto manifest = FloorlessManifest();
+		manifest["worldMaps"][0]["transform"] = json::parse(R"({
+          "id": 12, "regionBottom": -1.0, "regionRight": 1.0, "regionTop": 2.0,
+          "regionLeft": 3.0, "newMapId": 209, "regionOffsetX": 0.0,
+          "regionOffsetY": 0.0, "newDungeonMapId": 900})");
+		Reject(scratch, manifest, "references NewDungeonMapID 900 which is not a "
+			"floor of world map 209");
+	}
+	{
+		auto manifest = FloorlessManifest();
+		manifest["worldMaps"][0]["areas"].push_back(json::parse(R"({
+          "id": 687, "areaId": 1177, "internalName": "ZulFarrakAnnex", "y1": 1.0,
+          "y2": 2.0, "x1": 3.0, "x2": 4.0, "virtualMapId": -1, "dungeonMapId": 0,
+          "parentMapId": 0,
+          "floors": [{"id": 900, "floor": 1, "field3": 0.0, "field4": 0.0,
+            "field5": 0.0, "field6": 0.0, "field7": 1}],
+          "chunks": [{"id": 5000, "field2": 7, "dungeonMapId": 900,
+            "field4": -10000.0}]})"));
+		manifest["worldMaps"][0]["transform"] = json::parse(R"({
+          "id": 12, "regionBottom": -1.0, "regionRight": 1.0, "regionTop": 2.0,
+          "regionLeft": 3.0, "newMapId": 209, "regionOffsetX": 0.0,
+          "regionOffsetY": 0.0, "newDungeonMapId": 900})");
+		auto const mixed = Accept(scratch, "floorless-mixed", manifest);
+		assert(mixed.worldMaps[0].areas.size() == 2);
+		assert(mixed.worldMaps[0].areas[0].floors.empty());
+		assert(mixed.worldMaps[0].areas[1].floors.size() == 1);
+		assert(mixed.worldMaps[0].transform);
+	}
+
+	// Duplicate row identities are still refused inside the section.
+	{
+		auto manifest = FloorlessManifest();
+		manifest["worldMaps"].push_back(manifest["worldMaps"][0]);
+		Reject(scratch, manifest, "declared once per package");
+	}
+	{
+		auto manifest = FloorlessManifest();
+		manifest["worldMaps"].push_back(json::parse(R"({
+          "mapId": 210,
+          "areas": [
+            {"id": 686, "areaId": 1178, "internalName": "ZulFarrakTwo", "y1": 1.0,
+             "y2": 2.0, "x1": 3.0, "x2": 4.0, "virtualMapId": -1,
+             "dungeonMapId": 0, "parentMapId": 0, "floors": [], "chunks": []}
+          ]
+        })"));
+		Reject(scratch, manifest, "Duplicate WorldMapArea ID");
+	}
+	// Artwork stays constrained to the declared area directory, and stays
+	// optional: Content Manager composes the DBCs and does not require the tiles.
+	// Reusing an existing EPF member as the source isolates the target rule from
+	// the missing-source rule.
+	{
+		auto manifest = FloorlessManifest();
+		manifest["content"] = json::array({json{{"type", "file"},
+			{"source", "manifest.json"},
+			{"target", "Interface/WorldMap/ZulFarrak/zulfarrak1.blp"}}});
+		auto const withArtwork = Accept(scratch, "floorless-artwork", manifest);
+		assert(withArtwork.worldMaps.size() == 1);
+		auto stray = manifest;
+		stray["content"][0]["target"] = "Interface/WorldMap/ZulAman/zulAman1.blp";
+		Reject(scratch, stray, "not beneath a declared area directory");
+		// An unrelated client asset is unaffected: the rule is scoped to
+		// Interface/WorldMap/.
+		auto unrelated = manifest;
+		unrelated["content"][0]["target"] = "Interface/FrameXML/FrameXML.lua";
+		assert(Accept(scratch, "floorless-unrelated", unrelated).worldMaps.size() == 1);
+	}
+	// A map with no transform and no floors requests and leases exactly one
+	// row: its WorldMapArea. Nothing is synthesised for the three tables it
+	// contributes no row to, so those DBCs are composed stock byte for byte.
+	{
+		std::map<std::string, std::vector<ResourceAllocationRequest>> requests;
+		WorldMapDbcComposer::AppendRequests(validated.packageKey,
+			validated.worldMaps, requests);
+		assert(requests.at("WorldMapArea").size() == 1);
+		assert(requests.at("WorldMapArea")[0].fixedValue == 686);
+		assert(!requests.count("DungeonMap"));
+		assert(!requests.count("DungeonMapChunk"));
+		assert(!requests.count("WorldMapTransforms"));
+		auto const leases = ContentResourceAllocator::PlanFixed("realm",
+			ContentResourceAllocator::FixedRowIdPolicy(
+				WorldMapDbcComposer::ResourceKind("WorldMapArea")),
+			requests.at("WorldMapArea"), {}, {}, 1,
+			WorldMapDbcComposer::VerifiedBaselineSha256("WorldMapArea"));
+		assert(leases.size() == 1 && leases[0].value == 686);
+	}
+	std::cout << "  world-map floorless area: PASS\n";
+}
+
+// The same case composed against the verified stock baseline: only WorldMapArea
+// grows, by exactly one row, and the other three tables reproduce stock exactly.
+static void FloorlessCompositionTests(fs::path const &scratch,
+	fs::path const &baselineDirectory)
+{
+	auto const validated = Accept(scratch, "floorless-composed", FloorlessManifest());
+	std::vector<ResolvedWorldMap> const maps{{validated.packageKey,
+		validated.worldMaps[0]}};
+	// Nothing is contributed to these three tables, so each is returned byte for
+	// byte rather than a synthesised row appended to stock.
+	for (auto const &table : {"DungeonMap", "DungeonMapChunk", "WorldMapTransforms"})
+	{
+		assert(WorldMapDbcComposer::Rows(table, maps).empty());
+		DbcDocument const stock = Stock(table, baselineDirectory);
+		assert(WorldMapDbcComposer::Compose(table, stock, maps) ==
+			DbcReader::Serialize(stock));
+	}
+	// WorldMapArea grows by exactly one appended row, and stock keeps its bytes.
+	assert(WorldMapDbcComposer::Rows("WorldMapArea", maps) ==
+		std::vector<std::uint32_t>{686});
+	DbcDocument const areas = Stock("WorldMapArea", baselineDirectory);
+	auto const composed = WorldMapDbcComposer::Compose("WorldMapArea", areas, maps);
+	auto const parsed = DbcReader::Parse(composed,
+		*FindDbcDescriptor(12340, "WorldMapArea"));
+	if (!parsed.valid) std::cerr << "  WorldMapArea did not reparse\n";
+	assert(parsed.valid);
+	assert(parsed.document.recordCount == areas.recordCount + 1);
+	assert(std::equal(areas.words.begin(), areas.words.end(),
+		parsed.document.words.begin()));
+	assert(std::equal(areas.strings.begin(), areas.strings.end(),
+		parsed.document.strings.begin()));
+	auto const fields = FindDbcDescriptor(12340, "WorldMapArea")->fields.size();
+	std::vector<std::uint32_t> const row(parsed.document.words.begin() +
+		areas.recordCount * fields, parsed.document.words.begin() +
+		(areas.recordCount + 1) * fields);
+	assert(row.size() == 11);
+	// Words 0..3 are ID, MapID, area_id and the appended internal-name offset.
+	assert(row[0] == 686 && row[1] == 209 && row[2] == 1176);
+	// Word 8 is virtual_map_id and word 9 is dungeon_map_id, both int32 in the
+	// descriptor, so the authored -1 must arrive as its raw uint32 spelling.
+	assert(row[8] == 0xFFFFFFFFu);
+	assert(row[9] == 0u);
+	assert(row[10] == 161);
+	std::string const internalName(parsed.document.strings.begin() + row[3],
+		parsed.document.strings.begin() + row[3] + std::strlen("ZulFarrak"));
+	assert(internalName == "ZulFarrak");
+	// The four rectangle words carry the authored floats unchanged.
+	for (auto const expected : {1624.9998779296875f, 241.66665649414062f,
+			2052.083251953125f, 1129.1666259765625f})
+	{
+		std::uint32_t bits = 0;
+		std::memcpy(&bits, &expected, sizeof(bits));
+		bool found = false;
+		for (std::size_t index = 4; index < 8; ++index)
+			found = found || row[index] == bits;
+		assert(found);
+	}
+	// Composition stays a pure function of the baseline plus the input.
+	assert(WorldMapDbcComposer::Compose("WorldMapArea", areas, maps) == composed);
+	std::cout << "  world-map floorless composition: PASS\n";
+}
+
 static void PackageTests(fs::path const &scratch)
 {
 	auto const manifest = WorldMapManifest();
@@ -1723,8 +1946,13 @@ static void PackageTests(fs::path const &scratch)
 		assert(requests.at("WorldMapTransforms")[0].fixedValue == 12);
 	}
 	Reject(scratch, Erase(manifest, {"worldMaps", "0", "areas"}), "nonempty areas");
+	// An empty `floors` array is a legitimate floorless area (see
+	// FloorlessAreaTests), but omitting the key is still an error: a missing key
+	// states nothing, while `[]` states that the map owns no DungeonMap row.
 	Reject(scratch, Erase(manifest, {"worldMaps", "0", "areas", "0", "floors"}),
-		"nonempty floors");
+		"floors array");
+	Reject(scratch, Replace(manifest, {"worldMaps", "0", "areas", "0", "floors"}, 5),
+		"floors array");
 	Reject(scratch, Erase(manifest, {"worldMaps", "0", "areas", "0", "chunks"}),
 		"chunks array");
 	Reject(scratch, Replace(manifest, {"worldMaps"}, 5), "worldMaps must be an array");
@@ -2354,6 +2582,7 @@ int main(int argc, char **argv)
 		NoTransformTests(scratch, stockDirectory);
 		MultiFloorNoTransformTests(scratch, stockDirectory);
 		DungeonMapIdCompositionTests(scratch, stockDirectory);
+		FloorlessCompositionTests(scratch, stockDirectory);
 		auto const golden = fs::path(argc > 2 && argv[2][0] ? argv[2] : "");
 		auto const artwork = fs::path(argc > 3 && argv[3][0] ? argv[3] : "");
 		if (!golden.empty() && fs::is_directory(golden))
@@ -2370,6 +2599,7 @@ int main(int argc, char **argv)
 		std::cout << "  world-map baseline checks: SKIP (no --world-map-baseline-dir)\n";
 	}
 	DungeonMapIdReferenceTests(scratch);
+	FloorlessAreaTests(scratch);
 	PackageTests(scratch);
 	return 0;
 }

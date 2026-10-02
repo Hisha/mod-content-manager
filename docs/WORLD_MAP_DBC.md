@@ -65,7 +65,8 @@ The descriptors live in `src/DbcDescriptor.cpp` and are reachable through `World
 ## Schema 2 and 3 declaration
 
 `worldMaps[]` is a schema 2/3 top-level array. Schema 1 packages are rejected. The shape is
-`worldMaps[] -> {mapId, transform (optional), areas[]}`, and every area owns `floors[]` and `chunks[]`:
+`worldMaps[] -> {mapId, transform (optional), areas[]}`, and every area owns a required `floors[]`
+and `chunks[]`, each of which may be empty:
 
 ```json
 "worldMaps": [
@@ -130,6 +131,47 @@ The descriptors live in `src/DbcDescriptor.cpp` and are reachable through `World
 The second entry above is a complete map with no `transform` key. It contributes a floor, a chunk and
 an area, requests nothing from `WorldMapTransforms`, and leaves the composed transform table equal to
 stock.
+
+## `floors` may be empty
+
+`floors` and `chunks` are required keys on every area, but the required array is allowed to be
+empty. An area with `"floors": []` declares a real world map that simply has no dungeon floors, so
+it owns no `DungeonMap` row and no `DungeonMapChunk` row. Zul'Farrak in WDM Stable (map 209) is the
+example: one area with no floors, no chunks, and no transform, shown as
+
+```json
+"areas": [
+  {
+    "id": 1176,
+    "internalName": "ZulFarrak",
+    "dungeonMapId": 0,
+    "floors": [],
+    "chunks": []
+  }
+]
+```
+
+The key is still required. Omitting `"floors"` is a malformed manifest, not a floorless map; an
+empty array is the only way to say "this map has no floors". An area that *does* declare floors
+while its map also declares floorless areas is fine: floors are per-area, and the map-wide tables
+are composed from every area that contributes rows.
+
+An empty `floors` array brings three obligations, each checked by `CheckFloorlessArea()`:
+
+- `dungeonMapId` must be `0`. A floorless area owns no dungeon map, so it cannot name one, and `0`
+  is the value every floorless WMA in stock and WDM uses.
+- `chunks` must also be empty. A chunk is a `DungeonMapChunk` row belonging to a floor, so there is
+  nothing for a floorless area to own.
+- `floorNames` must not be declared. The floor dropdown has no row to rename, and
+  `clientFrameXml` with no labels is rejected upstream.
+
+It follows that a floorless map must not declare a `transform` either: a `WorldMapTransforms` row
+redirects the client to a named floor, and a floorless map has none. The existing transform check
+already rejects this, because `newDungeonMapId` must name a floor declared in the same map. A map
+that mixes floorless and floored areas must therefore declare its transform in terms of one of the
+floors it actually owns. The composed `DungeonMap.dbc`, `DungeonMapChunk.dbc` and
+`WorldMapTransforms.dbc` for a fully floorless package are the verified stock files byte for byte,
+and the package's only lease is its `WorldMapArea` row.
 
 The `fieldN` keys mirror the descriptor exactly. They are not placeholders waiting to be renamed:
 their client-side meaning is not established, so the module refuses to invent one. `mapId` is written

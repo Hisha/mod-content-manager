@@ -267,8 +267,8 @@ struct ContentWorldMapArea {
     std::int32_t virtualMapId = -1;
     std::int32_t dungeonMapId = 0;
     std::uint32_t parentMapId = 0;
-    std::vector<ContentDungeonMapFloor> floors;
-    std::vector<ContentDungeonMapChunk> chunks;
+    std::vector<ContentDungeonMapFloor> floors; // may be empty: a floorless area
+    std::vector<ContentDungeonMapChunk> chunks; // must be empty when floors is
     std::map<std::string, ContentWorldMapFloorNames> floorNames;
     bool operator==(ContentWorldMapArea const &o) const {
         return id == o.id && areaId == o.areaId &&

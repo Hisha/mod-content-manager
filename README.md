@@ -672,10 +672,18 @@ floors and no transform. Omitting it produces no request, lease, row or hash for
 `WorldMapTransforms.dbc`, which then stays byte-identical to stock; no `NewDungeonMapID` is ever
 inferred. A `transform` that *is* declared is validated exactly as before.
 
+`areas[].floors` is required but may be `[]`, which declares a real map that owns no
+`DungeonMap` or `DungeonMapChunk` row — WDM Zul'Farrak is the example, and omitting the key is
+still malformed. A floorless area must use `dungeonMapId` `0`, carry empty `chunks` and no
+`floorNames`, and belong to a map that declares no `transform`; mixing floorless and floored areas in
+one map is fine, since floors are per-area. See
+[Floorless maps in the world map DBC guide](docs/WORLD_MAP_DBC.md#floors-may-be-empty).
+
 `areas[].dungeonMapId` is a signed reference to a `DungeonMap` floor rather than an owned ID, so `0`,
 `-1` and a cross-map reference the package does not own are all accepted and written through to
 `WorldMapArea.dbc` unchanged. Only a reference to a floor this same package owns under a different
-`mapId` is refused, since the client would resolve it against the wrong map.
+`mapId` is refused, since the client would resolve it against the wrong map. A floorless area is
+held to the narrower rule `0`, since it owns no floor to name.
 
 `tests/fixtures/deadmines/manifest.json` is the proven minimal Deadmines contribution (map 36,
 transform 11, area 756/1581, floors 166/167, 29 chunks, 24 client BLP tiles). Composing it over the

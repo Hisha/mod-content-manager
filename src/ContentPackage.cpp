@@ -271,6 +271,51 @@ bool ReadWorldMapFloorNames(json const &declaration, ContentWorldMapArea &area,
     return true;
 }
 
+// An area that owns no DungeonMap row is a shape the 3.3.5a client already
+// handles, so accepting it must not also accept anything arbitrary. These are
+// the only extra rules a floorless area gets, and each one is a reference the
+// area cannot satisfy rather than a stylistic preference:
+//
+//   * `dungeonMapId` names a DungeonMap row. With no floor of this area there
+//     is no row it could name, so it has to be 0. Every floorless row in stock
+//     (48) and in WDM (55) carries exactly 0 -- no stock or WDM row combines
+//     zero floors with -1 or any positive id, so 0 is the attested form and
+//     nothing wider is accepted.
+//   * A chunk belongs to a floor, so a floorless area owns none. The
+//     map-wide resolution pass already refuses a chunk whose DungeonMapID is
+//     not a floor of the area; this states the rule where the reader sees it.
+//   * A floor label renames a row the stock level loop enumerates from the
+//     area's DungeonMap levels. With no level there is no row to rename, so a
+//     label could only ever be unreachable.
+//
+// WorldMapTransforms needs no floorless rule of its own: a transform's
+// `newDungeonMapId` must already be a floor of its map, so the existing
+// map-wide check rejects a transform on a fully floorless map with a precise
+// message while still allowing a map that mixes floorless and floored areas.
+bool CheckFloorlessArea(ContentWorldMapArea const &area, std::string &error) {
+	if (!area.floors.empty())
+		return true;
+	if (area.dungeonMapId != 0) {
+		error = "worldMaps area " + std::to_string(area.id) +
+				" declares no DungeonMap floors, so dungeonMapId must be 0 but is " +
+				std::to_string(area.dungeonMapId);
+		return false;
+	}
+	if (!area.chunks.empty()) {
+		error = "worldMaps area " + std::to_string(area.id) +
+				" declares no DungeonMap floors, so it cannot declare " +
+				std::to_string(area.chunks.size()) +
+				" DungeonMapChunk row(s)";
+		return false;
+	}
+	if (!area.floorNames.empty()) {
+		error = "worldMaps area " + std::to_string(area.id) +
+				" declares no DungeonMap floors, so it cannot declare floorNames";
+		return false;
+	}
+	return true;
+}
+
 bool ReadWorldMapArea(json const &declaration, ContentWorldMapArea &area,
 					  std::string &error) {
     static std::set<std::string> const keys = {
@@ -323,9 +368,16 @@ bool ReadWorldMapArea(json const &declaration, ContentWorldMapArea &area,
 		error = "worldMaps internalName is not valid UTF-8";
 		return false;
 	}
-	if (!declaration.contains("floors") || !declaration["floors"].is_array() ||
-		declaration["floors"].empty()) {
-		error = "worldMaps area requires a nonempty floors array";
+	// `floors` stays a required, explicitly typed array, exactly like `chunks`,
+	// so a misspelled or omitted key is still an error. What changes is that an
+	// empty array is a real client shape rather than a missing declaration: the
+	// 3.3.5a client draws a map that owns no DungeonMap row from its single
+	// WorldMapArea row plus its Interface/WorldMap artwork, and stock build
+	// 12340 already ships 48 such areas (WorldMapArea 531/MapID 615
+	// TheObsidianSanctum, 602/658 PitofSaron, 609/724 TheRubySanctum among
+	// them). An empty array states that fact; omitting the key states nothing.
+	if (!declaration.contains("floors") || !declaration["floors"].is_array()) {
+		error = "worldMaps area requires a floors array";
 		return false;
 	}
 	for (auto const &floor : declaration["floors"]) {
@@ -346,6 +398,8 @@ bool ReadWorldMapArea(json const &declaration, ContentWorldMapArea &area,
 	}
 	if (declaration.contains("floorNames") &&
 		!ReadWorldMapFloorNames(declaration["floorNames"], area, error))
+		return false;
+	if (!CheckFloorlessArea(area, error))
 		return false;
     return true;
 }
