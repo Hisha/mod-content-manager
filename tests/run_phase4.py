@@ -88,6 +88,11 @@ tests['frame_xml'] = ['ContentFrameXml', 'ContentBuildHash', 'ContentPackage',
                       'CurrencyCategoryDbcComposer', 'CurrencyDbcComposer',
                       'ItemExtendedCostDbc', 'DbcReader', 'DbcDescriptor',
                       'WorldMapDbcComposer', 'SpellDbcComposer']
+tests['frameforge_wow_ui'] = ['ContentPackage', 'ContentFrameForgeWowUi',
+                              'ContentFrameXml', 'ServerTableDescriptor',
+                              'CurrencyCategoryDbcComposer', 'CurrencyDbcComposer',
+                              'ItemExtendedCostDbc', 'DbcReader', 'DbcDescriptor',
+                              'ContentResourceAllocator', 'SpellDbcComposer']
 for name in ['server_bundle','schema2','schema3','extended_cost','managed_server','currency']:
     if 'SpellDbcComposer' not in tests[name]: tests[name].append('SpellDbcComposer')
 # Declared floor labels compose generated FrameXML from inside ContentPackage
@@ -96,6 +101,11 @@ for name in ['server_bundle','schema2','schema3','extended_cost','managed_server
 for name in ['package_lifecycle','server_bundle','schema2','schema3','extended_cost',
              'managed_server','currency','world_map']:
     if 'ContentFrameXml' not in tests[name]: tests[name].append('ContentFrameXml')
+# The EPF parser owns the generic FrameForge declaration and deterministic
+# PNG-to-TGA staging helper.
+for name, units in tests.items():
+    if 'ContentPackage' in units and 'ContentFrameForgeWowUi' not in units:
+        units.append('ContentFrameForgeWowUi')
 with tempfile.TemporaryDirectory(prefix='content-phase4-tests-') as directory:
     for name, units in tests.items():
         binary = Path(directory) / name
@@ -103,7 +113,7 @@ with tempfile.TemporaryDirectory(prefix='content-phase4-tests-') as directory:
                    str(root / 'tests' / (name + '_tests.cpp'))]
         command += [str(root / 'src' / (unit + '.cpp')) for unit in units]
         if name in ['schema2','schema3','extended_cost','managed_server','world_map',
-                    'frame_xml']:
+                    'frame_xml','frameforge_wow_ui']:
             command.append(str(root / 'src/third_party/miniz/miniz.c'))
         if 'ContentBuildHash' in units:
             command.append('-lcrypto')

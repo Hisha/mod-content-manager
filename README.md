@@ -22,6 +22,10 @@ approved versioned artifacts to a filesystem directory.
 | `.content activate <build-number>` | Applies or verifies any managed server prerequisite, then verifies and publishes the versioned artifact and selects it as ACTIVE. Also supports rollback. |
 | `.content server apply <build-number>` | Advanced/manual command that runs the same managed server deployment used automatically by activation, without publishing or activating the client artifact. |
 
+Portable FrameForge WoWUI exports are declared by schema-3 EPFs and flow
+through these same discovery, collision, staging, MPQ, hash, parity and
+lifecycle paths. See [docs/FRAMEFORGE_WOWUI.md](docs/FRAMEFORGE_WOWUI.md).
+
 Activation requires an administrator session or the server console. Handled Content
 Manager errors print their explanation without appending generic command usage.
 

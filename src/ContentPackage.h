@@ -16,6 +16,18 @@ struct ContentPackageEntry {
     std::string target;
 };
 
+// One portable FrameForge WoW 3.3.5a export embedded in an EPF. `source` is
+// the package-relative directory containing the two manifests, generated XML
+// and project-owned source artwork. The XML is staged byte-for-byte at
+// `layoutTarget`; artwork targets are derived from assets-manifest.json.
+struct ContentFrameForgeWowUi {
+    std::string source;
+    std::string layoutTarget;
+    bool operator==(ContentFrameForgeWowUi const& o) const {
+        return source == o.source && layoutTarget == o.layoutTarget;
+    }
+};
+
 struct ContentItemRow {
     std::string symbol;
     std::uint32_t classID = 0;
@@ -331,6 +343,11 @@ struct ContentPackageManifest {
     // Schema 3: the verified stock FrameXML.toc used by floor labels and/or
     // additive package load entries.
     std::optional<ContentClientFrameXml> clientFrameXml;
+    // Schema 3 optional extension. Parsed declarations are retained for
+    // diagnostics; their validated layout/texture outputs are also appended to
+    // `content`, so the normal ownership, collision, staging and MPQ pipeline
+    // remains authoritative.
+    std::vector<ContentFrameForgeWowUi> frameForgeWowUi;
 
     std::vector<ContentPackageEntry> content;
     std::vector<ContentItemRow> itemRows;

@@ -1,6 +1,7 @@
 #include "ContentPackage.h"
 #include "ContentBuildPaths.h"
 #include "ContentFrameXml.h"
+#include "ContentFrameForgeWowUi.h"
 #include "CurrencyCategoryDbcComposer.h"
 #include "ItemExtendedCostDbc.h"
 #include "SpellDbcComposer.h"
@@ -11,6 +12,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <limits>
 #include <map>
 #include <memory>
@@ -1051,6 +1053,63 @@ ContentPackageValidationResult ContentPackage::Validate() const {
 		result.manifest.content.push_back(std::move(entry));
     }
 
+	// Optional schema-3 portable FrameForge exports. Validation reads only EPF
+	// members and appends the generated runtime targets to `content`; this makes
+	// the existing cumulative owner/collision pipeline authoritative.
+	if (manifest.contains("frameForgeWowUi")) {
+		if (result.manifest.schema < 3) {
+			result.error = "frameForgeWowUi requires Schema 3";
+			return result;
+		}
+		if (!manifest["frameForgeWowUi"].is_array() ||
+			manifest["frameForgeWowUi"].empty()) {
+			result.error = "'frameForgeWowUi' must be a non-empty array";
+			return result;
+		}
+		for (auto const& declaration : manifest["frameForgeWowUi"]) {
+			std::string offending;
+			if (!declaration.is_object() ||
+				!ClosedKeys(declaration, {"source", "layoutTarget"}, offending) ||
+				!declaration.contains("source") || !declaration["source"].is_string() ||
+				!declaration.contains("layoutTarget") || !declaration["layoutTarget"].is_string()) {
+				result.error = "Malformed frameForgeWowUi declaration" +
+					(offending.empty() ? std::string() : ": unsupported field " + offending);
+				return result;
+			}
+			ContentFrameForgeWowUi value{declaration["source"].get<std::string>(),
+				declaration["layoutTarget"].get<std::string>()};
+			auto reader = [&](std::string const& member,
+				std::vector<std::uint8_t>& bytes, std::string& error) {
+				if (!IsSafeRelativePath(member)) { error = "Unsafe EPF member path: " + member; return false; }
+				auto index = mz_zip_reader_locate_file(&zip, member.c_str(), nullptr, 0);
+				if (index < 0 || !IsRegularZipEntry(zip, index)) { error = "Missing or non-regular EPF member: " + member; return false; }
+				size_t size = 0; auto* data = mz_zip_reader_extract_to_heap(&zip, index, &size, 0);
+				if (!data) { error = "Could not read EPF member: " + member; return false; }
+				bytes.assign(reinterpret_cast<std::uint8_t const*>(data),
+					reinterpret_cast<std::uint8_t const*>(data) + size); mz_free(data); return true;
+			};
+			std::vector<ContentPackageEntry> generated;
+			if (!ContentFrameForgeWowUiPackage::Validate(value.source,
+				value.layoutTarget, reader, generated, result.error)) {
+				result.error = "FrameForge package '" + value.source + "': " + result.error;
+				return result;
+			}
+			result.manifest.frameForgeWowUi.push_back(std::move(value));
+			result.manifest.content.insert(result.manifest.content.end(),
+				generated.begin(), generated.end());
+		}
+	}
+	{
+		std::set<std::string> targets;
+		for (auto const& entry : result.manifest.content) {
+			auto folded = ContentBuildPaths::Fold(ContentBuildPaths::Target(entry.target));
+			if (!targets.insert(folded).second) {
+				result.error = "Duplicate or case-alias package output target: " + entry.target;
+				return result;
+			}
+		}
+	}
+
 	if (result.manifest.schema >= 2) {
 		if (manifest.contains("dbcRows") && !manifest["dbcRows"].is_array()) {
             result.error = "Schema 2 dbcRows must be an array";
@@ -1874,6 +1933,22 @@ ContentPackageValidationResult ContentPackage::Validate() const {
 								result.manifest.clientFrameXml.emplace(),
 								result.error))
 			return result;
+		for (auto const& package : result.manifest.frameForgeWowUi) {
+			if (!result.manifest.clientFrameXml) {
+				result.error = "frameForgeWowUi layoutTarget requires clientFrameXml loadEntries";
+				return result;
+			}
+			auto found = std::find_if(result.manifest.clientFrameXml->loadEntries.begin(),
+				result.manifest.clientFrameXml->loadEntries.end(), [&](auto const& entry) {
+					return ContentBuildPaths::Fold(entry.target) ==
+						ContentBuildPaths::Fold(package.layoutTarget);
+				});
+			if (found == result.manifest.clientFrameXml->loadEntries.end()) {
+				result.error = "FrameForge layoutTarget is absent from clientFrameXml loadEntries: " +
+					package.layoutTarget;
+				return result;
+			}
+		}
 		ContentFrameXml::Declared declared;
 		if (!ContentFrameXml::Collect(result.manifest.worldMaps, declared,
 									 result.error))
@@ -2021,6 +2096,7 @@ ContentPackage::StageInto(std::filesystem::path const &stagingDirectory,
 			actual.content.size() == expected.content.size() &&
 			actual.clientRequirements == expected.clientRequirements &&
 			actual.clientFrameXml == expected.clientFrameXml &&
+			actual.frameForgeWowUi == expected.frameForgeWowUi &&
 			actual.itemRows == expected.itemRows &&
 			actual.serverItemRows == expected.serverItemRows &&
 			actual.currencyRows == expected.currencyRows &&
@@ -2065,10 +2141,27 @@ ContentPackage::StageInto(std::filesystem::path const &stagingDirectory,
 												   nullptr, 0);
 			Require(index >= 0 && IsRegularZipEntry(zip, index),
 					"Missing or non-regular EPF source: " + entry.source);
-			Require(mz_zip_reader_extract_to_file(
-						&zip, index, destination.string().c_str(), 0),
-					"Could not extract '" + entry.source + "' to '" +
-						destination.string() + "'");
+			if (entry.type == "frameforge-png-tga") {
+				size_t size = 0; auto* data = mz_zip_reader_extract_to_heap(&zip, index, &size, 0);
+				Require(data != nullptr, "Could not read FrameForge PNG: " + entry.source);
+				std::vector<std::uint8_t> png(reinterpret_cast<std::uint8_t const*>(data),
+					reinterpret_cast<std::uint8_t const*>(data) + size); mz_free(data);
+				std::vector<std::uint8_t> tga; std::uint32_t width=0, height=0; std::string error;
+				Require(ContentFrameForgeWowUiPackage::ConvertPngToTga(
+					png, tga, width, height, error), "Could not convert '" + entry.source + "': " + error);
+				std::ofstream output(destination, std::ios::binary);
+				Require(output.is_open(), "Could not create FrameForge texture: " + entry.target);
+				output.write(reinterpret_cast<char const*>(tga.data()),
+					static_cast<std::streamsize>(tga.size()));
+				Require(output.good(), "Could not write FrameForge texture: " + entry.target);
+			} else {
+				Require(entry.type == "file" || entry.type == "frameforge-layout",
+					"Unsupported staged content type: " + entry.type);
+				Require(mz_zip_reader_extract_to_file(
+							&zip, index, destination.string().c_str(), 0),
+						"Could not extract '" + entry.source + "' to '" +
+							destination.string() + "'");
+			}
             result.stagedFiles.push_back(destination);
         }
         result.success = true;
