@@ -156,6 +156,12 @@ public:
 				 rbac::RBAC_PERM_COMMAND_SERVER_INFO,
 				 Console::Yes
 			},
+			{ 
+				"help",
+				 HandleContentHelpCommand,
+				 rbac::RBAC_PERM_COMMAND_SERVER_INFO,
+				 Console::Yes
+			},
         };
 
         static ChatCommandTable commandTable =
@@ -772,7 +778,34 @@ public:
         }
         return true;
     }
-	static bool HandleStageCommand(
+	static bool HandleContentHelpCommand(ChatHandler* handler)
+{
+    static std::string const* const descriptions[] = {
+        "List realm content builds",
+        "Build content for the realm",
+        "Inspect DBC records",
+        "Review DBC baseline",
+        "Approve DBC baseline",
+        "Apply server build",
+        "Server status",
+        "Activate build",
+        "Show allocations",
+        "Scan available packages",
+        "Install package",
+        "Uninstall package",
+        "Stage package"
+    };
+    
+    handler->PSendSysMessage("Available .content subcommands:");
+    for (std::size_t i = 0; i < sizeof(descriptions) / sizeof(descriptions[0]); ++i)
+    {
+        handler->PSendSysMessage("  {}", std::string("content ") + descriptions[i]);
+    }
+    handler->PSendSysMessage("Use .content help for more information.");
+    return true;
+}
+
+static bool HandleStageCommand(
 	    ChatHandler* handler,
 	    std::string packageKey)
 	{
