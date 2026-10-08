@@ -780,7 +780,7 @@ public:
     }
 	static bool HandleContentHelpCommand(ChatHandler* handler)
 {
-    static std::string const* const descriptions[] = {
+    static const char* const descriptions[] = {
         "List realm content builds",
         "Build content for the realm",
         "Inspect DBC records",
