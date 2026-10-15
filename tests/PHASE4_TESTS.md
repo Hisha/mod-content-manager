@@ -20,7 +20,7 @@ Suites cover WDBC parsing, allocation, schema-1 raw EPFs, schema-2 authoring, sc
 
 The C++ programs explicitly connect as root with no password over the supplied Unix socket, to the database `phase4_test`. Use only a newly initialized private MySQL instance with TCP disabled. Never point these harnesses at an existing server. All harnesses require fresh empty fixture tables and an explicit artifact directory.
 
-Prepare `phase4_test` with utf8mb4_unicode_ci and load the module's `data/sql/db-world/base/content_manager_schema.sql`, plus CREATE TABLE definitions (without stock data) for item_template and currencytypes_dbc from the reference core. Test connections deliberately use utf8mb4_0900_ai_ci. No DROP/CREATE of a production database is part of a shipped test runner.
+Prepare `phase4_test` with utf8mb4_unicode_ci and load the module's `data/sql/db-world/base/content_manager_schema.sql`, plus CREATE TABLE definitions (without stock data) for item_template and currencytypes_dbc from the reference core. The currency harness creates and resets its disposable AzerothCore-compatible `version(cache_id)` fixture so it can verify WDB cache invalidation. Test connections deliberately use utf8mb4_0900_ai_ci. No DROP/CREATE of a production database is part of a shipped test runner.
 
 For `currency_mysql_tests.cpp`, compile it with the `tests/mysql_adapter` include directory BEFORE `src`, mysqlclient headers/libs and OpenSSL, and these production sources:
 

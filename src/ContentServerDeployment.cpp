@@ -9,6 +9,7 @@
 #include "ContentServerBundle.h"
 #include "ContentServerOwnership.h"
 #include "ContentSpellServer.h"
+#include "Config.h"
 #include "DatabaseEnv.h"
 #include "Field.h"
 #include "QueryResult.h"
@@ -650,6 +651,27 @@ bool ContentServerDeployment::Apply(
 					  "worldserver for item-template and spell_dbc visibility.";
             return true;
         }
+		std::uint32_t clientCacheVersion = 0;
+		std::uint32_t nextClientCacheVersion = 0;
+		if (!rows.empty()) {
+			Require(sConfigMgr->GetOption<std::uint32_t>(
+						"ClientCacheVersion", 0, false) == 0,
+					"Managed item apply requires ClientCacheVersion=0 so "
+					"AzerothCore advertises the database-backed cache_id");
+			auto version = WorldDatabase.Query(
+				"SELECT cache_id FROM version LIMIT 2");
+			Require(version && version->GetRowCount() == 1,
+					"Managed item apply requires exactly one AzerothCore "
+					"version row for client-cache invalidation");
+			auto value = version->Fetch()[0].Get<std::int64_t>();
+			Require(value >= 0 && value <= 2147483647,
+					"AzerothCore version.cache_id is outside its supported "
+					"signed INT range");
+			clientCacheVersion = static_cast<std::uint32_t>(value);
+			nextClientCacheVersion =
+				clientCacheVersion == 2147483647u ? 1u
+										 : clientCacheVersion + 1u;
+		}
         auto tx = WorldDatabase.BeginTransaction();
 		tx->Append("INSERT INTO content_manager_build_lock (id) VALUES (1) ON "
 				   "DUPLICATE KEY UPDATE id=1");
@@ -692,6 +714,16 @@ bool ContentServerDeployment::Apply(
 				   ")";
         };
         guard(registryCondition("STAGED"));
+		if (!rows.empty()) {
+			guard("(SELECT COUNT(*) FROM version WHERE cache_id=" +
+				  std::to_string(clientCacheVersion) + ")=1");
+			tx->Append("UPDATE version SET cache_id=" +
+					   std::to_string(nextClientCacheVersion) +
+					   " WHERE cache_id=" +
+					   std::to_string(clientCacheVersion));
+			guard("(SELECT COUNT(*) FROM version WHERE cache_id=" +
+				  std::to_string(nextClientCacheVersion) + ")=1");
+		}
 		for (std::size_t i = 0; i < creatures.size(); ++i) {
 			tx->Append("UPDATE creature_template SET entry=entry WHERE entry=" +
 					   std::to_string(creatureExists[i]
@@ -915,6 +947,14 @@ bool ContentServerDeployment::Apply(
 					after.state == "APPLIED",
 				"Server apply transaction did not verify; inspect SQL logs and "
 				"server status");
+		if (!rows.empty()) {
+			auto version = WorldDatabase.Query(
+				"SELECT cache_id FROM version LIMIT 2");
+			Require(version && version->GetRowCount() == 1 &&
+						version->Fetch()[0].Get<std::uint32_t>() ==
+							nextClientCacheVersion,
+					"Post-apply client-cache version verification failed");
+		}
 		for (auto const &row : rows) {
             ContentItemOwner owner;
             bool owned = false, itemExists = false;
@@ -962,7 +1002,8 @@ bool ContentServerDeployment::Apply(
 		summary = "Server content APPLIED for build " + std::to_string(build) +
 				  ". Restart worldserver to load item_template, spell_dbc, "
 				  "currencytypes_dbc and itemextendedcost_dbc before testing; "
-				  "client patch remains unactivated.";
+				  "managed item content advanced the database-backed client "
+				  "cache version; client patch remains unactivated.";
         return true;
 	} catch (std::exception const &exception) {
 		error = exception.what();
