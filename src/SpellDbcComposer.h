@@ -16,7 +16,11 @@ struct ResolvedSpell {
 
 class SpellDbcComposer {
 public:
-	static constexpr char const *Profile = "informational-self-aura-v1";
+	static constexpr char const *InformationalProfile =
+		"informational-self-aura-v1";
+	static constexpr char const *StockCloneProfile = "stock-spell-clone-v1";
+	// Backward-compatible name used by existing consumers and tests.
+	static constexpr char const *Profile = InformationalProfile;
 	static constexpr char const *VerifiedBaselineSha256 =
 		"d5cce1a83550dcfa9eb2f0251dbb11fd24c272534b2b1a9b230924a44d817ab3";
 	static constexpr std::uint32_t FieldCount = 234;

@@ -3,6 +3,7 @@
 #include "ContentBuildRegistry.h"
 #include "ContentServerDeployment.h"
 #include "ContentAllocationRegistry.h"
+#include "SpellDbcComposer.h"
 #include "DatabaseEnv.h"
 #include "Field.h"
 #include "QueryResult.h"
@@ -47,7 +48,15 @@ ContentResourcesV1::Result ContentCapabilityProvider::ResolveResource(std::strin
 	if(kind=="spell.id"){
 		auto definition=std::find_if(spells.begin(),spells.end(),[&](auto const&r){return r.packageKey==package&&r.symbol==symbol&&r.id==lease->value;});
 		auto loaded=sSpellMgr->GetSpellInfo(lease->value);
-		if(definition==spells.end()||!loaded||loaded->IsPassive()||!loaded->IsPositive()||loaded->DurationEntry!=sSpellDurationStore.LookupEntry(21)||loaded->ProcFlags||loaded->ProcChance||loaded->ProcCharges||loaded->GetCategory()||loaded->RecoveryTime||loaded->CategoryRecoveryTime||loaded->Attributes||loaded->AttributesEx||loaded->AttributesEx2||loaded->AttributesEx3||loaded->AttributesEx4||loaded->AttributesEx5||loaded->AttributesEx6||loaded->AttributesEx7||loaded->EquippedItemClass!=-1||loaded->EquippedItemSubClassMask||loaded->EquippedItemInventoryTypeMask||loaded->SpellIconID!=definition->words[133]||loaded->ActiveIconID||loaded->SpellFamilyName||loaded->Effects[0].Effect!=6||loaded->Effects[0].ApplyAuraName!=4||loaded->Effects[0].TargetA.GetTarget()!=1||loaded->Effects[0].Amplitude||loaded->Effects[0].TriggerSpell||loaded->Effects[1].Effect||loaded->Effects[2].Effect){reason="Managed spell is APPLIED but not loaded with expected behavior; restart worldserver";return R::Invalid;}
+		if(definition==spells.end()||!loaded||
+			!SpellDbcComposer::BehaviorMatches(*definition)){reason="Managed spell is APPLIED but not loaded with expected behavior; restart worldserver";return R::Invalid;}
+		if(definition->profile==SpellDbcComposer::InformationalProfile){
+			if(loaded->IsPassive()||!loaded->IsPositive()||loaded->DurationEntry!=sSpellDurationStore.LookupEntry(21)||loaded->ProcFlags||loaded->ProcChance||loaded->ProcCharges||loaded->GetCategory()||loaded->RecoveryTime||loaded->CategoryRecoveryTime||loaded->Attributes||loaded->AttributesEx||loaded->AttributesEx2||loaded->AttributesEx3||loaded->AttributesEx4||loaded->AttributesEx5||loaded->AttributesEx6||loaded->AttributesEx7||loaded->EquippedItemClass!=-1||loaded->EquippedItemSubClassMask||loaded->EquippedItemInventoryTypeMask||loaded->SpellIconID!=definition->words[133]||loaded->ActiveIconID||loaded->SpellFamilyName||loaded->Effects[0].Effect!=6||loaded->Effects[0].ApplyAuraName!=4||loaded->Effects[0].TargetA.GetTarget()!=1||loaded->Effects[0].Amplitude||loaded->Effects[0].TriggerSpell||loaded->Effects[1].Effect||loaded->Effects[2].Effect){reason="Managed informational spell is APPLIED but not loaded with expected behavior; restart worldserver";return R::Invalid;}
+		}else if(definition->profile==SpellDbcComposer::StockCloneProfile){
+			auto donor=sSpellMgr->GetSpellInfo(definition->copyFrom);
+			if(!donor||loaded->Attributes!=donor->Attributes||loaded->AttributesEx!=donor->AttributesEx||loaded->AttributesEx2!=donor->AttributesEx2||loaded->AttributesEx3!=donor->AttributesEx3||loaded->AttributesEx4!=donor->AttributesEx4||loaded->AttributesEx5!=donor->AttributesEx5||loaded->AttributesEx6!=donor->AttributesEx6||loaded->AttributesEx7!=donor->AttributesEx7||loaded->Targets!=donor->Targets||loaded->CastTimeEntry!=donor->CastTimeEntry||loaded->DurationEntry!=donor->DurationEntry||loaded->RangeEntry!=donor->RangeEntry||loaded->InterruptFlags!=donor->InterruptFlags||loaded->AuraInterruptFlags!=donor->AuraInterruptFlags||loaded->ChannelInterruptFlags!=donor->ChannelInterruptFlags||loaded->EquippedItemClass!=donor->EquippedItemClass||loaded->EquippedItemSubClassMask!=donor->EquippedItemSubClassMask||loaded->EquippedItemInventoryTypeMask!=donor->EquippedItemInventoryTypeMask||loaded->Reagent!=donor->Reagent||loaded->ReagentCount!=donor->ReagentCount||loaded->SpellVisual!=donor->SpellVisual||loaded->SpellIconID!=definition->words[133]){reason="Managed stock-clone spell is APPLIED but not loaded like its donor; restart worldserver";return R::Invalid;}
+			for(std::size_t i=0;i<MAX_SPELL_EFFECTS;++i)if(loaded->Effects[i].Effect!=donor->Effects[i].Effect||loaded->Effects[i].ApplyAuraName!=donor->Effects[i].ApplyAuraName||loaded->Effects[i].TargetA.GetTarget()!=donor->Effects[i].TargetA.GetTarget()||loaded->Effects[i].TargetB.GetTarget()!=donor->Effects[i].TargetB.GetTarget()||loaded->Effects[i].TriggerSpell!=donor->Effects[i].TriggerSpell||loaded->Effects[i].ItemType!=donor->Effects[i].ItemType||loaded->Effects[i].MiscValue!=donor->Effects[i].MiscValue||loaded->Effects[i].MiscValueB!=donor->Effects[i].MiscValueB){reason="Managed stock-clone spell effects differ from their donor; restart worldserver";return R::Invalid;}
+		}else{reason="Managed spell uses an unsupported runtime profile";return R::Invalid;}
 	}
     value=lease->value;reason="Validated ACTIVE/APPLIED managed resource";return R::Ready;
 }

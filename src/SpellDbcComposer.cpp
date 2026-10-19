@@ -54,13 +54,21 @@ std::set<std::uint32_t> SpellDbcComposer::Inspect(DbcDocument const& d)
 }
 void SpellDbcComposer::ValidateDeclaration(ContentSpellRow const& r)
 {
-	if(r.symbol.empty()||!r.copyFrom||r.profile!=Profile) throw std::runtime_error("Managed spell requires symbol, stock copyFrom and informational-self-aura-v1 profile");
+	if(r.symbol.empty()||!r.copyFrom||
+		(r.profile!=InformationalProfile&&r.profile!=StockCloneProfile))
+		throw std::runtime_error("Managed spell requires symbol, stock copyFrom and a supported profile");
 	ValidateText(r.names,true,100); ValidateText(r.descriptions,false,65535);
 	ValidateText(r.auraDescriptions,false,550);
 }
 bool SpellDbcComposer::BehaviorMatches(ResolvedSpell const& r)
 {
 	auto const&w=r.words;
+	if(r.profile==StockCloneProfile) {
+		if(!r.id||!r.copyFrom||w[ID]!=r.id) return false;
+		for(auto field:StringFields()) if(w[field]) return false;
+		return true;
+	}
+	if(r.profile!=InformationalProfile) return false;
 	if(!r.id||w[ID]!=r.id||w[CAST]!=1||w[DURATION]!=PermanentDuration||w[RANGE]!=1||w[EQUIPPED_ITEM_CLASS]!=std::numeric_limits<std::uint32_t>::max()||w[EFFECT]!=6||w[TARGET_A]!=1||w[AURA]!=4||w[ACTIVE_ICON]!=0||!w[ICON]||w[SCHOOL]!=1) return false;
 	for(std::size_t i=0;i<w.size();++i)if(w[i]&&i!=ID&&i!=CAST&&i!=DURATION&&i!=RANGE&&i!=EQUIPPED_ITEM_CLASS&&i!=EFFECT&&i!=TARGET_A&&i!=AURA&&i!=ICON&&i!=152&&i!=169&&i!=186&&i!=203&&i!=SCHOOL)return false;
 	return true;
@@ -71,6 +79,23 @@ ResolvedSpell SpellDbcComposer::Resolve(DbcDocument const& d,ContentSpellRow con
 	auto find=[&](std::uint32_t x){for(std::size_t i=0;i<d.recordCount;++i)if(d.words[i*FieldCount]==x)return i;throw std::runtime_error("Managed spell donor is absent from baseline");};
 	auto donor=find(a.copyFrom), iconDonor=find(a.iconCopyFromSpell?a.iconCopyFromSpell:a.copyFrom);
 	ResolvedSpell r; r.packageKey=p;r.packageVersion=v;r.symbol=a.symbol;r.profile=a.profile;r.id=id;r.copyFrom=a.copyFrom;r.iconCopyFromSpell=a.iconCopyFromSpell?a.iconCopyFromSpell:a.copyFrom;
+	auto fill=[&](std::map<std::string,std::string> const&m,std::array<std::string,16>&out){auto fallback=m.count("enUS")?m.at("enUS"):std::string();for(auto const& [locale,index]:Locales){auto f=m.find(locale);out[index]=f==m.end()?fallback:f->second;}};
+	if(a.profile==StockCloneProfile) {
+		std::copy_n(d.words.begin()+donor*FieldCount,FieldCount,r.words.begin());
+		r.words[ID]=id;
+		auto bases=std::array<std::size_t,4>{NAME,RANK,DESCRIPTION,AURA_DESCRIPTION};
+		for(std::size_t group=0;group<bases.size();++group)
+			for(std::size_t locale=0;locale<16;++locale) {
+				r.localized[group][locale]=String(d,donor,bases[group]+locale);
+				r.words[bases[group]+locale]=0;
+			}
+		fill(a.names,r.localized[0]);
+		if(!a.descriptions.empty()) fill(a.descriptions,r.localized[2]);
+		if(!a.auraDescriptions.empty()) fill(a.auraDescriptions,r.localized[3]);
+		if(a.iconCopyFromSpell) r.words[ICON]=d.words[iconDonor*FieldCount+ICON];
+		if(!BehaviorMatches(r))throw std::runtime_error("Managed stock-clone spell normalization failed");
+		return r;
+	}
 	// Start from the donor so opaque build metadata is structurally available,
 	// then deliberately normalize every field. Only locale flag words and a
 	// verified stock icon survive donor selection.
@@ -78,7 +103,6 @@ ResolvedSpell SpellDbcComposer::Resolve(DbcDocument const& d,ContentSpellRow con
 	r.words[ID]=id; r.words[CAST]=1; r.words[DURATION]=PermanentDuration; r.words[RANGE]=1; r.words[EQUIPPED_ITEM_CLASS]=std::numeric_limits<std::uint32_t>::max(); r.words[EFFECT]=6; r.words[TARGET_A]=1; r.words[AURA]=4;
 	r.words[ICON]=d.words[iconDonor*FieldCount+ICON]; r.words[152]=d.words[donor*FieldCount+152];r.words[169]=d.words[donor*FieldCount+169];r.words[186]=d.words[donor*FieldCount+186];r.words[203]=d.words[donor*FieldCount+203]; r.words[SCHOOL]=1;
 	if(!r.words[ICON])throw std::runtime_error("Managed spell icon donor has no stock SpellIconID");
-	auto fill=[&](std::map<std::string,std::string> const&m,std::array<std::string,16>&out){auto fallback=m.count("enUS")?m.at("enUS"):std::string();for(auto const& [locale,index]:Locales){auto f=m.find(locale);out[index]=f==m.end()?fallback:f->second;}};
 	fill(a.names,r.localized[0]); fill({},r.localized[1]); fill(a.descriptions,r.localized[2]); fill(a.auraDescriptions,r.localized[3]);
 	if(!BehaviorMatches(r))throw std::runtime_error("Managed spell profile normalization failed"); return r;
 }

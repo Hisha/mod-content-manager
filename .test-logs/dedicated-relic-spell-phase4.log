@@ -1,0 +1,30 @@
+production_migration_sources_and_mysql_harnesses_compile: PASS
+managed Spell SQL uses explicit utf8mb4_unicode_ci for all localized values and utf8mb4_bin for ownership: PASS
+spell_server_sql: PASS
+DBC reader tests passed
+dbc_reader: PASS
+package_lifecycle: PASS
+Phase 2 allocator/composer tests passed
+phase2: PASS
+occupancy: PASS
+server_bundle: PASS
+schema2: PASS
+schema3: PASS
+Currency allocator/composer/parity tests passed
+currency: PASS
+category composition, fallback, occupancy, retained leases: PASS
+category: PASS
+PASS ItemExtendedCost descriptor, malformed data, preservation, counts, deterministic composition/readback, typed allocation/retention, parser, symbolic references, canonical artifact
+extended_cost: PASS
+managed_server: PASS
+managed Spell descriptor/composition/allocation: PASS
+spell: PASS
+world_map: /home/smithkt/git/mod-content-manager/tests/world_map_tests.cpp:2086: void PackageTests(const std::filesystem::__cxx11::path&): Assertion `duplicateResult.valid' failed.
+Traceback (most recent call last):
+  File "/home/smithkt/git/mod-content-manager/tests/run_phase4.py", line 134, in <module>
+    subprocess.run([str(binary), *inputs], check=True)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.14/subprocess.py", line 578, in run
+    raise CalledProcessError(retcode, process.args,
+                             output=stdout, stderr=stderr)
+subprocess.CalledProcessError: Command '['/tmp/content-phase4-tests-fy6b2ygx/world_map']' died with <Signals.SIGABRT: 6>.

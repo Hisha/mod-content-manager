@@ -503,10 +503,11 @@ the actual Eitrigg inspection output has been reviewed.
 
 Schema 2 and 3 packages may declare retained `spell.id` resources. Content Manager
 composes the client `Spell.dbc` row and the matching complete server `spell_dbc`
-overlay from one canonical representation. Phase A supports only the constrained
-`informational-self-aura-v1` profile and stock Spell icons; arbitrary Spell fields,
-custom SpellIcon rows, procs, periodic effects, triggers, and gameplay modifiers are
-not authorable. Schema 1 rejects `spells`.
+overlay from one canonical representation. Supported profiles are the constrained
+`informational-self-aura-v1` profile and `stock-spell-clone-v1`, which preserves a
+verified stock donor's behavior while assigning a managed ID and localized name.
+Arbitrary Spell fields, custom SpellIcon rows, and independently authored gameplay
+effects remain unsupported. Schema 1 rejects `spells`.
 
 The verified build-12340 baseline has SHA-256
 `d5cce1a83550dcfa9eb2f0251dbb11fd24c272534b2b1a9b230924a44d817ab3`,

@@ -116,3 +116,30 @@ value only for `Result::Ready`; a retained lease by itself is deliberately inert
 Custom icons remain future scope: supporting them requires a separately designed
 managed SpellIcon.dbc identity plus client BLP asset lifecycle. This Phase A
 capability intentionally provides neither.
+
+## Stock spell clones
+
+The generic `stock-spell-clone-v1` profile creates a new managed identity from
+one verified stock Spell row while preserving the donor's complete 234-field
+behavior. The allocated ID and authored localized name are the only required
+changes. Rank, description, and aura-description strings remain those of the
+donor unless replacements are explicitly authored; `iconCopyFromSpell` remains
+an optional stock-icon override.
+
+```json
+"spells": [{
+  "symbol": "examine-cursed-relic",
+  "copyFrom": 61413,
+  "profile": "stock-spell-clone-v1",
+  "name": {"enUS": "Examine Cursed Relic"}
+}]
+```
+
+Composition starts from the verified baseline donor, changes the ID, replaces
+the declared localized identity text, and validates that every non-string
+behavior word remains unchanged. The original donor row and baseline string
+block remain byte-for-byte intact. The same cloned row is written to the client
+`Spell.dbc` and server `spell_dbc`; runtime resolution verifies that the loaded
+SpellInfo retains the donor's attributes, targets, cast/duration/range entries,
+interrupt flags, item and reagent requirements, visual/icon identity, and spell
+effects.

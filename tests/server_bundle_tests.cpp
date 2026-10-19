@@ -169,4 +169,30 @@ int main()
 	assert(rejectedInvalidGeneration);
     assert(!ContentServerBundle::VerifyParity(spellParity,"Eitrigg",8,"",hash,hash,
         {},{},error,{},{},{},{},{},{spell})); // retained spell lease is mandatory
+
+	ResolvedSpell clone=spell;clone.symbol="relic-examination";
+	clone.profile=SpellDbcComposer::StockCloneProfile;clone.id=80866;
+	clone.copyFrom=61413;clone.iconCopyFromSpell=61413;clone.words.fill(0);
+	clone.words[0]=clone.id;clone.words[4]=256;clone.words[28]=6;
+	clone.words[31]=31;clone.words[46]=1;clone.words[68]=0xFFFFFFFFu;
+	clone.words[71]=3;clone.words[86]=1;clone.words[131]=91;
+	clone.words[133]=39;clone.words[216]=0x3F800000u;
+	clone.words[217]=0x3F800000u;clone.words[218]=0x3F800000u;
+	clone.words[225]=1;clone.localized[0][0]="Examine Cursed Relic";
+	assert(SpellDbcComposer::BehaviorMatches(clone));
+	ItemAllocation cloneLease{"Eitrigg","generic",clone.symbol,clone.id,
+		"reserved",1,8,hash,"spell.id"};
+	auto cloneBundle=ContentServerBundle::ServerJson(
+		"Eitrigg",{},{},{},{},{},{},{clone});
+	parsedSpells.clear();
+	assert(ContentServerBundle::ParseServer(cloneBundle,"Eitrigg",parsed,error,
+		nullptr,nullptr,nullptr,nullptr,nullptr,&parsedSpells));
+	assert(parsedSpells.size()==1&&parsedSpells[0].id==clone.id&&
+		parsedSpells[0].profile==SpellDbcComposer::StockCloneProfile&&
+		parsedSpells[0].words==clone.words&&
+		parsedSpells[0].localized==clone.localized);
+	auto cloneParity=ContentServerBundle::ParityJson("Eitrigg",8,{cloneLease},{},
+		"","",hash,hash,"","",{},{spellBaseline},"",{},{},{},{},{},{clone},hash);
+	assert(ContentServerBundle::VerifyParity(cloneParity,"Eitrigg",8,"",hash,
+		hash,{}, {cloneLease},error,{},{},{},{},{},{clone}));
 }
