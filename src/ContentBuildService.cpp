@@ -987,7 +987,7 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 		for (auto const &table : WorldMapDbcTables())
 			if (composingWorldMap[table]) ++worldMapFileCount;
 		std::size_t frameXmlFileCount = composingFrameXml
-			? ContentFrameXml::Targets(composingFloorNames).size() : 0;
+			? ContentFrameXml::Targets(composingFloorNames, composingNativePve).size() : 0;
 		Require(result.fileCount + (composingItem ? 1 : 0) +
 						(composingCurrency ? 1 : 0) +
 						(composingCategory ? 1 : 0) + (composingCost ? 1 : 0) + (composingSpell ? 1 : 0) +
