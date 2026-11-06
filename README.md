@@ -633,6 +633,12 @@ their case-folded logical target, so output does not depend on package discovery
 or installation order. The composed TOC and any other generated FrameXML file
 are hashed in the normal parity manifest and are covered by the final MPQ hash.
 
+Native modules can also contribute conditional top-level Collections pages
+through schema-3 `nativeCollectionPages`. Content Manager owns the horseshoe
+micro-menu button, host, generated controller, icon, ordering, and strict parity
+coverage; no Collections resources are generated when the installed build has
+no contributor. See [Native Collections menu](docs/NATIVE_COLLECTIONS_MENU.md).
+
 Any nonempty `clientFrameXml` composition automatically adds
 `protected-framexml` to that package's normalized client requirements. Consumers
 must not repeat it in `clientRequirements`, though an explicit duplicate is

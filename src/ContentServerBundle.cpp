@@ -1040,7 +1040,7 @@ bool ContentServerBundle::VerifyParity(
         {
             static std::map<std::string, std::string> const known = [] {
                 std::map<std::string, std::string> targets;
-                for (auto const &target : ContentFrameXml::Targets(true, true))
+                for (auto const &target : ContentFrameXml::AllTargets())
                     targets.emplace(target, target);
                 return targets;
             }();

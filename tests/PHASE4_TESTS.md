@@ -149,4 +149,25 @@ PRIVATE_SOCKET FIXTURE_ROOT /path/to/mod-native-social.epf /path/to/aq-scarab-go
 Only ContentManager config/discovery is injected; registry, build, parity and MPQ are
 production code.
 
+## Native Collections transition harness
+
+`native_collections_transition_mysql_tests.cpp` runs against a fresh disposable
+fixture schema and creates isolated Native Hunts and Native Transmog schema-3 EPFs
+under `FIXTURE_ROOT`. It exercises the production registry, cumulative builder,
+MPQ writer, parity inspection, activation, publication, and uninstall paths across
+enabled → disabled → enabled builds A, B, and C. It verifies exact generated-resource
+selection, cumulative file counts, MPQ entries, parity-manifest target/hash sets,
+explicit A→B→C lifecycle state changes, retention of versioned historical published
+artifacts, and deterministic A/C MPQ and generated-resource hashes.
+
+Compile with the test adapter, mysqlclient, bundled StormLib, and the production
+source set used by the activation and cumulative-build harnesses. Run with:
+
+```text
+PRIVATE_SOCKET FIXTURE_ROOT
+```
+
+Never point this harness at a live or PTR database. It deliberately installs and
+uninstalls fixture package records and activates fixture builds in its database.
+
 Local core-facing syntax validation used AzerothCore commit `06234df3d5ab26c93f4f1f06f3edb828b73ecd3c`; no Eitrigg core checkout is available. No full worldserver link or actual client category display test is claimed. Production worker-pool transaction behavior and the real-server/native-client acceptance remain required.

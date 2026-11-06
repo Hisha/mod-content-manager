@@ -36,6 +36,7 @@ subprocess.run([
     str(root / 'tests/currency_mysql_tests.cpp'),
     str(root / 'tests/managed_server_mysql_tests.cpp'),
     str(root / 'tests/allocation_replacement_mysql_tests.cpp'),
+    str(root / 'tests/native_collections_transition_mysql_tests.cpp'),
     str(root / 'src/ContentBuildRegistry.cpp')
 ], check=True)
 print('production_migration_sources_and_mysql_harnesses_compile: PASS', flush=True)
@@ -134,10 +135,15 @@ with tempfile.TemporaryDirectory(prefix='content-phase4-tests-') as directory:
                 if option: inputs.append(str(option.resolve()))
         if name == 'frame_xml':
             inputs.append(str(Path(directory) / 'native-pve.lua'))
+            inputs.append(str(Path(directory) / 'native-collections.lua'))
         subprocess.run([str(binary), *inputs], check=True)
         if name == 'frame_xml':
             subprocess.run([
                 sys.executable, str(root / 'tests/native_pve_runtime_tests.py'),
                 str(Path(directory) / 'native-pve.lua')
+            ], check=True)
+            subprocess.run([
+                sys.executable, str(root / 'tests/native_collections_runtime_tests.py'),
+                str(Path(directory) / 'native-collections.lua')
             ], check=True)
         print(name + ': PASS', flush=True)

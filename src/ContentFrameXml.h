@@ -31,9 +31,20 @@ public:
         std::map<std::string, std::map<std::uint32_t, std::string>>>;
     using LoadEntry = ContentFrameXmlLoadEntry;
     using NativePvePage = ContentNativePvePage;
+    using NativeCollectionPage = ContentNativeCollectionPage;
+
+    enum class GeneratedResource {
+        FloorNames,
+        NativePve,
+        CollectionsController,
+        CollectionsIcon
+    };
+    using ResourceSelection = std::set<GeneratedResource>;
 
     static std::string const& GeneratedLuaTarget();
     static std::string const& NativePveLuaTarget();
+    static std::string const& CollectionsLuaTarget();
+    static std::string const& CollectionsIconTarget();
     static std::string const& StockTocTarget();
     // Stock Interface/FrameXML/FrameXML.toc line that declares where a modded
     // module is allowed to be added. The insertion is refused unless this exact
@@ -71,13 +82,18 @@ public:
     // display name/id here so caller or package discovery order cannot leak.
     static bool ComposeNativePveLua(std::vector<NativePvePage> const& pages,
         std::string& text, std::string& error);
+    static bool ComposeCollectionsLua(
+        std::vector<NativeCollectionPage> const& pages,
+        std::string& text, std::string& error);
+    // Deterministic 64x64 uncompressed TGA horseshoe owned by Content Manager.
+    static std::vector<std::uint8_t> ComposeCollectionsIcon();
     // Stock TOC bytes with the optional generated floor-name module and all
     // package load entries inserted deterministically. Anchors may be stock or
     // contributed entries; duplicate/case-alias targets, missing or ambiguous
     // anchors, and dependency cycles fail closed.
     static bool ComposeToc(std::vector<std::uint8_t> const& stock,
-        std::vector<LoadEntry> const& entries, bool includeGeneratedLua,
-        bool includeNativePve,
+        std::vector<LoadEntry> const& entries,
+        ResourceSelection const& resources,
         std::string& text, std::string& error);
     static bool ComposeToc(std::vector<std::uint8_t> const& stock,
         std::vector<LoadEntry> const& entries, bool includeGeneratedLua,
@@ -93,8 +109,13 @@ public:
     // staged artifact is verified once in one place like every other composer.
     static bool Stage(std::string const& target, std::string const& text,
         std::filesystem::path const& workspace, std::string& error);
-    // Cumulative targets this composer owns when any floor name is declared.
-    static std::vector<std::string> Targets(bool includeGeneratedLua = true,
-        bool includeNativePve = false);
+    static bool Stage(std::string const& target,
+        std::vector<std::uint8_t> const& bytes,
+        std::filesystem::path const& workspace, std::string& error);
+    // Exact cumulative targets owned by the selected generated resources. The
+    // composed TOC is implicit whenever the selection is non-empty.
+    static std::vector<std::string> Targets(ResourceSelection const& resources);
+    // Every generated target accepted by parity validation.
+    static std::vector<std::string> AllTargets();
 };
 #endif

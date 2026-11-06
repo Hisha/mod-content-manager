@@ -2075,21 +2075,16 @@ static void PackageTests(fs::path const &scratch)
 	assert(staged.stagedFiles[0].filename() == "TestMap1_1.blp");
 	assert(staged.stagedFiles[0].parent_path().filename() == "TestMap");
 	assert(!fs::exists(workspace / "DBFilesClient"));
-	// A duplicate install target inside one package is refused at staging time
-	// rather than letting the second write clobber the first.
+	// A duplicate install target inside one package is refused during validation
+	// rather than reaching staging where a second write could clobber the first.
 	auto duplicateTarget = withArtwork;
 	duplicateTarget["content"].push_back(duplicateTarget["content"][0]);
 	auto duplicatePath = scratch / "duplicate-target.epf";
 	fs::remove(duplicatePath);
 	Save(duplicatePath, duplicateTarget);
 	auto const duplicateResult = ContentPackage(duplicatePath).Validate();
-	assert(duplicateResult.valid);
-	auto const duplicateWorkspace = scratch / "duplicate-workspace";
-	fs::create_directories(duplicateWorkspace);
-	auto const duplicateStaged =
-		ContentPackage(duplicatePath).StageInto(duplicateWorkspace, duplicateResult.manifest);
-	assert(!duplicateStaged.success);
-	assert(duplicateStaged.error.find("Staging target already exists") !=
+	assert(!duplicateResult.valid);
+	assert(duplicateResult.error.find("Duplicate or case-alias package output target") !=
 		   std::string::npos);
 	// A changed manifest is refused at staging time, so a build cannot install
 	// something other than what it validated.

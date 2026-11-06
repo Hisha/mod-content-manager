@@ -278,6 +278,24 @@ struct ContentNativePvePage {
     }
 };
 
+// One page contributed to Content Manager's top-level Collections surface.
+// The package owns only the page frame loaded from `loadTarget`; Content
+// Manager owns the host window, tabs, micro-menu button, icon, and routing.
+struct ContentNativeCollectionPage {
+    std::string id;
+    std::string name;
+    std::uint32_t order = 0;
+    std::string frame;
+    std::string loadTarget;
+    std::string onShow;
+    std::string onHide;
+    bool operator==(ContentNativeCollectionPage const& o) const {
+        return id == o.id && name == o.name && order == o.order &&
+               frame == o.frame && loadTarget == o.loadTarget &&
+               onShow == o.onShow && onHide == o.onHide;
+    }
+};
+
 // One WorldMapArea.dbc row plus the floors and chunks of that area.
 //
 // `dungeonMapId` is a reference field, not an owned row: naming an ID here never
@@ -363,6 +381,10 @@ struct ContentPackageManifest {
     // Schema 3: additive native pages assembled into one deterministic PvE
     // menu by Content Manager. Blizzard's Dungeon Finder is implicit.
     std::vector<ContentNativePvePage> nativePvePages;
+    // Schema 3: additive pages for the conditional Collections surface. The
+    // surface and its generated resources exist only when this build has at
+    // least one installed contributor.
+    std::vector<ContentNativeCollectionPage> nativeCollectionPages;
     // Schema 3 optional extension. Parsed declarations are retained for
     // diagnostics; their validated layout/texture outputs are also appended to
     // `content`, so the normal ownership, collision, staging and MPQ pipeline

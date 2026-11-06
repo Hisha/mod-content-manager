@@ -127,6 +127,24 @@ json NativeHuntsManifest()
             {"onShow", "NativeHuntsFrame_OnPveShow"}}})}};
 }
 
+json NativeCollectionsManifest()
+{
+    return {{"schema", 3}, {"package", "native-transmog"},
+        {"name", "Native Transmog"}, {"version", "1"},
+        {"content", json::array({
+            {{"type", "file"}, {"source", "assets/NativeHuntsFrame.xml"},
+             {"target", "Interface/FrameXML/NativeTransmogFrame.xml"}}})},
+        {"clientFrameXml", ClientFrameXml(json::array({
+            {{"target", "Interface/FrameXML/NativeTransmogFrame.xml"},
+             {"after", ContentFrameXml::CollectionsLuaTarget()}}}))},
+        {"nativeCollectionPages", json::array({json{
+            {"id", "appearances"}, {"name", "Appearances"}, {"order", 100},
+            {"frame", "NativeTransmogCollectionsFrame"},
+            {"loadTarget", "Interface/FrameXML/NativeTransmogFrame.xml"},
+            {"onShow", "NativeTransmog_OpenCollections"},
+            {"onHide", "NativeTransmog_CloseCollections"}}})}};
+}
+
 // The parity writer and verifier take their whole context positionally; these
 // helpers pin the only thing under test here, the generated-FrameXML map.
 std::string Parity(std::map<std::string, std::string> const& frameXmlHashes)
@@ -496,7 +514,7 @@ int main(int argc, char** argv)
              "INTERFACE/FRAMEXML/FRAMEXML.TOC"}, error));
         assert(error.find("Raw Interface/FrameXML/FrameXML.toc") !=
                std::string::npos);
-        assert(ContentFrameXml::Targets(false) ==
+        assert(ContentFrameXml::Targets({}) ==
                std::vector<std::string>{ContentFrameXml::StockTocTarget()});
     }
 
@@ -543,10 +561,7 @@ int main(int argc, char** argv)
 		std::vector<ContentFrameXml::NativePvePage> pages = {
 			{"hunts", "Hunts", "NativeHuntsFrame",
 			 "Interface/FrameXML/NativeHuntsFrame.xml",
-			 "NativeHuntsFrame_OnPveShow", "NativeHuntsFrame_OnPveHide"},
-			{"appearances", "Appearances", "NativeTransmogFrame",
-			 "Interface/FrameXML/NativeTransmogFrame.xml",
-			 "NativeTransmog_OpenCollections", ""}};
+			 "NativeHuntsFrame_OnPveShow", "NativeHuntsFrame_OnPveHide"}};
 		std::sort(pages.begin(), pages.end(), [](auto const& a, auto const& b) {
 			return a.name < b.name;
 		});
@@ -558,9 +573,9 @@ int main(int argc, char** argv)
 			output.write(pve.data(), static_cast<std::streamsize>(pve.size()));
 			assert(output.good());
 		}
-		auto appearances = pve.find("name=\"Appearances\"");
 		auto hunts = pve.find("name=\"Hunts\"");
-		assert(appearances != std::string::npos && appearances < hunts);
+		assert(hunts != std::string::npos);
+		assert(pve.find("name=\"Appearances\"") == std::string::npos);
 		assert(pve.find("duplicate page id") != std::string::npos);
 		assert(pve.find("missing frame") != std::string::npos);
 		assert(pve.find("Player vs. Environment") != std::string::npos);
@@ -569,7 +584,7 @@ int main(int argc, char** argv)
 		std::string reversePve;
 		assert(ContentFrameXml::ComposeNativePveLua(reversed, reversePve, error));
 		assert(reversePve == pve);
-		auto huntsOnly = std::vector<ContentFrameXml::NativePvePage>{pages.back()};
+		auto huntsOnly = pages;
 		std::string regenerated;
 		assert(ContentFrameXml::ComposeNativePveLua(huntsOnly, regenerated, error));
 		assert(regenerated.find("name=\"Appearances\"") == std::string::npos);
@@ -581,14 +596,88 @@ int main(int argc, char** argv)
 			"Interface/FrameXML/NativeHuntsFrame.xml",
 			ContentFrameXml::NativePveLuaTarget()}};
 		std::string pveToc;
-		assert(ContentFrameXml::ComposeToc(StockToc(), loads, false, true,
+		assert(ContentFrameXml::ComposeToc(StockToc(), loads,
+			{ContentFrameXml::GeneratedResource::NativePve},
 			pveToc, error));
 		auto manager = pveToc.find("ContentManagerNativePve.lua");
 		auto page = pveToc.find("NativeHuntsFrame.xml");
 		assert(manager != std::string::npos && manager < page);
-		assert(ContentFrameXml::Targets(false, true) ==
-			(std::vector<std::string>{ContentFrameXml::NativePveLuaTarget(),
-				ContentFrameXml::StockTocTarget()}));
+		auto pveTargets = ContentFrameXml::Targets(
+			{ContentFrameXml::GeneratedResource::NativePve});
+		assert(std::find(pveTargets.begin(), pveTargets.end(),
+			ContentFrameXml::NativePveLuaTarget()) != pveTargets.end());
+	}
+
+	// Collections registrations are schema-3, ordered independently of package
+	// discovery, and activate exactly the controller, icon, and composed TOC.
+	{
+		Save(path, NativeCollectionsManifest());
+		auto validation = ContentPackage(path).Validate();
+		assert(validation.valid);
+		assert(validation.manifest.nativePvePages.empty());
+		assert(validation.manifest.nativeCollectionPages.size() == 1);
+		auto page = validation.manifest.nativeCollectionPages.front();
+		assert(page.id == "appearances" && page.order == 100);
+
+		auto malformed = NativeCollectionsManifest();
+		malformed["nativeCollectionPages"][0].erase("order");
+		Save(path, malformed);
+		assert(!ContentPackage(path).Validate().valid);
+		auto duplicate = NativeCollectionsManifest();
+		duplicate["nativeCollectionPages"].push_back(
+			duplicate["nativeCollectionPages"][0]);
+		Save(path, duplicate);
+		auto rejected = ContentPackage(path).Validate();
+		assert(!rejected.valid);
+		assert(rejected.error.find("Duplicate Collections page id") !=
+			std::string::npos);
+
+		std::vector<ContentFrameXml::NativeCollectionPage> pages = {
+			{"toys", "Toys", 300, "ToysFrame", "Interface/FrameXML/Toys.xml", "", ""},
+			{"appearances", "Appearances", 100, "NativeTransmogCollectionsFrame",
+			 "Interface/FrameXML/NativeTransmogFrame.xml",
+			 "NativeTransmog_OpenCollections", "NativeTransmog_CloseCollections"}};
+		std::string collections, reversed;
+		assert(ContentFrameXml::ComposeCollectionsLua(pages, collections, error));
+		if (argc > 2) {
+			std::ofstream output(argv[2], std::ios::binary | std::ios::trunc);
+			assert(output.is_open());
+			output.write(collections.data(),
+				static_cast<std::streamsize>(collections.size()));
+			assert(output.good());
+		}
+		std::reverse(pages.begin(), pages.end());
+		assert(ContentFrameXml::ComposeCollectionsLua(pages, reversed, error));
+		assert(collections == reversed);
+		assert(collections.find("ContentManagerCollectionsMicroButton") != std::string::npos);
+		assert(collections.find("ContentManagerCollections.tga") == std::string::npos);
+		assert(collections.find("Browse collected appearances") != std::string::npos);
+		assert(collections.find("name=\"Appearances\"") < collections.find("name=\"Toys\""));
+
+		ContentFrameXml::ResourceSelection resources = {
+			ContentFrameXml::GeneratedResource::CollectionsController,
+			ContentFrameXml::GeneratedResource::CollectionsIcon};
+		auto targets = ContentFrameXml::Targets(resources);
+		assert(targets.size() == 3);
+		assert(std::find(targets.begin(), targets.end(),
+			ContentFrameXml::CollectionsLuaTarget()) != targets.end());
+		assert(std::find(targets.begin(), targets.end(),
+			ContentFrameXml::CollectionsIconTarget()) != targets.end());
+		std::vector<ContentFrameXml::LoadEntry> collectionLoads = {{
+			"Interface/FrameXML/NativeTransmogFrame.xml",
+			ContentFrameXml::CollectionsLuaTarget()}};
+		std::string collectionToc;
+		assert(ContentFrameXml::ComposeToc(StockToc(), collectionLoads,
+			resources, collectionToc, error));
+		assert(collectionToc.find("ContentManagerCollections.lua") <
+			collectionToc.find("NativeTransmogFrame.xml"));
+
+		auto icon = ContentFrameXml::ComposeCollectionsIcon();
+		assert(icon == ContentFrameXml::ComposeCollectionsIcon());
+		assert(icon.size() == 18 + 64 * 64 * 4);
+		assert(icon[2] == 2 && icon[16] == 32 && icon[17] == 0x28);
+		assert(std::count_if(icon.begin() + 18, icon.end(),
+			[](std::uint8_t value) { return value != 0; }) > 500);
 	}
 
     assert(ContentFrameXml::Stage(ContentFrameXml::GeneratedLuaTarget(), lua,
@@ -613,12 +702,18 @@ int main(int argc, char** argv)
         std::map<std::string, std::string> hashes = {
             {ContentFrameXml::GeneratedLuaTarget(),
              ContentBuildHash::Bytes({lua.begin(), lua.end()})},
+            {ContentFrameXml::NativePveLuaTarget(),
+             ContentBuildHash::Bytes({4, 5, 6})},
+            {ContentFrameXml::CollectionsLuaTarget(),
+             ContentBuildHash::Bytes({7, 8, 9})},
+            {ContentFrameXml::CollectionsIconTarget(),
+             ContentBuildHash::Bytes({10, 11, 12})},
             {ContentFrameXml::StockTocTarget(),
              ContentBuildHash::Bytes({toc.begin(), toc.end()})}};
         auto artifact = Parity(hashes);
         auto document = json::parse(artifact);
         assert(document.at("format") == 9);
-        assert(document.at("frameXmlSha256").size() == 2);
+        assert(document.at("frameXmlSha256").size() == 5);
         auto declared = ContentServerBundle::ReadParityAllocations(artifact, {});
         assert(declared.frameXmlSha256 == hashes);
         std::string errorText;

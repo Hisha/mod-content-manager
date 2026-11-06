@@ -223,7 +223,9 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 		ContentFrameXml::Declared declaredFloors;
 		std::vector<ContentFrameXml::LoadEntry> frameXmlLoadEntries;
 		std::vector<ContentFrameXml::NativePvePage> nativePvePages;
+		std::vector<ContentFrameXml::NativeCollectionPage> nativeCollectionPages;
 		std::map<std::string, std::string> nativePveOwners;
+		std::map<std::string, std::string> nativeCollectionOwners;
 		ContentPackageManifest const* stockTocOwner = nullptr;
 		std::filesystem::path stockTocPackage;
 		std::string floorError;
@@ -242,6 +244,13 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 					"Duplicate native PvE page id '" + page.id + "' from packages '" +
 					inserted.first->second + "' and '" + m.packageKey + "'");
 				nativePvePages.push_back(page);
+			}
+			for (auto const& page : m.nativeCollectionPages) {
+				auto inserted = nativeCollectionOwners.emplace(page.id, m.packageKey);
+				Require(inserted.second,
+					"Duplicate Collections page id '" + page.id + "' from packages '" +
+					inserted.first->second + "' and '" + m.packageKey + "'");
+				nativeCollectionPages.push_back(page);
 			}
 			if (!m.clientFrameXml) continue;
 			frameXmlLoadEntries.insert(frameXmlLoadEntries.end(),
@@ -271,6 +280,7 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 		}
 		bool composingFloorNames = !declaredFloors.empty();
 		bool composingNativePve = !nativePvePages.empty();
+		bool composingCollections = !nativeCollectionPages.empty();
 		std::sort(nativePvePages.begin(), nativePvePages.end(), [](auto const& left,
 			auto const& right) {
 			auto fold = [](std::string value) {
@@ -282,7 +292,28 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 			auto ln = fold(left.name), rn = fold(right.name);
 			return ln == rn ? left.id < right.id : ln < rn;
 		});
-		bool composingFrameXml = composingFloorNames || composingNativePve ||
+		std::sort(nativeCollectionPages.begin(), nativeCollectionPages.end(),
+			[](auto const& left, auto const& right) {
+				if (left.order != right.order) return left.order < right.order;
+				auto fold = [](std::string value) {
+					std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+						return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : static_cast<char>(c);
+					});
+					return value;
+				};
+				auto ln = fold(left.name), rn = fold(right.name);
+				return ln == rn ? left.id < right.id : ln < rn;
+			});
+		ContentFrameXml::ResourceSelection frameXmlResources;
+		if (composingFloorNames)
+			frameXmlResources.insert(ContentFrameXml::GeneratedResource::FloorNames);
+		if (composingNativePve)
+			frameXmlResources.insert(ContentFrameXml::GeneratedResource::NativePve);
+		if (composingCollections) {
+			frameXmlResources.insert(ContentFrameXml::GeneratedResource::CollectionsController);
+			frameXmlResources.insert(ContentFrameXml::GeneratedResource::CollectionsIcon);
+		}
+		bool composingFrameXml = !frameXmlResources.empty() ||
 			!frameXmlLoadEntries.empty();
 		if (composingFrameXml) {
 			Require(manager.GetClientBuild() == 12340,
@@ -293,8 +324,7 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 			for (auto const& owner : owners) cumulativeTargets.insert(owner.first);
 			Require(ContentFrameXml::ValidateTargets(frameXmlLoadEntries,
 				cumulativeTargets, floorError), floorError);
-			for (auto const &target : ContentFrameXml::Targets(composingFloorNames,
-				composingNativePve)) {
+			for (auto const &target : ContentFrameXml::Targets(frameXmlResources)) {
 				auto key = Fold(target);
 				auto conflict = owners.find(key);
 				Require(conflict == owners.end(),
@@ -987,7 +1017,7 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 		for (auto const &table : WorldMapDbcTables())
 			if (composingWorldMap[table]) ++worldMapFileCount;
 		std::size_t frameXmlFileCount = composingFrameXml
-			? ContentFrameXml::Targets(composingFloorNames, composingNativePve).size() : 0;
+			? ContentFrameXml::Targets(frameXmlResources).size() : 0;
 		Require(result.fileCount + (composingItem ? 1 : 0) +
 						(composingCurrency ? 1 : 0) +
 						(composingCategory ? 1 : 0) + (composingCost ? 1 : 0) + (composingSpell ? 1 : 0) +
@@ -1225,9 +1255,29 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 						ContentFrameXml::NativePveLuaTarget()).generic_string(),
 					frameXmlHashes[ContentFrameXml::NativePveLuaTarget()], error), error);
 			}
+			if (composingCollections) {
+				std::string generated;
+				Require(ContentFrameXml::ComposeCollectionsLua(nativeCollectionPages,
+					generated, error), "Could not generate Collections menu: " + error);
+				Require(ContentFrameXml::Stage(ContentFrameXml::CollectionsLuaTarget(),
+					generated, result.workspace, error),
+					"Could not stage Collections menu: " + error);
+				Require(ContentBuildHash::Calculate(
+					result.workspace / std::filesystem::path(
+						ContentFrameXml::CollectionsLuaTarget()).generic_string(),
+					frameXmlHashes[ContentFrameXml::CollectionsLuaTarget()], error), error);
+				auto icon = ContentFrameXml::ComposeCollectionsIcon();
+				Require(ContentFrameXml::Stage(ContentFrameXml::CollectionsIconTarget(),
+					icon, result.workspace, error),
+					"Could not stage Collections icon: " + error);
+				Require(ContentBuildHash::Calculate(
+					result.workspace / std::filesystem::path(
+						ContentFrameXml::CollectionsIconTarget()).generic_string(),
+					frameXmlHashes[ContentFrameXml::CollectionsIconTarget()], error), error);
+			}
 			std::string toc;
 			Require(ContentFrameXml::ComposeToc(stockToc, frameXmlLoadEntries,
-				composingFloorNames, composingNativePve, toc, error),
+				frameXmlResources, toc, error),
 				"Could not generate FrameXML.toc: " + error);
 			Require(ContentFrameXml::Stage(ContentFrameXml::StockTocTarget(), toc,
 				result.workspace, error),

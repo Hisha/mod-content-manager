@@ -1937,8 +1937,9 @@ ContentPackageValidationResult ContentPackage::Validate() const {
 		if (result.manifest.schema < 3 &&
 			(manifest.contains("clientFrameXml") ||
 			 manifest.contains("nativePvePages") ||
+			 manifest.contains("nativeCollectionPages") ||
 			 DeclaredFloorNames(result.manifest.worldMaps))) {
-			result.error = "worldMaps floorNames, clientFrameXml, and nativePvePages require Schema 3";
+			result.error = "worldMaps floorNames, clientFrameXml, nativePvePages, and nativeCollectionPages require Schema 3";
 			return result;
 		}
 		if (manifest.contains("clientFrameXml") &&
@@ -2013,6 +2014,78 @@ ContentPackageValidationResult ContentPackage::Validate() const {
 					return result;
 				}
 				result.manifest.nativePvePages.push_back(std::move(page));
+			}
+		}
+		if (manifest.contains("nativeCollectionPages")) {
+			if (result.manifest.schema < 3) {
+				result.error = "nativeCollectionPages requires Schema 3";
+				return result;
+			}
+			if (!manifest["nativeCollectionPages"].is_array() ||
+				manifest["nativeCollectionPages"].empty()) {
+				result.error = "'nativeCollectionPages' must be a non-empty array";
+				return result;
+			}
+			std::set<std::string> ids;
+			for (auto const& declaration : manifest["nativeCollectionPages"]) {
+				std::string offending;
+				if (!declaration.is_object() ||
+					!ClosedKeys(declaration,
+						{"id", "name", "order", "frame", "loadTarget", "onShow", "onHide"},
+						offending) ||
+					!declaration.contains("id") || !declaration["id"].is_string() ||
+					!declaration.contains("name") || !declaration["name"].is_string() ||
+					!declaration.contains("order") || !declaration["order"].is_number_unsigned() ||
+					declaration["order"].get<std::uint64_t>() > 1000000 ||
+					!declaration.contains("frame") || !declaration["frame"].is_string() ||
+					!declaration.contains("loadTarget") || !declaration["loadTarget"].is_string() ||
+					(declaration.contains("onShow") && !declaration["onShow"].is_string()) ||
+					(declaration.contains("onHide") && !declaration["onHide"].is_string())) {
+					result.error = "Malformed nativeCollectionPages declaration" +
+						(offending.empty() ? std::string() : ": unsupported field " + offending);
+					return result;
+				}
+				ContentNativeCollectionPage page{
+					declaration["id"].get<std::string>(),
+					declaration["name"].get<std::string>(),
+					declaration["order"].get<std::uint32_t>(),
+					declaration["frame"].get<std::string>(),
+					declaration["loadTarget"].get<std::string>(),
+					declaration.value("onShow", std::string()),
+					declaration.value("onHide", std::string())};
+				if (!ValidSymbol(page.id) || page.name.empty() || page.name.size() > 48 ||
+					!ValidLuaGlobal(page.frame) ||
+					(!page.onShow.empty() && !ValidLuaGlobal(page.onShow)) ||
+					(!page.onHide.empty() && !ValidLuaGlobal(page.onHide))) {
+					result.error = "Invalid Collections page id, name, frame, or callback: " + page.id;
+					return result;
+				}
+				try { page.loadTarget = ContentBuildPaths::Target(page.loadTarget); }
+				catch (std::exception const& e) {
+					result.error = "Invalid Collections page loadTarget: " + std::string(e.what());
+					return result;
+				}
+				auto folded = ContentBuildPaths::Fold(page.loadTarget);
+				auto owned = std::any_of(result.manifest.content.begin(),
+					result.manifest.content.end(), [&](auto const& entry) {
+						return ContentBuildPaths::Fold(ContentBuildPaths::Target(entry.target)) == folded;
+					});
+				auto loaded = result.manifest.clientFrameXml &&
+					std::any_of(result.manifest.clientFrameXml->loadEntries.begin(),
+						result.manifest.clientFrameXml->loadEntries.end(), [&](auto const& entry) {
+							return ContentBuildPaths::Fold(entry.target) == folded;
+						});
+				if (!owned || !loaded) {
+					result.error = "Collections page '" + page.id +
+						"' loadTarget must be package-owned and present in clientFrameXml.loadEntries: " +
+						page.loadTarget;
+					return result;
+				}
+				if (!ids.insert(page.id).second) {
+					result.error = "Duplicate Collections page id in package: " + page.id;
+					return result;
+				}
+				result.manifest.nativeCollectionPages.push_back(std::move(page));
 			}
 		}
 		for (auto const& package : result.manifest.frameForgeWowUi) {
@@ -2179,6 +2252,7 @@ ContentPackage::StageInto(std::filesystem::path const &stagingDirectory,
 			actual.clientRequirements == expected.clientRequirements &&
 			actual.clientFrameXml == expected.clientFrameXml &&
 			actual.nativePvePages == expected.nativePvePages &&
+			actual.nativeCollectionPages == expected.nativeCollectionPages &&
 			actual.frameForgeWowUi == expected.frameForgeWowUi &&
 			actual.itemRows == expected.itemRows &&
 			actual.serverItemRows == expected.serverItemRows &&
