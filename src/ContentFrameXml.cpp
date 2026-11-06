@@ -467,7 +467,7 @@ bool ContentFrameXml::ComposeCollectionsLua(
         " if selectedId~=id then hidePage(registry[selectedId]) end; selectedId=id; frame:Show(); if not invoke(page.onShow,page) then frame:Hide(); return false end\n"
         " for index,candidate in ipairs(ordered) do if candidate.id==id and PanelTemplates_SetTab then PanelTemplates_SetTab(host,index) end end; return true\n"
         "end\n"
-        "local function rebuildTabs() sortPages(); local count=#ordered; for index,page in ipairs(ordered) do local tab=tabs[index] or CreateFrame(\"Button\",\"ContentManagerCollectionsTab\"..index,host,\"CharacterFrameTabButtonTemplate\"); tabs[index]=tab; tab:SetID(index); tab:SetText(page.name); tab:ClearAllPoints(); if index==1 then tab:SetPoint(\"BOTTOMLEFT\",host,\"BOTTOMLEFT\",22,-26) else tab:SetPoint(\"LEFT\",tabs[index-1],\"RIGHT\",-15,0) end local id=page.id; tab:SetScript(\"OnClick\",function() ContentManagerCollections_SelectPage(id) end); tab:Show(); if PanelTemplates_TabResize then PanelTemplates_TabResize(tab,0) end end for index=count+1,#tabs do tabs[index]:Hide() end host.numTabs=count; if PanelTemplates_SetNumTabs then PanelTemplates_SetNumTabs(host,count) end end\n"
+        "local function rebuildTabs() sortPages(); local count=#ordered; for index,page in ipairs(ordered) do local tab=tabs[index] or CreateFrame(\"Button\",\"ContentManagerCollectionsFrameTab\"..index,host,\"CharacterFrameTabButtonTemplate\"); tabs[index]=tab; tab:SetID(index); tab:SetText(page.name); tab:ClearAllPoints(); if index==1 then tab:SetPoint(\"BOTTOMLEFT\",host,\"BOTTOMLEFT\",22,-26) else tab:SetPoint(\"LEFT\",tabs[index-1],\"RIGHT\",-15,0) end local id=page.id; tab:SetScript(\"OnClick\",function() ContentManagerCollections_SelectPage(id) end); tab:Show(); if PanelTemplates_TabResize then PanelTemplates_TabResize(tab,0) end end for index=count+1,#tabs do tabs[index]:Hide() end host.numTabs=count; if PanelTemplates_SetNumTabs then PanelTemplates_SetNumTabs(host,count) end end\n"
         "function ContentManager_RegisterCollectionPage(page) if type(page)~=\"table\" or type(page.id)~=\"string\" or type(page.name)~=\"string\" or type(page.frame)~=\"string\" or type(page.order)~=\"number\" or page.id==\"\" or page.name==\"\" or page.frame==\"\" then report(\"invalid page registration\"); return false end if registry[page.id] then report(\"duplicate page id '\"..page.id..\"'\"); return false end registry[page.id]=page; if initialized then rebuildTabs() end; return true end\n";
 
     for (auto const& page : orderedPages)
@@ -486,10 +486,10 @@ bool ContentFrameXml::ComposeCollectionsLua(
         "local parent=MainMenuBarArtFrame or UIParent\n"
         "local button=CreateFrame(\"Button\",\"ContentManagerCollectionsMicroButton\",parent)\n"
         "button:SetWidth(28); button:SetHeight(36); button:SetFrameStrata(\"MEDIUM\"); button.tooltipText=\"Collections\"\n"
-        "local icon=button:CreateTexture(nil,\"ARTWORK\"); icon:SetAllPoints(button); icon:SetTexture(\"Interface\\\\Buttons\\\\ContentManagerCollections\")\n"
+        "local icon=button:CreateTexture(nil,\"ARTWORK\"); icon:SetWidth(28); icon:SetHeight(28); icon:SetPoint(\"CENTER\",button,\"CENTER\",0,0); icon:SetTexture(\"Interface\\\\Buttons\\\\ContentManagerCollections\")\n"
         "button:SetHighlightTexture(\"Interface\\\\Buttons\\\\UI-MicroButton-Hilight\",\"ADD\")\n"
-        "button:SetScript(\"OnMouseDown\",function() icon:ClearAllPoints(); icon:SetPoint(\"TOPLEFT\",1,-1); icon:SetPoint(\"BOTTOMRIGHT\",1,-1) end)\n"
-        "button:SetScript(\"OnMouseUp\",function() icon:SetAllPoints(button) end)\n"
+        "button:SetScript(\"OnMouseDown\",function() icon:ClearAllPoints(); icon:SetPoint(\"CENTER\",button,\"CENTER\",1,-1) end)\n"
+        "button:SetScript(\"OnMouseUp\",function() icon:ClearAllPoints(); icon:SetPoint(\"CENTER\",button,\"CENTER\",0,0) end)\n"
         "button:SetScript(\"OnEnter\",function(self) GameTooltip:SetOwner(self,\"ANCHOR_RIGHT\"); GameTooltip:SetText(\"Collections\",1,1,1); GameTooltip:AddLine(\"Browse collected appearances\",.8,.8,.8,true); GameTooltip:Show() end)\n"
         "button:SetScript(\"OnLeave\",function() GameTooltip:Hide() end)\n"
         "button:SetScript(\"OnClick\",function() if host:IsShown() then host:Hide() else host:Show() end end)\n"
