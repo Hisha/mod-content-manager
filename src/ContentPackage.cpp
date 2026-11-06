@@ -45,6 +45,18 @@ bool ValidPackageKey(std::string const& value) {
     }
 }
 
+bool ValidLuaGlobal(std::string const& value) {
+    if (value.empty() || value.size() > 128 ||
+        !((value[0] >= 'A' && value[0] <= 'Z') ||
+          (value[0] >= 'a' && value[0] <= 'z') || value[0] == '_'))
+        return false;
+    for (char c : value)
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+              (c >= '0' && c <= '9') || c == '_'))
+            return false;
+    return true;
+}
+
 bool IsSafeRelativePath(std::string const &value) {
 	try {
 		ContentBuildPaths::Target(value);
@@ -1924,8 +1936,9 @@ ContentPackageValidationResult ContentPackage::Validate() const {
 			return result;
 		if (result.manifest.schema < 3 &&
 			(manifest.contains("clientFrameXml") ||
+			 manifest.contains("nativePvePages") ||
 			 DeclaredFloorNames(result.manifest.worldMaps))) {
-			result.error = "worldMaps floorNames and clientFrameXml require Schema 3";
+			result.error = "worldMaps floorNames, clientFrameXml, and nativePvePages require Schema 3";
 			return result;
 		}
 		if (manifest.contains("clientFrameXml") &&
@@ -1933,6 +1946,75 @@ ContentPackageValidationResult ContentPackage::Validate() const {
 								result.manifest.clientFrameXml.emplace(),
 								result.error))
 			return result;
+		if (manifest.contains("nativePvePages")) {
+			if (result.manifest.schema < 3) {
+				result.error = "nativePvePages requires Schema 3";
+				return result;
+			}
+			if (!manifest["nativePvePages"].is_array() ||
+				manifest["nativePvePages"].empty()) {
+				result.error = "'nativePvePages' must be a non-empty array";
+				return result;
+			}
+			std::set<std::string> ids;
+			for (auto const& declaration : manifest["nativePvePages"]) {
+				std::string offending;
+				if (!declaration.is_object() ||
+					!ClosedKeys(declaration,
+						{"id", "name", "frame", "loadTarget", "onShow", "onHide"},
+						offending) ||
+					!declaration.contains("id") || !declaration["id"].is_string() ||
+					!declaration.contains("name") || !declaration["name"].is_string() ||
+					!declaration.contains("frame") || !declaration["frame"].is_string() ||
+					!declaration.contains("loadTarget") ||
+					!declaration["loadTarget"].is_string() ||
+					(declaration.contains("onShow") && !declaration["onShow"].is_string()) ||
+					(declaration.contains("onHide") && !declaration["onHide"].is_string())) {
+					result.error = "Malformed nativePvePages declaration" +
+						(offending.empty() ? std::string() : ": unsupported field " + offending);
+					return result;
+				}
+				ContentNativePvePage page{declaration["id"].get<std::string>(),
+					declaration["name"].get<std::string>(),
+					declaration["frame"].get<std::string>(),
+					declaration["loadTarget"].get<std::string>(),
+					declaration.value("onShow", std::string()),
+					declaration.value("onHide", std::string())};
+				if (!ValidSymbol(page.id) || page.name.empty() || page.name.size() > 48 ||
+					!ValidLuaGlobal(page.frame) ||
+					(!page.onShow.empty() && !ValidLuaGlobal(page.onShow)) ||
+					(!page.onHide.empty() && !ValidLuaGlobal(page.onHide))) {
+					result.error = "Invalid native PvE page id, name, frame, or callback: " + page.id;
+					return result;
+				}
+				try { page.loadTarget = ContentBuildPaths::Target(page.loadTarget); }
+				catch (std::exception const& e) {
+					result.error = "Invalid native PvE page loadTarget: " + std::string(e.what());
+					return result;
+				}
+				auto folded = ContentBuildPaths::Fold(page.loadTarget);
+				auto owned = std::any_of(result.manifest.content.begin(),
+					result.manifest.content.end(), [&](auto const& entry) {
+						return ContentBuildPaths::Fold(ContentBuildPaths::Target(entry.target)) == folded;
+					});
+				auto loaded = result.manifest.clientFrameXml &&
+					std::any_of(result.manifest.clientFrameXml->loadEntries.begin(),
+						result.manifest.clientFrameXml->loadEntries.end(), [&](auto const& entry) {
+							return ContentBuildPaths::Fold(entry.target) == folded;
+						});
+				if (!owned || !loaded) {
+					result.error = "Native PvE page '" + page.id +
+						"' loadTarget must be package-owned and present in clientFrameXml.loadEntries: " +
+						page.loadTarget;
+					return result;
+				}
+				if (!ids.insert(page.id).second) {
+					result.error = "Duplicate native PvE page id in package: " + page.id;
+					return result;
+				}
+				result.manifest.nativePvePages.push_back(std::move(page));
+			}
+		}
 		for (auto const& package : result.manifest.frameForgeWowUi) {
 			if (!result.manifest.clientFrameXml) {
 				result.error = "frameForgeWowUi layoutTarget requires clientFrameXml loadEntries";
@@ -2096,6 +2178,7 @@ ContentPackage::StageInto(std::filesystem::path const &stagingDirectory,
 			actual.content.size() == expected.content.size() &&
 			actual.clientRequirements == expected.clientRequirements &&
 			actual.clientFrameXml == expected.clientFrameXml &&
+			actual.nativePvePages == expected.nativePvePages &&
 			actual.frameForgeWowUi == expected.frameForgeWowUi &&
 			actual.itemRows == expected.itemRows &&
 			actual.serverItemRows == expected.serverItemRows &&

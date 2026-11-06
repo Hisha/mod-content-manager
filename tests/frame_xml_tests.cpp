@@ -119,7 +119,12 @@ json NativeHuntsManifest()
              {"target", "Interface/FrameXML/NativeHuntsFrame.lua"}}})},
         {"clientFrameXml", ClientFrameXml(json::array({
             {{"target", "Interface/FrameXML/NativeHuntsFrame.xml"},
-             {"after", "Interface/FrameXML/LFDFrame.xml"}}}))}};
+             {"after", ContentFrameXml::NativePveLuaTarget()}}}))},
+        {"nativePvePages", json::array({json{
+            {"id", "hunts"}, {"name", "Hunts"},
+            {"frame", "NativeHuntsFrame"},
+            {"loadTarget", "Interface/FrameXML/NativeHuntsFrame.xml"},
+            {"onShow", "NativeHuntsFrame_OnPveShow"}}})}};
 }
 
 // The parity writer and verifier take their whole context positionally; these
@@ -153,7 +158,7 @@ bool Verify(std::string const& artifact, std::string& error,
 }
 }
 
-int main()
+int main(int argc, char** argv)
 {
     auto path = std::filesystem::temp_directory_path() / "content-frame-xml-test.epf";
     auto work = std::filesystem::temp_directory_path() / "content-frame-xml-work";
@@ -188,7 +193,7 @@ int main()
         assert(validation.manifest.clientFrameXml->loadEntries.size() == 1);
         auto const& entry = validation.manifest.clientFrameXml->loadEntries.front();
         assert(entry.target == "Interface/FrameXML/NativeHuntsFrame.xml");
-        assert(entry.after == "Interface/FrameXML/LFDFrame.xml");
+        assert(entry.after == ContentFrameXml::NativePveLuaTarget());
         assert(validation.manifest.clientRequirements ==
                std::vector<std::string>{ContentClientRequirement::ProtectedFrameXml});
     }
@@ -507,7 +512,85 @@ int main()
         assert(validation.error.find("case-alias") != std::string::npos);
     }
 
+    // Native page definitions fail validation before a build when their page
+    // target is missing or when a package repeats an ID.
+    {
+        auto missing = NativeHuntsManifest();
+        missing["nativePvePages"][0]["loadTarget"] =
+            "Interface/FrameXML/MissingPage.xml";
+        Save(path, missing);
+        auto validation = ContentPackage(path).Validate();
+        assert(!validation.valid);
+        assert(validation.error.find("package-owned") != std::string::npos);
+
+        auto duplicate = NativeHuntsManifest();
+        duplicate["nativePvePages"].push_back(duplicate["nativePvePages"][0]);
+        Save(path, duplicate);
+        validation = ContentPackage(path).Validate();
+        assert(!validation.valid);
+        assert(validation.error.find("Duplicate native PvE page id") !=
+               std::string::npos);
+    }
+
     // 17. Staging writes under the workspace and refuses to overwrite.
+	// Native PvE declarations are package-owned, generate deterministic
+	// alphabetical registration, and load the shared controller before pages.
+	{
+		Save(path, NativeHuntsManifest());
+		auto validation = ContentPackage(path).Validate();
+		assert(validation.valid);
+		assert(validation.manifest.nativePvePages.size() == 1);
+		std::vector<ContentFrameXml::NativePvePage> pages = {
+			{"hunts", "Hunts", "NativeHuntsFrame",
+			 "Interface/FrameXML/NativeHuntsFrame.xml",
+			 "NativeHuntsFrame_OnPveShow", "NativeHuntsFrame_OnPveHide"},
+			{"appearances", "Appearances", "NativeTransmogFrame",
+			 "Interface/FrameXML/NativeTransmogFrame.xml",
+			 "NativeTransmog_OpenCollections", ""}};
+		std::sort(pages.begin(), pages.end(), [](auto const& a, auto const& b) {
+			return a.name < b.name;
+		});
+		std::string pve;
+		assert(ContentFrameXml::ComposeNativePveLua(pages, pve, error));
+		if (argc > 1) {
+			std::ofstream output(argv[1], std::ios::binary | std::ios::trunc);
+			assert(output.is_open());
+			output.write(pve.data(), static_cast<std::streamsize>(pve.size()));
+			assert(output.good());
+		}
+		auto appearances = pve.find("name=\"Appearances\"");
+		auto hunts = pve.find("name=\"Hunts\"");
+		assert(appearances != std::string::npos && appearances < hunts);
+		assert(pve.find("duplicate page id") != std::string::npos);
+		assert(pve.find("missing frame") != std::string::npos);
+		assert(pve.find("Player vs. Environment") != std::string::npos);
+		auto reversed = pages;
+		std::reverse(reversed.begin(), reversed.end());
+		std::string reversePve;
+		assert(ContentFrameXml::ComposeNativePveLua(reversed, reversePve, error));
+		assert(reversePve == pve);
+		auto huntsOnly = std::vector<ContentFrameXml::NativePvePage>{pages.back()};
+		std::string regenerated;
+		assert(ContentFrameXml::ComposeNativePveLua(huntsOnly, regenerated, error));
+		assert(regenerated.find("name=\"Appearances\"") == std::string::npos);
+		assert(regenerated.find("name=\"Hunts\"") != std::string::npos);
+		pages.push_back(pages.back());
+		assert(!ContentFrameXml::ComposeNativePveLua(pages, pve, error));
+
+		std::vector<ContentFrameXml::LoadEntry> loads = {{
+			"Interface/FrameXML/NativeHuntsFrame.xml",
+			ContentFrameXml::NativePveLuaTarget()}};
+		std::string pveToc;
+		assert(ContentFrameXml::ComposeToc(StockToc(), loads, false, true,
+			pveToc, error));
+		auto manager = pveToc.find("ContentManagerNativePve.lua");
+		auto page = pveToc.find("NativeHuntsFrame.xml");
+		assert(manager != std::string::npos && manager < page);
+		assert(ContentFrameXml::Targets(false, true) ==
+			(std::vector<std::string>{ContentFrameXml::NativePveLuaTarget(),
+				ContentFrameXml::StockTocTarget()}));
+	}
+
     assert(ContentFrameXml::Stage(ContentFrameXml::GeneratedLuaTarget(), lua,
                                   work, error));
     auto staged = work / std::filesystem::path(

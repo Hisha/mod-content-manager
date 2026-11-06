@@ -4,6 +4,7 @@ import argparse
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
 parser = argparse.ArgumentParser()
@@ -131,5 +132,12 @@ with tempfile.TemporaryDirectory(prefix='content-phase4-tests-') as directory:
             for option in [args.world_map_baseline_dir, args.world_map_golden_dir,
                            args.world_map_artwork, args.world_map_release_epf]:
                 if option: inputs.append(str(option.resolve()))
+        if name == 'frame_xml':
+            inputs.append(str(Path(directory) / 'native-pve.lua'))
         subprocess.run([str(binary), *inputs], check=True)
+        if name == 'frame_xml':
+            subprocess.run([
+                sys.executable, str(root / 'tests/native_pve_runtime_tests.py'),
+                str(Path(directory) / 'native-pve.lua')
+            ], check=True)
         print(name + ': PASS', flush=True)

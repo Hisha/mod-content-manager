@@ -222,6 +222,8 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 		// is a build conflict, not something to resolve silently.
 		ContentFrameXml::Declared declaredFloors;
 		std::vector<ContentFrameXml::LoadEntry> frameXmlLoadEntries;
+		std::vector<ContentFrameXml::NativePvePage> nativePvePages;
+		std::map<std::string, std::string> nativePveOwners;
 		ContentPackageManifest const* stockTocOwner = nullptr;
 		std::filesystem::path stockTocPackage;
 		std::string floorError;
@@ -234,6 +236,13 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 			if (!ContentFrameXml::Merge(packageFloors, m.packageKey,
 										declaredFloors, floorError))
 				throw std::runtime_error(floorError);
+			for (auto const& page : m.nativePvePages) {
+				auto inserted = nativePveOwners.emplace(page.id, m.packageKey);
+				Require(inserted.second,
+					"Duplicate native PvE page id '" + page.id + "' from packages '" +
+					inserted.first->second + "' and '" + m.packageKey + "'");
+				nativePvePages.push_back(page);
+			}
 			if (!m.clientFrameXml) continue;
 			frameXmlLoadEntries.insert(frameXmlLoadEntries.end(),
 				m.clientFrameXml->loadEntries.begin(),
@@ -261,7 +270,20 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 			}
 		}
 		bool composingFloorNames = !declaredFloors.empty();
-		bool composingFrameXml = composingFloorNames || !frameXmlLoadEntries.empty();
+		bool composingNativePve = !nativePvePages.empty();
+		std::sort(nativePvePages.begin(), nativePvePages.end(), [](auto const& left,
+			auto const& right) {
+			auto fold = [](std::string value) {
+				std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+					return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : static_cast<char>(c);
+				});
+				return value;
+			};
+			auto ln = fold(left.name), rn = fold(right.name);
+			return ln == rn ? left.id < right.id : ln < rn;
+		});
+		bool composingFrameXml = composingFloorNames || composingNativePve ||
+			!frameXmlLoadEntries.empty();
 		if (composingFrameXml) {
 			Require(manager.GetClientBuild() == 12340,
 					"FrameXML.toc composition supports only client build 12340");
@@ -271,7 +293,8 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 			for (auto const& owner : owners) cumulativeTargets.insert(owner.first);
 			Require(ContentFrameXml::ValidateTargets(frameXmlLoadEntries,
 				cumulativeTargets, floorError), floorError);
-			for (auto const &target : ContentFrameXml::Targets(composingFloorNames)) {
+			for (auto const &target : ContentFrameXml::Targets(composingFloorNames,
+				composingNativePve)) {
 				auto key = Fold(target);
 				auto conflict = owners.find(key);
 				Require(conflict == owners.end(),
@@ -1190,9 +1213,21 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 							ContentFrameXml::GeneratedLuaTarget()).generic_string(),
 						frameXmlHashes[ContentFrameXml::GeneratedLuaTarget()], error), error);
 			}
+			if (composingNativePve) {
+				std::string generated;
+				Require(ContentFrameXml::ComposeNativePveLua(nativePvePages, generated, error),
+					"Could not generate native PvE menu: " + error);
+				Require(ContentFrameXml::Stage(ContentFrameXml::NativePveLuaTarget(),
+					generated, result.workspace, error),
+					"Could not stage native PvE menu: " + error);
+				Require(ContentBuildHash::Calculate(
+					result.workspace / std::filesystem::path(
+						ContentFrameXml::NativePveLuaTarget()).generic_string(),
+					frameXmlHashes[ContentFrameXml::NativePveLuaTarget()], error), error);
+			}
 			std::string toc;
 			Require(ContentFrameXml::ComposeToc(stockToc, frameXmlLoadEntries,
-				composingFloorNames, toc, error),
+				composingFloorNames, composingNativePve, toc, error),
 				"Could not generate FrameXML.toc: " + error);
 			Require(ContentFrameXml::Stage(ContentFrameXml::StockTocTarget(), toc,
 				result.workspace, error),

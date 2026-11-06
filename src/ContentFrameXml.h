@@ -30,8 +30,10 @@ public:
     using Declared = std::map<std::string,
         std::map<std::string, std::map<std::uint32_t, std::string>>>;
     using LoadEntry = ContentFrameXmlLoadEntry;
+    using NativePvePage = ContentNativePvePage;
 
     static std::string const& GeneratedLuaTarget();
+    static std::string const& NativePveLuaTarget();
     static std::string const& StockTocTarget();
     // Stock Interface/FrameXML/FrameXML.toc line that declares where a modded
     // module is allowed to be added. The insertion is refused unless this exact
@@ -65,10 +67,18 @@ public:
     // so identical declarations always produce identical bytes.
     static bool ComposeLua(Declared const& floors, std::string& text,
         std::string& error);
+    // Deterministic build-wide native PvE controller. Pages are sorted by
+    // display name/id here so caller or package discovery order cannot leak.
+    static bool ComposeNativePveLua(std::vector<NativePvePage> const& pages,
+        std::string& text, std::string& error);
     // Stock TOC bytes with the optional generated floor-name module and all
     // package load entries inserted deterministically. Anchors may be stock or
     // contributed entries; duplicate/case-alias targets, missing or ambiguous
     // anchors, and dependency cycles fail closed.
+    static bool ComposeToc(std::vector<std::uint8_t> const& stock,
+        std::vector<LoadEntry> const& entries, bool includeGeneratedLua,
+        bool includeNativePve,
+        std::string& text, std::string& error);
     static bool ComposeToc(std::vector<std::uint8_t> const& stock,
         std::vector<LoadEntry> const& entries, bool includeGeneratedLua,
         std::string& text, std::string& error);
@@ -84,6 +94,7 @@ public:
     static bool Stage(std::string const& target, std::string const& text,
         std::filesystem::path const& workspace, std::string& error);
     // Cumulative targets this composer owns when any floor name is declared.
-    static std::vector<std::string> Targets(bool includeGeneratedLua = true);
+    static std::vector<std::string> Targets(bool includeGeneratedLua = true,
+        bool includeNativePve = false);
 };
 #endif

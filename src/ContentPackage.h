@@ -261,6 +261,23 @@ struct ContentClientFrameXml {
     }
 };
 
+// One native page contributed to Content Manager's shared Dungeon Finder/PvE
+// surface. `loadTarget` remains package-owned; the other names are resolved
+// lazily by the generated build-wide Lua controller after FrameXML has loaded.
+struct ContentNativePvePage {
+    std::string id;
+    std::string name;
+    std::string frame;
+    std::string loadTarget;
+    std::string onShow;
+    std::string onHide;
+    bool operator==(ContentNativePvePage const& o) const {
+        return id == o.id && name == o.name && frame == o.frame &&
+               loadTarget == o.loadTarget && onShow == o.onShow &&
+               onHide == o.onHide;
+    }
+};
+
 // One WorldMapArea.dbc row plus the floors and chunks of that area.
 //
 // `dungeonMapId` is a reference field, not an owned row: naming an ID here never
@@ -343,6 +360,9 @@ struct ContentPackageManifest {
     // Schema 3: the verified stock FrameXML.toc used by floor labels and/or
     // additive package load entries.
     std::optional<ContentClientFrameXml> clientFrameXml;
+    // Schema 3: additive native pages assembled into one deterministic PvE
+    // menu by Content Manager. Blizzard's Dungeon Finder is implicit.
+    std::vector<ContentNativePvePage> nativePvePages;
     // Schema 3 optional extension. Parsed declarations are retained for
     // diagnostics; their validated layout/texture outputs are also appended to
     // `content`, so the normal ownership, collision, staging and MPQ pipeline
