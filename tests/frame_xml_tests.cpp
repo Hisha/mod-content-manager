@@ -652,6 +652,10 @@ int main(int argc, char** argv)
 		assert(collections.find("ContentManagerCollectionsMicroButton") != std::string::npos);
 		assert(collections.find("ContentManagerCollections.tga") == std::string::npos);
 		assert(collections.find("Browse collected appearances") != std::string::npos);
+		assert(collections.find("icon:SetWidth(28); icon:SetHeight(28); icon:SetPoint(\"CENTER\",button,\"CENTER\",0,0)") != std::string::npos);
+		assert(collections.find("highlight:SetAllPoints(button)") != std::string::npos);
+		assert(collections.find("positionIcon(pressed)") != std::string::npos);
+		assert(collections.find("pressed and 1 or 0,pressed and -1 or 0") != std::string::npos);
 		assert(collections.find("name=\"Appearances\"") < collections.find("name=\"Toys\""));
 
 		ContentFrameXml::ResourceSelection resources = {
@@ -676,8 +680,22 @@ int main(int argc, char** argv)
 		assert(icon == ContentFrameXml::ComposeCollectionsIcon());
 		assert(icon.size() == 18 + 64 * 64 * 4);
 		assert(icon[2] == 2 && icon[16] == 32 && icon[17] == 0x28);
-		assert(std::count_if(icon.begin() + 18, icon.end(),
-			[](std::uint8_t value) { return value != 0; }) > 500);
+		assert(icon[12] == 64 && icon[13] == 0);
+		assert(icon[14] == 64 && icon[15] == 0);
+		int minX = 64, minY = 64, maxX = -1, maxY = -1;
+		std::size_t transparent = 0, opaque = 0;
+		for (int y = 0; y < 64; ++y)
+			for (int x = 0; x < 64; ++x) {
+				auto alpha = icon[18 + (y * 64 + x) * 4 + 3];
+				if (!alpha) { ++transparent; continue; }
+				++opaque;
+				minX = std::min(minX, x); maxX = std::max(maxX, x);
+				minY = std::min(minY, y); maxY = std::max(maxY, y);
+			}
+		assert(transparent > 0 && opaque > 500);
+		assert(minX == 6 && maxX == 57 && minY == 8 && maxY == 55);
+		assert(std::abs((minX + maxX) - 63) <= 1);
+		assert(std::abs((minY + maxY) - 63) <= 1);
 	}
 
     assert(ContentFrameXml::Stage(ContentFrameXml::GeneratedLuaTarget(), lua,

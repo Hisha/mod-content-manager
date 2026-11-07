@@ -487,9 +487,10 @@ bool ContentFrameXml::ComposeCollectionsLua(
         "local button=CreateFrame(\"Button\",\"ContentManagerCollectionsMicroButton\",parent)\n"
         "button:SetWidth(28); button:SetHeight(36); button:SetFrameStrata(\"MEDIUM\"); button.tooltipText=\"Collections\"\n"
         "local icon=button:CreateTexture(nil,\"ARTWORK\"); icon:SetWidth(28); icon:SetHeight(28); icon:SetPoint(\"CENTER\",button,\"CENTER\",0,0); icon:SetTexture(\"Interface\\\\Buttons\\\\ContentManagerCollections\")\n"
-        "button:SetHighlightTexture(\"Interface\\\\Buttons\\\\UI-MicroButton-Hilight\",\"ADD\")\n"
-        "button:SetScript(\"OnMouseDown\",function() icon:ClearAllPoints(); icon:SetPoint(\"CENTER\",button,\"CENTER\",1,-1) end)\n"
-        "button:SetScript(\"OnMouseUp\",function() icon:ClearAllPoints(); icon:SetPoint(\"CENTER\",button,\"CENTER\",0,0) end)\n"
+        "local highlight=button:CreateTexture(nil,\"HIGHLIGHT\"); highlight:SetAllPoints(button); highlight:SetTexture(\"Interface\\\\Buttons\\\\UI-MicroButton-Hilight\"); highlight:SetBlendMode(\"ADD\"); button:SetHighlightTexture(highlight)\n"
+        "local function positionIcon(pressed) icon:ClearAllPoints(); icon:SetPoint(\"CENTER\",button,\"CENTER\",pressed and 1 or 0,pressed and -1 or 0) end\n"
+        "button:SetScript(\"OnMouseDown\",function() positionIcon(true) end)\n"
+        "button:SetScript(\"OnMouseUp\",function() positionIcon(false) end)\n"
         "button:SetScript(\"OnEnter\",function(self) GameTooltip:SetOwner(self,\"ANCHOR_RIGHT\"); GameTooltip:SetText(\"Collections\",1,1,1); GameTooltip:AddLine(\"Browse collected appearances\",.8,.8,.8,true); GameTooltip:Show() end)\n"
         "button:SetScript(\"OnLeave\",function() GameTooltip:Hide() end)\n"
         "button:SetScript(\"OnClick\",function() if host:IsShown() then host:Hide() else host:Show() end end)\n"
@@ -513,29 +514,89 @@ std::vector<std::uint8_t> ContentFrameXml::ComposeCollectionsIcon()
         bytes[offset] = b; bytes[offset + 1] = g;
         bytes[offset + 2] = r; bytes[offset + 3] = a;
     };
+    auto lidEdge = [](int y) {
+        if (y <= 9) return 22;
+        if (y <= 11) return 17;
+        if (y <= 13) return 14;
+        if (y <= 15) return 11;
+        if (y <= 17) return 9;
+        return 7;
+    };
+    auto silhouette = [&](int x, int y) {
+        if (y >= 8 && y <= 29)
+        {
+            auto left = lidEdge(y);
+            return x >= left && x <= 63 - left;
+        }
+        if (y >= 26 && y <= 55)
+        {
+            // Clip the four extreme body corners without changing its exact,
+            // texture-centered 6..57 by 8..55 alpha bounds.
+            if ((y == 26 || y == 55) && (x == 6 || x == 57)) return false;
+            return x >= 6 && x <= 57;
+        }
+        return false;
+    };
+
+    // Paint a near-black outline first.  Subsequent inset layers produce a
+    // compact hand-painted chest with readable value groups at 24 pixels.
     for (int y = 0; y < height; ++y)
         for (int x = 0; x < width; ++x)
+            if (silhouette(x, y)) pixel(x, y, 28, 18, 14, 255);
+
+    // Curved wooden lid, with horizontal plank shading.
+    for (int y = 11; y <= 26; ++y)
+    {
+        auto left = lidEdge(y) + 3;
+        for (int x = left; x <= 63 - left; ++x)
         {
-            // A broad, open-topped U with rounded heels: a recognizable
-            // horseshoe at micro-button scale, with a dark forged outline.
-            auto dx = x - 31.5, dy = y - 30.0;
-            bool outer = (y >= 7 && y <= 43 && (x >= 9 && x <= 22 || x >= 42 && x <= 55)) ||
-                (y >= 30 && dx * dx + dy * dy <= 24 * 24);
-            bool hollow = y <= 38 && x >= 22 && x <= 42;
-            bool shape = outer && !hollow;
-            if (!shape) continue;
-            bool edge = x < 12 || x > 52 || y < 10 || y > 54 ||
-                (y < 40 && (x > 19 && x < 24 || x > 40 && x < 44));
-            std::uint8_t r = edge ? 82 : static_cast<std::uint8_t>(190 + (54 - y) / 3);
-            std::uint8_t g = edge ? 48 : static_cast<std::uint8_t>(122 + (54 - y) / 4);
-            std::uint8_t b = edge ? 18 : 35;
-            pixel(x, y, r, g, b, 255);
+            auto r = static_cast<std::uint8_t>(105 + (26 - y) * 3);
+            auto g = static_cast<std::uint8_t>(48 + (26 - y));
+            pixel(x, y, r, g, 24, 255);
         }
-    for (auto const& nail : std::vector<std::pair<int, int>>{{16,17},{48,17},{16,31},{48,31},{21,45},{43,45}})
-        for (int y = nail.second - 2; y <= nail.second + 2; ++y)
-            for (int x = nail.first - 2; x <= nail.first + 2; ++x)
-                if ((x-nail.first)*(x-nail.first)+(y-nail.second)*(y-nail.second) <= 4)
-                    pixel(x, y, 245, 221, 128, 255);
+    }
+    for (int x = 10; x <= 53; ++x)
+        pixel(x, 23, 68, 30, 18, 255);
+
+    // Dark wood body and two plank separators.
+    for (int y = 32; y <= 52; ++y)
+        for (int x = 9; x <= 54; ++x)
+            pixel(x, y, static_cast<std::uint8_t>(92 + (52 - y)),
+                  static_cast<std::uint8_t>(39 + (52 - y) / 3), 20, 255);
+    for (int x = 9; x <= 54; ++x)
+        for (int y : {39, 47}) pixel(x, y, 55, 27, 18, 255);
+
+    // Brass rim, corner straps, and central lid strap.  The dark shadow below
+    // the rim keeps the lid and body distinct after down-sampling.
+    for (int y = 27; y <= 31; ++y)
+        for (int x = 7; x <= 56; ++x)
+            pixel(x, y, y == 31 ? 105 : 202 + (29 - y) * 8,
+                  y == 31 ? 65 : 142 + (29 - y) * 5,
+                  y == 31 ? 24 : 40, 255);
+    for (int y = 18; y <= 27; ++y)
+        for (int x = 28; x <= 35; ++x)
+            pixel(x, y, x == 28 || x == 35 ? 112 : 205,
+                  x == 28 || x == 35 ? 70 : 142, 35, 255);
+    for (int y = 33; y <= 52; ++y)
+        for (int x : {10, 11, 16, 17, 46, 47, 52, 53})
+            pixel(x, y, (x == 10 || x == 17 || x == 46 || x == 53) ? 112 : 190,
+                  (x == 10 || x == 17 || x == 46 || x == 53) ? 68 : 126,
+                  31, 255);
+
+    // Bright blue sapphire clasp with a navy outline and a small icy glint.
+    for (int y = 32; y <= 45; ++y)
+        for (int x = 25; x <= 38; ++x)
+        {
+            auto dx = x < 32 ? 31 - x : x - 32;
+            auto dy = y < 38 ? 38 - y : y - 39;
+            if (dx + dy > 8) continue;
+            bool edge = dx + dy >= 7;
+            pixel(x, y, edge ? 18 : 30, edge ? 48 : 112,
+                  edge ? 91 : static_cast<std::uint8_t>(185 + (45 - y) * 4), 255);
+        }
+    pixel(29, 35, 155, 224, 255, 255);
+    pixel(30, 35, 105, 190, 255, 255);
+    pixel(29, 36, 105, 190, 255, 255);
     return bytes;
 }
 

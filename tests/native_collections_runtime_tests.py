@@ -18,7 +18,7 @@ lua.execute(r'''
 messages, UISpecialFrames = {}, {}
 DEFAULT_CHAT_FRAME = {AddMessage=function(_,message) table.insert(messages,message) end}
 local function Frame(name,parent)
- local frame={name=name,parent=parent,visible=false,scripts={},hooks={}}
+ local frame={name=name,parent=parent,visible=false,scripts={},hooks={},textures={}}
  function frame:SetWidth(v) self.width=v end
  function frame:SetHeight(v) self.height=v end
  function frame:SetPoint(...) self.point={...} end
@@ -30,6 +30,7 @@ local function Frame(name,parent)
  function frame:SetBackdrop(v) self.backdrop=v end
  function frame:SetAllPoints(v) self.allPoints=v or true end
  function frame:SetTexture(v) self.texture=v end
+ function frame:SetBlendMode(v) self.blendMode=v end
  function frame:SetHighlightTexture(v,m) self.highlight={v,m} end
  function frame:SetText(v) self.text=v end
  function frame:SetID(v) self.id=v end
@@ -38,7 +39,7 @@ local function Frame(name,parent)
  function frame:SetScript(k,v) self.scripts[k]=v end
  function frame:HookScript(k,v) self.hooks[k]=v end
  function frame:CreateFontString() return Frame(nil,self) end
- function frame:CreateTexture() return Frame(nil,self) end
+ function frame:CreateTexture() local texture=Frame(nil,self); table.insert(self.textures,texture); return texture end
  function frame:Show() self.visible=true; if self.scripts.OnShow then self.scripts.OnShow() end end
  function frame:Hide() self.visible=false; if self.scripts.OnHide then self.scripts.OnHide() end end
  return frame
@@ -61,9 +62,21 @@ assert g.ContentManagerCollectionsMicroButton.visible
 assert g.ContentManagerCollectionsMicroButton.point[2].name == "LFDMicroButton"
 assert g.MainMenuMicroButton.point[2].name == "ContentManagerCollectionsMicroButton"
 assert g.ContentManagerCollectionsFrame.numTabs == 2
-assert g.ContentManagerCollectionsTab1.text == "Appearances"
-assert g.ContentManagerCollectionsTab2.text == "Toys"
+assert g.ContentManagerCollectionsFrameTab1.text == "Appearances"
+assert g.ContentManagerCollectionsFrameTab2.text == "Toys"
 assert g.ContentManagerCollectionsMicroButton.tooltipText == "Collections"
+button = g.ContentManagerCollectionsMicroButton
+icon, highlight = button.textures[1], button.textures[2]
+assert button.width == 28 and button.height == 36
+assert icon.width == 28 and icon.height == 28
+assert icon.point[1] == "CENTER" and icon.point[2].name == button.name
+assert icon.point[3] == "CENTER" and icon.point[4] == 0 and icon.point[5] == 0
+assert highlight.allPoints.name == button.name
+assert highlight.blendMode == "ADD"
+button.scripts["OnMouseDown"]()
+assert icon.point[4] == 1 and icon.point[5] == -1
+button.scripts["OnMouseUp"]()
+assert icon.point[4] == 0 and icon.point[5] == 0
 
 lua.execute(r'''
 NativeTransmogCollectionsFrame=CreateFrame("Frame","NativeTransmogCollectionsFrame",ContentManagerCollectionsFrame)
@@ -78,7 +91,7 @@ assert g.NativeTransmogCollectionsFrame.visible
 assert not g.ToysFrame.visible
 assert g.appearancesShown == 1
 
-g.ContentManagerCollectionsTab2.scripts["OnClick"]()
+g.ContentManagerCollectionsFrameTab2.scripts["OnClick"]()
 assert not g.NativeTransmogCollectionsFrame.visible
 assert g.ToysFrame.visible
 assert g.appearancesHidden == 1
