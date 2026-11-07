@@ -23,6 +23,7 @@ local function Frame(name,parent)
  function frame:SetHeight(v) self.height=v end
  function frame:SetPoint(...) self.point={...} end
  function frame:ClearAllPoints() self.point=nil end
+ function frame:SetHitRectInsets(...) self.hitRectInsets={...} end
  function frame:SetFrameStrata(v) self.strata=v end
  function frame:SetToplevel(v) self.toplevel=v end
  function frame:SetMovable(v) self.movable=v end
@@ -31,7 +32,10 @@ local function Frame(name,parent)
  function frame:SetAllPoints(v) self.allPoints=v or true end
  function frame:SetTexture(v) self.texture=v end
  function frame:SetBlendMode(v) self.blendMode=v end
- function frame:SetHighlightTexture(v,m) self.highlight={v,m} end
+ function frame:SetNormalTexture(v) self.normalTexture=v end
+ function frame:SetPushedTexture(v) self.pushedTexture=v end
+ function frame:SetHighlightTexture(v,m) self.highlightTexture=v; self.highlightMode=m end
+ function frame:SetButtonState(v,locked) self.buttonState=v; self.buttonLocked=locked end
  function frame:SetText(v) self.text=v end
  function frame:SetID(v) self.id=v end
  function frame:GetName() return self.name end
@@ -66,17 +70,20 @@ assert g.ContentManagerCollectionsFrameTab1.text == "Appearances"
 assert g.ContentManagerCollectionsFrameTab2.text == "Toys"
 assert g.ContentManagerCollectionsMicroButton.tooltipText == "Collections"
 button = g.ContentManagerCollectionsMicroButton
-icon, highlight = button.textures[1], button.textures[2]
-assert button.width == 28 and button.height == 36
-assert icon.width == 28 and icon.height == 28
-assert icon.point[1] == "CENTER" and icon.point[2].name == button.name
-assert icon.point[3] == "CENTER" and icon.point[4] == 0 and icon.point[5] == 0
-assert highlight.allPoints.name == button.name
-assert highlight.blendMode == "ADD"
+icon = button.textures[1]
+assert button.width == 28 and button.height == 58
+assert list(button.hitRectInsets.values()) == [0, 0, 18, 0]
+assert button.normalTexture == r"Interface\Buttons\UI-MicroButtonCharacter-Up"
+assert button.pushedTexture == r"Interface\Buttons\UI-MicroButtonCharacter-Down"
+assert button.highlightTexture == r"Interface\Buttons\UI-MicroButton-Hilight"
+assert button.highlightMode == "ADD"
+assert icon.width == 20 and icon.height == 20
+assert icon.point[1] == "BOTTOM" and icon.point[2].name == button.name
+assert icon.point[3] == "BOTTOM" and icon.point[4] == 0 and icon.point[5] == 7
 button.scripts["OnMouseDown"]()
-assert icon.point[4] == 1 and icon.point[5] == -1
+assert icon.point[4] == 1 and icon.point[5] == 6
 button.scripts["OnMouseUp"]()
-assert icon.point[4] == 0 and icon.point[5] == 0
+assert icon.point[4] == 0 and icon.point[5] == 7
 
 lua.execute(r'''
 NativeTransmogCollectionsFrame=CreateFrame("Frame","NativeTransmogCollectionsFrame",ContentManagerCollectionsFrame)
@@ -87,6 +94,8 @@ function NativeTransmog_CloseCollections() appearancesHidden=appearancesHidden+1
 ''')
 g.ContentManagerCollectionsMicroButton.scripts["OnClick"]()
 assert g.ContentManagerCollectionsFrame.visible
+assert button.buttonState == "PUSHED" and button.buttonLocked
+assert icon.point[4] == 1 and icon.point[5] == 6
 assert g.NativeTransmogCollectionsFrame.visible
 assert not g.ToysFrame.visible
 assert g.appearancesShown == 1
@@ -95,6 +104,11 @@ g.ContentManagerCollectionsFrameTab2.scripts["OnClick"]()
 assert not g.NativeTransmogCollectionsFrame.visible
 assert g.ToysFrame.visible
 assert g.appearancesHidden == 1
+
+g.ContentManagerCollectionsMicroButton.scripts["OnClick"]()
+assert not g.ContentManagerCollectionsFrame.visible
+assert button.buttonState == "NORMAL"
+assert icon.point[4] == 0 and icon.point[5] == 7
 
 duplicate = lua.table_from({"id": "appearances", "name": "Other", "order": 1,
                             "frame": "OtherFrame"})

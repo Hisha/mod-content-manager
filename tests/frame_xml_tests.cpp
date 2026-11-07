@@ -651,11 +651,15 @@ int main(int argc, char** argv)
 		assert(collections == reversed);
 		assert(collections.find("ContentManagerCollectionsMicroButton") != std::string::npos);
 		assert(collections.find("ContentManagerCollections.tga") == std::string::npos);
-		assert(collections.find("Browse collected appearances") != std::string::npos);
-		assert(collections.find("icon:SetWidth(28); icon:SetHeight(28); icon:SetPoint(\"CENTER\",button,\"CENTER\",0,0)") != std::string::npos);
-		assert(collections.find("highlight:SetAllPoints(button)") != std::string::npos);
-		assert(collections.find("positionIcon(pressed)") != std::string::npos);
-		assert(collections.find("pressed and 1 or 0,pressed and -1 or 0") != std::string::npos);
+		assert(collections.find("button:SetWidth(28); button:SetHeight(58); button:SetHitRectInsets(0,0,18,0)") != std::string::npos);
+		assert(collections.find("button:SetNormalTexture(\"Interface\\\\Buttons\\\\UI-MicroButtonCharacter-Up\")") != std::string::npos);
+		assert(collections.find("button:SetPushedTexture(\"Interface\\\\Buttons\\\\UI-MicroButtonCharacter-Down\")") != std::string::npos);
+		assert(collections.find("button:SetHighlightTexture(\"Interface\\\\Buttons\\\\UI-MicroButton-Hilight\",\"ADD\")") != std::string::npos);
+		assert(collections.find("UI-MicroButton-LFG-Up") == std::string::npos);
+		assert(collections.find("UI-MicroButton-LFG-Down") == std::string::npos);
+		assert(collections.find("icon:SetWidth(20); icon:SetHeight(20); icon:SetPoint(\"BOTTOM\",button,\"BOTTOM\",0,7)") != std::string::npos);
+		assert(collections.find("positionIcon=function(pressed)") != std::string::npos);
+		assert(collections.find("pressed and 1 or 0,pressed and 6 or 7") != std::string::npos);
 		assert(collections.find("name=\"Appearances\"") < collections.find("name=\"Toys\""));
 
 		ContentFrameXml::ResourceSelection resources = {
