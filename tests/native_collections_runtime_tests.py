@@ -77,13 +77,19 @@ assert g.ContentManagerCollectionsFrameTab1.text == "Appearances"
 assert g.ContentManagerCollectionsFrameTab2.text == "Heirlooms"
 assert g.ContentManagerCollectionsFrameTab3.text == "Toys"
 assert g.ContentManagerCollectionsFrameTab1.point[1] == "BOTTOMLEFT"
-assert g.ContentManagerCollectionsFrameTab1.point[4] == 64
-assert g.ContentManagerCollectionsFrameTab1.point[5] == 4
+assert g.ContentManagerCollectionsFrameTab1.point[4] == 22
+assert g.ContentManagerCollectionsFrameTab1.point[5] == -26
+assert g.ContentManagerCollectionsFrameTab1.height == 32
+assert g.ContentManagerCollectionsFrameTab1.frameLevel == 3
 assert g.ContentManagerCollectionsEmblem.parent.name == "ContentManagerCollectionsFrame"
-assert g.ContentManagerCollectionsEmblem.frameLevel == 4
-assert g.ContentManagerCollectionsEmblem.textures[1].texture == r"Interface\Minimap\UI-Minimap-Background"
-assert g.ContentManagerCollectionsEmblem.textures[2].texture == r"Interface\Buttons\ContentManagerCollections"
-assert g.ContentManagerCollectionsEmblem.textures[3].texture == r"Interface\Minimap\MiniMap-TrackingBorder"
+assert g.ContentManagerCollectionsEmblem.width == 72
+assert g.ContentManagerCollectionsEmblem.height == 72
+assert g.ContentManagerCollectionsEmblem.point[4] == -12
+assert g.ContentManagerCollectionsEmblem.point[5] == 8
+assert g.ContentManagerCollectionsEmblem.frameLevel == 5
+assert len(g.ContentManagerCollectionsEmblem.textures) == 1
+assert g.ContentManagerCollectionsEmblem.textures[1].allPoints
+assert g.ContentManagerCollectionsEmblem.textures[1].texture == r"Interface\Buttons\ContentManagerCollections"
 assert g.ContentManagerCollectionsMicroButton.tooltipText == "Collections"
 button = g.ContentManagerCollectionsMicroButton
 icon = button.textures[1]
@@ -135,7 +141,7 @@ assert len(g.NativeTransmogCollectionsFrame.points) == 2
 assert g.NativeTransmogCollectionsFrame.points[1][1] == "TOPLEFT"
 assert g.NativeTransmogCollectionsFrame.points[1][2].name == "ContentManagerCollectionsFrame"
 assert g.NativeTransmogCollectionsFrame.points[2][1] == "BOTTOMRIGHT"
-assert g.NativeTransmogCollectionsFrame.points[2][5] == 32
+assert g.NativeTransmogCollectionsFrame.points[2][5] == 0
 
 g.ContentManagerCollectionsFrameTab2.scripts["OnClick"]()
 assert not g.NativeTransmogCollectionsFrame.visible

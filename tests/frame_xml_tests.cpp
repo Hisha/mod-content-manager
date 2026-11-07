@@ -641,6 +641,13 @@ int main(int argc, char** argv)
 		invalidSize["nativeCollectionPages"][0]["width"] = 319;
 		Save(path, invalidSize);
 		assert(!ContentPackage(path).Validate().valid);
+		auto unsupportedField = NativeCollectionsManifest();
+		unsupportedField["nativeCollectionPages"][0]["tabOffset"] = -26;
+		Save(path, unsupportedField);
+		auto unsupportedValidation = ContentPackage(path).Validate();
+		assert(!unsupportedValidation.valid);
+		assert(unsupportedValidation.error.find("unsupported field tabOffset") !=
+			std::string::npos);
 		auto duplicate = NativeCollectionsManifest();
 		duplicate["nativeCollectionPages"].push_back(
 			duplicate["nativeCollectionPages"][0]);
@@ -661,6 +668,13 @@ int main(int argc, char** argv)
 			 "Appearances", 704, 616}};
 		std::string collections, reversed;
 		assert(ContentFrameXml::ComposeCollectionsLua(pages, collections, error));
+		std::string singlePage;
+		assert(ContentFrameXml::ComposeCollectionsLua({pages.back()}, singlePage, error));
+		assert(singlePage.find("name=\"Appearances\"") != std::string::npos);
+		assert(singlePage.find("name=\"Heirlooms\"") == std::string::npos);
+		assert(singlePage.find("name=\"Toys\"") == std::string::npos);
+		assert(singlePage.find("tab:SetPoint(\"BOTTOMLEFT\",host,\"BOTTOMLEFT\",22,-26)") !=
+			std::string::npos);
 		if (argc > 2) {
 			std::ofstream output(argv[2], std::ios::binary | std::ios::trunc);
 			assert(output.is_open());
@@ -674,14 +688,17 @@ int main(int argc, char** argv)
 		assert(collections.find("Interface\\\\DialogFrame\\\\UI-DialogBox-Background-Dark") != std::string::npos);
 		assert(collections.find("Interface\\\\DialogFrame\\\\UI-DialogBox-Gold-Border") != std::string::npos);
 		assert(collections.find("Interface\\\\DialogFrame\\\\UI-DialogBox-Header") != std::string::npos);
-		assert(collections.find("DEFAULT_WIDTH,DEFAULT_HEIGHT,DEFAULT_ORDER,CONTENT_TOP,CONTENT_BOTTOM=940,590,1000,32,32") != std::string::npos);
+		assert(collections.find("DEFAULT_WIDTH,DEFAULT_HEIGHT,DEFAULT_ORDER,CONTENT_TOP,CONTENT_BOTTOM=940,590,1000,32,0") != std::string::npos);
 		assert(collections.find("title=\"Appearances\",width=704,height=616") != std::string::npos);
 		assert(collections.find("title:SetText(page.title and page.title~=\"\" and page.title or page.name)") != std::string::npos);
 		assert(collections.find("frame:ClearAllPoints(); frame:SetPoint(\"TOPLEFT\",host,\"TOPLEFT\",0,-CONTENT_TOP); frame:SetPoint(\"BOTTOMRIGHT\",host,\"BOTTOMRIGHT\",0,CONTENT_BOTTOM)") != std::string::npos);
 		assert(collections.find("ContentManagerCollectionsEmblem") != std::string::npos);
-		assert(collections.find("Interface\\\\Minimap\\\\UI-Minimap-Background") != std::string::npos);
-		assert(collections.find("Interface\\\\Minimap\\\\MiniMap-TrackingBorder") != std::string::npos);
-		assert(collections.find("tab:SetPoint(\"BOTTOMLEFT\",host,\"BOTTOMLEFT\",64,4)") != std::string::npos);
+		assert(collections.find("Interface\\\\Minimap\\\\UI-Minimap-Background") == std::string::npos);
+		assert(collections.find("Interface\\\\Minimap\\\\MiniMap-TrackingBorder") == std::string::npos);
+		assert(collections.find("emblem:SetWidth(72); emblem:SetHeight(72)") != std::string::npos);
+		assert(collections.find("tab:SetHeight(32); tab:SetFrameLevel(host:GetFrameLevel()+3)") != std::string::npos);
+		assert(collections.find("tab:SetPoint(\"BOTTOMLEFT\",host,\"BOTTOMLEFT\",22,-26)") != std::string::npos);
+		assert(collections.find("tab:SetPoint(\"BOTTOMLEFT\",host,\"BOTTOMLEFT\",64,4)") == std::string::npos);
 		assert(collections.find("if page.order==nil then page.order=DEFAULT_ORDER end") != std::string::npos);
 		assert(collections.find("for _,candidate in ipairs(ordered)") != std::string::npos);
 		assert(collections.find("ContentManagerCollectionsCloseButton") ==
@@ -722,24 +739,28 @@ int main(int argc, char** argv)
 
 		auto icon = ContentFrameXml::ComposeCollectionsIcon();
 		assert(icon == ContentFrameXml::ComposeCollectionsIcon());
-		assert(icon.size() == 18 + 64 * 64 * 4);
+		assert(icon.size() == 18 + 128 * 128 * 4);
 		assert(icon[2] == 2 && icon[16] == 32 && icon[17] == 0x28);
-		assert(icon[12] == 64 && icon[13] == 0);
-		assert(icon[14] == 64 && icon[15] == 0);
-		int minX = 64, minY = 64, maxX = -1, maxY = -1;
-		std::size_t transparent = 0, opaque = 0;
-		for (int y = 0; y < 64; ++y)
-			for (int x = 0; x < 64; ++x) {
-				auto alpha = icon[18 + (y * 64 + x) * 4 + 3];
+		assert(icon[12] == 128 && icon[13] == 0);
+		assert(icon[14] == 128 && icon[15] == 0);
+		int minX = 128, minY = 128, maxX = -1, maxY = -1;
+		std::size_t transparent = 0, opaque = 0, purple = 0, gold = 0;
+		for (int y = 0; y < 128; ++y)
+			for (int x = 0; x < 128; ++x) {
+				auto offset = 18 + (y * 128 + x) * 4;
+				auto alpha = icon[offset + 3];
 				if (!alpha) { ++transparent; continue; }
 				++opaque;
+				auto blue = icon[offset], green = icon[offset + 1], red = icon[offset + 2];
+				if (blue > red && red > green) ++purple;
+				if (red > 140 && green > 80 && red > blue * 2) ++gold;
 				minX = std::min(minX, x); maxX = std::max(maxX, x);
 				minY = std::min(minY, y); maxY = std::max(maxY, y);
 			}
-		assert(transparent > 0 && opaque > 500);
-		assert(minX == 6 && maxX == 57 && minY == 8 && maxY == 55);
-		assert(std::abs((minX + maxX) - 63) <= 1);
-		assert(std::abs((minY + maxY) - 63) <= 1);
+		assert(transparent > 3000 && opaque > 10000);
+		assert(purple > 5000 && gold > 1000);
+		assert(minX == 3 && maxX == 124 && minY == 3 && maxY == 124);
+		assert(minX + maxX == 127 && minY + maxY == 127);
 	}
 
     assert(ContentFrameXml::Stage(ContentFrameXml::GeneratedLuaTarget(), lua,

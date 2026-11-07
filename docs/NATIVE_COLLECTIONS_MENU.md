@@ -67,23 +67,30 @@ parity allowlisting, and activation validation. Parity continues to require the
 exact target-to-SHA-256 map.
 
 The active page metadata sizes and titles the host. Width and height always
-describe the complete outer window, including the 32-pixel header and 32-pixel
-bottom navigation strip; they do not describe the page content region. On every
-selection the host centers itself and replaces the page anchors so the page
-fills the region between those shared strips. Contributors should parent their
+describe the complete outer framed window; the exterior navigation tabs are
+not included. On every selection the host centers itself and replaces the page
+anchors so the page fills from the bottom edge up to the shared 32-pixel title
+region. The host owns 32-pixel-high `CharacterFrameTabButtonTemplate` controls,
+anchors the first at `(22, -26)` from its lower-left corner, overlaps adjacent
+tabs by 15 pixels using the stock template contract, raises them three frame
+levels, and drives their selected state through `PanelTemplates_SetTab`.
+Contributors should parent their
 page frame to
 `ContentManagerCollectionsFrame`, keep it initially hidden, and avoid outer
 backgrounds, borders, titles, close buttons, or micro-menu controls. Do not
 register empty or placeholder pages.
 
 Stock build 12340 does not contain a semantic Collections emblem. The host and
-micro button therefore share `ContentManagerCollections.tga`, an original,
-procedurally drawn chest authored in `ContentFrameXml::ComposeCollectionsIcon`.
-It is not traced from or extracted from a retail screenshot and is licensed
-under this repository's MIT license. The circular host background and rim use
-the stock `UI-Minimap-Background` and `MiniMap-TrackingBorder` textures. The
-backdrop, gold edge, header plate, close button, and navigation button states
-are also stock 3.3.5a UI assets.
+micro button therefore share `ContentManagerCollections.tga`, an original
+128x128 procedurally drawn medallion authored in
+`ContentFrameXml::ComposeCollectionsIcon`. The generator paints a symmetric
+transparent circular silhouette, antique-gold rim and studs, deep amethyst
+field, and an original hanger-and-split-mantle crest. It is not traced from or
+extracted from a retail screenshot and is licensed under this repository's MIT
+license. The host displays the complete texture at 72x72, overlapping its
+upper-left corner; it no longer composes minimap background or tracking-border
+art around a small chest. The backdrop, gold edge, header plate, close button,
+and navigation button states remain stock 3.3.5a UI assets.
 
 Shift+P is intentionally deferred. Build 12340 requires a real binding
 declaration and conflict review; a Lua binding label alone would not safely
