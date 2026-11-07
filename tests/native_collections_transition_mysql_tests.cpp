@@ -209,7 +209,8 @@ int main(int argc, char** argv)
             {"loadEntries", json::array({{{"target", "Interface/FrameXML/NativeTransmogFrame.xml"},
                 {"after", ContentFrameXml::CollectionsLuaTarget()}}})}}},
         {"nativeCollectionPages", json::array({{{"id", "appearances"},
-            {"name", "Appearances"}, {"order", 100},
+            {"name", "Appearances"}, {"title", "Appearances"},
+            {"width", 704}, {"height", 616},
             {"frame", "NativeTransmogCollectionsFrame"},
             {"loadTarget", "Interface/FrameXML/NativeTransmogFrame.xml"}}})}};
     Package(huntsPackage, hunts,
@@ -265,6 +266,8 @@ int main(int argc, char** argv)
     assert(HasEntry(a.outputPath, "Interface/FrameXML/NativeTransmogFrame.xml"));
     assert(EntryText(a.outputPath, ContentFrameXml::CollectionsLuaTarget())
         .find("name=\"Appearances\"") != std::string::npos);
+    assert(EntryText(a.outputPath, ContentFrameXml::CollectionsLuaTarget())
+        .find("order=1000,frame=\"NativeTransmogCollectionsFrame\",title=\"Appearances\",width=704,height=616") != std::string::npos);
     auto aPublication = activate(a);
     assert(Active()->buildNumber == a.buildNumber);
 

@@ -284,7 +284,9 @@ struct ContentNativePvePage {
 struct ContentNativeCollectionPage {
     std::string id;
     std::string name;
-    std::uint32_t order = 0;
+    // Omitted order uses the deterministic fallback band. Explicit values keep
+    // their existing meaning and sort before/after that band as authored.
+    std::uint32_t order = 1000;
     std::string frame;
     std::string loadTarget;
     std::string onShow;

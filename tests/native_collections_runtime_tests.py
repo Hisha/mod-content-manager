@@ -25,6 +25,8 @@ local function Frame(name,parent)
  function frame:ClearAllPoints() self.point=nil; self.points={} end
  function frame:SetHitRectInsets(...) self.hitRectInsets={...} end
  function frame:SetFrameStrata(v) self.strata=v end
+ function frame:GetFrameLevel() return self.frameLevel or 0 end
+ function frame:SetFrameLevel(v) self.frameLevel=v end
  function frame:SetToplevel(v) self.toplevel=v end
  function frame:SetMovable(v) self.movable=v end
  function frame:EnableMouse(v) self.mouse=v end
@@ -68,11 +70,20 @@ g = lua.globals()
 assert g.ContentManagerCollectionsMicroButton.visible
 assert g.ContentManagerCollectionsMicroButton.point[2].name == "LFDMicroButton"
 assert g.MainMenuMicroButton.point[2].name == "ContentManagerCollectionsMicroButton"
-assert g.ContentManagerCollectionsFrame.numTabs == 2
+assert g.ContentManagerCollectionsFrame.numTabs == 3
 assert g.ContentManagerCollectionsFrame.width == 940
 assert g.ContentManagerCollectionsFrame.height == 590
 assert g.ContentManagerCollectionsFrameTab1.text == "Appearances"
-assert g.ContentManagerCollectionsFrameTab2.text == "Toys"
+assert g.ContentManagerCollectionsFrameTab2.text == "Heirlooms"
+assert g.ContentManagerCollectionsFrameTab3.text == "Toys"
+assert g.ContentManagerCollectionsFrameTab1.point[1] == "BOTTOMLEFT"
+assert g.ContentManagerCollectionsFrameTab1.point[4] == 64
+assert g.ContentManagerCollectionsFrameTab1.point[5] == 4
+assert g.ContentManagerCollectionsEmblem.parent.name == "ContentManagerCollectionsFrame"
+assert g.ContentManagerCollectionsEmblem.frameLevel == 4
+assert g.ContentManagerCollectionsEmblem.textures[1].texture == r"Interface\Minimap\UI-Minimap-Background"
+assert g.ContentManagerCollectionsEmblem.textures[2].texture == r"Interface\Buttons\ContentManagerCollections"
+assert g.ContentManagerCollectionsEmblem.textures[3].texture == r"Interface\Minimap\MiniMap-TrackingBorder"
 assert g.ContentManagerCollectionsMicroButton.tooltipText == "Collections"
 button = g.ContentManagerCollectionsMicroButton
 icon = button.textures[1]
@@ -103,6 +114,7 @@ assert g.MainMenuMicroButton.point[1] == "managed"
 lua.execute(r'''
 NativeTransmogCollectionsFrame=CreateFrame("Frame","NativeTransmogCollectionsFrame",ContentManagerCollectionsFrame)
 ToysFrame=CreateFrame("Frame","ToysFrame",ContentManagerCollectionsFrame)
+HeirloomsFrame=CreateFrame("Frame","HeirloomsFrame",ContentManagerCollectionsFrame)
 appearancesShown,appearancesHidden=0,0
 function NativeTransmog_OpenCollections() appearancesShown=appearancesShown+1 end
 function NativeTransmog_CloseCollections() appearancesHidden=appearancesHidden+1 end
@@ -116,20 +128,32 @@ assert button.buttonState == "PUSHED" and button.buttonLocked
 assert icon.point[4] == 1 and icon.point[5] == 6
 assert g.NativeTransmogCollectionsFrame.visible
 assert not g.ToysFrame.visible
+assert not g.HeirloomsFrame.visible
 assert g.appearancesShown == 1
+assert g.ContentManagerCollectionsFrame.selectedTab == 1
 assert len(g.NativeTransmogCollectionsFrame.points) == 2
 assert g.NativeTransmogCollectionsFrame.points[1][1] == "TOPLEFT"
 assert g.NativeTransmogCollectionsFrame.points[1][2].name == "ContentManagerCollectionsFrame"
 assert g.NativeTransmogCollectionsFrame.points[2][1] == "BOTTOMRIGHT"
+assert g.NativeTransmogCollectionsFrame.points[2][5] == 32
 
 g.ContentManagerCollectionsFrameTab2.scripts["OnClick"]()
 assert not g.NativeTransmogCollectionsFrame.visible
-assert g.ToysFrame.visible
+assert g.HeirloomsFrame.visible
 assert g.appearancesHidden == 1
+assert g.ContentManagerCollectionsFrame.width == 800
+assert g.ContentManagerCollectionsFrame.height == 520
+assert g.ContentManagerCollectionsFrame.TitleText.text == "Heirlooms"
+assert g.ContentManagerCollectionsFrame.selectedTab == 2
+assert len(g.HeirloomsFrame.points) == 2
+
+g.ContentManagerCollectionsFrameTab3.scripts["OnClick"]()
+assert not g.HeirloomsFrame.visible
+assert g.ToysFrame.visible
 assert g.ContentManagerCollectionsFrame.width == 940
 assert g.ContentManagerCollectionsFrame.height == 590
-assert g.ContentManagerCollectionsFrame.TitleText.text == "Toys"
-assert len(g.ToysFrame.points) == 2
+assert g.ContentManagerCollectionsFrame.TitleText.text == "Toy Box"
+assert g.ContentManagerCollectionsFrame.selectedTab == 3
 
 # Switching back restores page-specific metadata and replaces, rather than
 # accumulating, the page and host anchors.
@@ -140,6 +164,16 @@ assert g.ContentManagerCollectionsFrame.TitleText.text == "Appearances"
 assert len(g.NativeTransmogCollectionsFrame.points) == 2
 assert len(g.ContentManagerCollectionsFrame.points) == 1
 
+# If the remembered page disappears, reopening chooses the first valid page
+# in deterministic navigation order instead of leaving an empty host.
+g.ContentManagerCollectionsFrameTab3.scripts["OnClick"]()
+g.ContentManagerCollectionsMicroButton.scripts["OnClick"]()
+lua.execute("ToysFrame=nil")
+g.ContentManagerCollectionsMicroButton.scripts["OnClick"]()
+assert g.ContentManagerCollectionsFrame.visible
+assert g.NativeTransmogCollectionsFrame.visible
+assert g.ContentManagerCollectionsFrame.selectedTab == 1
+assert g.ContentManagerCollectionsFrame.TitleText.text == "Appearances"
 g.ContentManagerCollectionsMicroButton.scripts["OnClick"]()
 assert not g.ContentManagerCollectionsFrame.visible
 assert button.buttonState == "NORMAL"
@@ -159,7 +193,7 @@ assert g.ContentManagerCollectionsCloseButton.parent.name == "ContentManagerColl
 duplicate = lua.table_from({"id": "appearances", "name": "Other", "order": 1,
                             "frame": "OtherFrame"})
 assert not g.ContentManager_RegisterCollectionPage(duplicate)
-assert g.ContentManagerCollectionsFrame.numTabs == 2
+assert g.ContentManagerCollectionsFrame.numTabs == 3
 assert any("duplicate page id 'appearances'" in message for message in g.messages.values())
 
 print("native_collections_runtime: PASS")

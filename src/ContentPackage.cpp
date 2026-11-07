@@ -2036,8 +2036,9 @@ ContentPackageValidationResult ContentPackage::Validate() const {
 						offending) ||
 					!declaration.contains("id") || !declaration["id"].is_string() ||
 					!declaration.contains("name") || !declaration["name"].is_string() ||
-					!declaration.contains("order") || !declaration["order"].is_number_unsigned() ||
-					declaration["order"].get<std::uint64_t>() > 1000000 ||
+					(declaration.contains("order") &&
+						(!declaration["order"].is_number_unsigned() ||
+						 declaration["order"].get<std::uint64_t>() > 1000000)) ||
 					!declaration.contains("frame") || !declaration["frame"].is_string() ||
 					!declaration.contains("loadTarget") || !declaration["loadTarget"].is_string() ||
 					(declaration.contains("onShow") && !declaration["onShow"].is_string()) ||
@@ -2058,7 +2059,7 @@ ContentPackageValidationResult ContentPackage::Validate() const {
 				ContentNativeCollectionPage page{
 					declaration["id"].get<std::string>(),
 					declaration["name"].get<std::string>(),
-					declaration["order"].get<std::uint32_t>(),
+					declaration.value("order", std::uint32_t{1000}),
 					declaration["frame"].get<std::string>(),
 					declaration["loadTarget"].get<std::string>(),
 					declaration.value("onShow", std::string()),

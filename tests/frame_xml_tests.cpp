@@ -631,10 +631,12 @@ int main(int argc, char** argv)
 		assert(legacyValidation.manifest.nativeCollectionPages.front().width == 0);
 		assert(legacyValidation.manifest.nativeCollectionPages.front().height == 0);
 
-		auto malformed = NativeCollectionsManifest();
-		malformed["nativeCollectionPages"][0].erase("order");
-		Save(path, malformed);
-		assert(!ContentPackage(path).Validate().valid);
+		auto fallbackOrder = NativeCollectionsManifest();
+		fallbackOrder["nativeCollectionPages"][0].erase("order");
+		Save(path, fallbackOrder);
+		auto fallbackValidation = ContentPackage(path).Validate();
+		assert(fallbackValidation.valid);
+		assert(fallbackValidation.manifest.nativeCollectionPages.front().order == 1000);
 		auto invalidSize = NativeCollectionsManifest();
 		invalidSize["nativeCollectionPages"][0]["width"] = 319;
 		Save(path, invalidSize);
@@ -649,7 +651,10 @@ int main(int argc, char** argv)
 			std::string::npos);
 
 		std::vector<ContentFrameXml::NativeCollectionPage> pages = {
-			{"toys", "Toys", 300, "ToysFrame", "Interface/FrameXML/Toys.xml", "", ""},
+			{"toys", "Toys", 300, "ToysFrame", "Interface/FrameXML/Toys.xml", "", "",
+			 "Toy Box", 940, 590},
+			{"heirlooms", "Heirlooms", 200, "HeirloomsFrame",
+			 "Interface/FrameXML/Heirlooms.xml", "", "", "Heirlooms", 800, 520},
 			{"appearances", "Appearances", 100, "NativeTransmogCollectionsFrame",
 			 "Interface/FrameXML/NativeTransmogFrame.xml",
 			 "NativeTransmog_OpenCollections", "NativeTransmog_CloseCollections",
@@ -669,10 +674,16 @@ int main(int argc, char** argv)
 		assert(collections.find("Interface\\\\DialogFrame\\\\UI-DialogBox-Background-Dark") != std::string::npos);
 		assert(collections.find("Interface\\\\DialogFrame\\\\UI-DialogBox-Gold-Border") != std::string::npos);
 		assert(collections.find("Interface\\\\DialogFrame\\\\UI-DialogBox-Header") != std::string::npos);
-		assert(collections.find("DEFAULT_WIDTH,DEFAULT_HEIGHT,CONTENT_TOP=940,590,32") != std::string::npos);
+		assert(collections.find("DEFAULT_WIDTH,DEFAULT_HEIGHT,DEFAULT_ORDER,CONTENT_TOP,CONTENT_BOTTOM=940,590,1000,32,32") != std::string::npos);
 		assert(collections.find("title=\"Appearances\",width=704,height=616") != std::string::npos);
 		assert(collections.find("title:SetText(page.title and page.title~=\"\" and page.title or page.name)") != std::string::npos);
-		assert(collections.find("frame:ClearAllPoints(); frame:SetPoint(\"TOPLEFT\",host,\"TOPLEFT\",0,-CONTENT_TOP); frame:SetPoint(\"BOTTOMRIGHT\",host,\"BOTTOMRIGHT\",0,0)") != std::string::npos);
+		assert(collections.find("frame:ClearAllPoints(); frame:SetPoint(\"TOPLEFT\",host,\"TOPLEFT\",0,-CONTENT_TOP); frame:SetPoint(\"BOTTOMRIGHT\",host,\"BOTTOMRIGHT\",0,CONTENT_BOTTOM)") != std::string::npos);
+		assert(collections.find("ContentManagerCollectionsEmblem") != std::string::npos);
+		assert(collections.find("Interface\\\\Minimap\\\\UI-Minimap-Background") != std::string::npos);
+		assert(collections.find("Interface\\\\Minimap\\\\MiniMap-TrackingBorder") != std::string::npos);
+		assert(collections.find("tab:SetPoint(\"BOTTOMLEFT\",host,\"BOTTOMLEFT\",64,4)") != std::string::npos);
+		assert(collections.find("if page.order==nil then page.order=DEFAULT_ORDER end") != std::string::npos);
+		assert(collections.find("for _,candidate in ipairs(ordered)") != std::string::npos);
 		assert(collections.find("ContentManagerCollectionsCloseButton") ==
 			collections.rfind("ContentManagerCollectionsCloseButton"));
 		assert(collections.find("ContentManagerCollectionsMicroButton") != std::string::npos);
@@ -689,6 +700,7 @@ int main(int argc, char** argv)
 		assert(collections.find("pressed and 1 or 0,pressed and 6 or 7") != std::string::npos);
 		assert(collections.find("if button:GetParent()~=parent then return end") != std::string::npos);
 		assert(collections.find("name=\"Appearances\"") < collections.find("name=\"Toys\""));
+		assert(collections.find("name=\"Heirlooms\"") < collections.find("name=\"Toys\""));
 
 		ContentFrameXml::ResourceSelection resources = {
 			ContentFrameXml::GeneratedResource::CollectionsController,
