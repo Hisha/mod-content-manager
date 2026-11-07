@@ -8,7 +8,10 @@ packages contribute pages; they do not create or position micro-menu buttons.
   {
     "id": "appearances",
     "name": "Appearances",
+    "title": "Appearances",
     "order": 100,
+    "width": 704,
+    "height": 616,
     "frame": "NativeTransmogCollectionsFrame",
     "loadTarget": "Interface/FrameXML/NativeTransmogFrame.xml",
     "onShow": "NativeTransmog_OpenCollections",
@@ -18,9 +21,12 @@ packages contribute pages; they do not create or position micro-menu buttons.
 ```
 
 `id` is a schema symbol and must be unique across all installed contributors in
-one build. `name` is the displayed tab text. `order` is an unsigned integer at
-most 1,000,000; pages sort by order, case-folded name, then ID. `frame`,
-`onShow`, and `onHide` are Lua global names. Callbacks are optional. The
+one build. `name` is the displayed tab text; optional `title` is the host window
+title and falls back to `name`. Optional `width` (320..1600) and `height`
+(240..1200) are the preferred host dimensions. Pages that omit them retain the
+legacy 940x590 defaults. `order` is an unsigned integer at most 1,000,000;
+pages sort by order, case-folded name, then ID. `frame`, `onShow`, and `onHide`
+are Lua global names. Callbacks are optional. The
 `loadTarget` must be both package-owned and present in
 `clientFrameXml.loadEntries`.
 
@@ -56,10 +62,12 @@ same set drives ownership registration, staging, cumulative counts, hashes,
 parity allowlisting, and activation validation. Parity continues to require the
 exact target-to-SHA-256 map.
 
-The host is sized for larger collection pages. Contributors should parent their
-page frame to `ContentManagerCollectionsFrame`, keep it initially hidden, and
-avoid creating or moving micro-menu controls. Do not register empty or
-placeholder pages.
+The active page metadata sizes and titles the host. On every selection the host
+centers itself and replaces the page anchors so the page fills the content area
+below the 32-pixel host header. Contributors should parent their page frame to
+`ContentManagerCollectionsFrame`, keep it initially hidden, and avoid outer
+backgrounds, borders, titles, close buttons, or micro-menu controls. Do not
+register empty or placeholder pages.
 
 Shift+P is intentionally deferred. Build 12340 requires a real binding
 declaration and conflict review; a Lua binding label alone would not safely

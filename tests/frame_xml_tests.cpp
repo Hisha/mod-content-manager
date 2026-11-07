@@ -139,6 +139,7 @@ json NativeCollectionsManifest()
              {"after", ContentFrameXml::CollectionsLuaTarget()}}}))},
         {"nativeCollectionPages", json::array({json{
             {"id", "appearances"}, {"name", "Appearances"}, {"order", 100},
+            {"title", "Appearances"}, {"width", 704}, {"height", 616},
             {"frame", "NativeTransmogCollectionsFrame"},
             {"loadTarget", "Interface/FrameXML/NativeTransmogFrame.xml"},
             {"onShow", "NativeTransmog_OpenCollections"},
@@ -618,10 +619,25 @@ int main(int argc, char** argv)
 		assert(validation.manifest.nativeCollectionPages.size() == 1);
 		auto page = validation.manifest.nativeCollectionPages.front();
 		assert(page.id == "appearances" && page.order == 100);
+		assert(page.title == "Appearances" && page.width == 704 && page.height == 616);
+		auto legacy = NativeCollectionsManifest();
+		legacy["nativeCollectionPages"][0].erase("title");
+		legacy["nativeCollectionPages"][0].erase("width");
+		legacy["nativeCollectionPages"][0].erase("height");
+		Save(path, legacy);
+		auto legacyValidation = ContentPackage(path).Validate();
+		assert(legacyValidation.valid);
+		assert(legacyValidation.manifest.nativeCollectionPages.front().title.empty());
+		assert(legacyValidation.manifest.nativeCollectionPages.front().width == 0);
+		assert(legacyValidation.manifest.nativeCollectionPages.front().height == 0);
 
 		auto malformed = NativeCollectionsManifest();
 		malformed["nativeCollectionPages"][0].erase("order");
 		Save(path, malformed);
+		assert(!ContentPackage(path).Validate().valid);
+		auto invalidSize = NativeCollectionsManifest();
+		invalidSize["nativeCollectionPages"][0]["width"] = 319;
+		Save(path, invalidSize);
 		assert(!ContentPackage(path).Validate().valid);
 		auto duplicate = NativeCollectionsManifest();
 		duplicate["nativeCollectionPages"].push_back(
@@ -636,7 +652,8 @@ int main(int argc, char** argv)
 			{"toys", "Toys", 300, "ToysFrame", "Interface/FrameXML/Toys.xml", "", ""},
 			{"appearances", "Appearances", 100, "NativeTransmogCollectionsFrame",
 			 "Interface/FrameXML/NativeTransmogFrame.xml",
-			 "NativeTransmog_OpenCollections", "NativeTransmog_CloseCollections"}};
+			 "NativeTransmog_OpenCollections", "NativeTransmog_CloseCollections",
+			 "Appearances", 704, 616}};
 		std::string collections, reversed;
 		assert(ContentFrameXml::ComposeCollectionsLua(pages, collections, error));
 		if (argc > 2) {
@@ -649,6 +666,15 @@ int main(int argc, char** argv)
 		std::reverse(pages.begin(), pages.end());
 		assert(ContentFrameXml::ComposeCollectionsLua(pages, reversed, error));
 		assert(collections == reversed);
+		assert(collections.find("Interface\\\\DialogFrame\\\\UI-DialogBox-Background-Dark") != std::string::npos);
+		assert(collections.find("Interface\\\\DialogFrame\\\\UI-DialogBox-Gold-Border") != std::string::npos);
+		assert(collections.find("Interface\\\\DialogFrame\\\\UI-DialogBox-Header") != std::string::npos);
+		assert(collections.find("DEFAULT_WIDTH,DEFAULT_HEIGHT,CONTENT_TOP=940,590,32") != std::string::npos);
+		assert(collections.find("title=\"Appearances\",width=704,height=616") != std::string::npos);
+		assert(collections.find("title:SetText(page.title and page.title~=\"\" and page.title or page.name)") != std::string::npos);
+		assert(collections.find("frame:ClearAllPoints(); frame:SetPoint(\"TOPLEFT\",host,\"TOPLEFT\",0,-CONTENT_TOP); frame:SetPoint(\"BOTTOMRIGHT\",host,\"BOTTOMRIGHT\",0,0)") != std::string::npos);
+		assert(collections.find("ContentManagerCollectionsCloseButton") ==
+			collections.rfind("ContentManagerCollectionsCloseButton"));
 		assert(collections.find("ContentManagerCollectionsMicroButton") != std::string::npos);
 		assert(collections.find("ContentManagerCollections.tga") == std::string::npos);
 		assert(collections.find("button:SetWidth(28); button:SetHeight(58); button:SetHitRectInsets(0,0,18,0)") != std::string::npos);

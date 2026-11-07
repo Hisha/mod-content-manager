@@ -2031,7 +2031,8 @@ ContentPackageValidationResult ContentPackage::Validate() const {
 				std::string offending;
 				if (!declaration.is_object() ||
 					!ClosedKeys(declaration,
-						{"id", "name", "order", "frame", "loadTarget", "onShow", "onHide"},
+						{"id", "name", "order", "frame", "loadTarget", "onShow", "onHide",
+						 "title", "width", "height"},
 						offending) ||
 					!declaration.contains("id") || !declaration["id"].is_string() ||
 					!declaration.contains("name") || !declaration["name"].is_string() ||
@@ -2040,7 +2041,16 @@ ContentPackageValidationResult ContentPackage::Validate() const {
 					!declaration.contains("frame") || !declaration["frame"].is_string() ||
 					!declaration.contains("loadTarget") || !declaration["loadTarget"].is_string() ||
 					(declaration.contains("onShow") && !declaration["onShow"].is_string()) ||
-					(declaration.contains("onHide") && !declaration["onHide"].is_string())) {
+					(declaration.contains("onHide") && !declaration["onHide"].is_string()) ||
+					(declaration.contains("title") && !declaration["title"].is_string()) ||
+					(declaration.contains("width") &&
+						(!declaration["width"].is_number_unsigned() ||
+						 declaration["width"].get<std::uint64_t>() < 320 ||
+						 declaration["width"].get<std::uint64_t>() > 1600)) ||
+					(declaration.contains("height") &&
+						(!declaration["height"].is_number_unsigned() ||
+						 declaration["height"].get<std::uint64_t>() < 240 ||
+						 declaration["height"].get<std::uint64_t>() > 1200))) {
 					result.error = "Malformed nativeCollectionPages declaration" +
 						(offending.empty() ? std::string() : ": unsupported field " + offending);
 					return result;
@@ -2052,8 +2062,12 @@ ContentPackageValidationResult ContentPackage::Validate() const {
 					declaration["frame"].get<std::string>(),
 					declaration["loadTarget"].get<std::string>(),
 					declaration.value("onShow", std::string()),
-					declaration.value("onHide", std::string())};
+					declaration.value("onHide", std::string()),
+					declaration.value("title", std::string()),
+					declaration.value("width", std::uint32_t{0}),
+					declaration.value("height", std::uint32_t{0})};
 				if (!ValidSymbol(page.id) || page.name.empty() || page.name.size() > 48 ||
+					page.title.size() > 48 ||
 					!ValidLuaGlobal(page.frame) ||
 					(!page.onShow.empty() && !ValidLuaGlobal(page.onShow)) ||
 					(!page.onHide.empty() && !ValidLuaGlobal(page.onHide))) {

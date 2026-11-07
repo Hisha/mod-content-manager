@@ -18,11 +18,11 @@ lua.execute(r'''
 messages, UISpecialFrames, secureHooks = {}, {}, {}
 DEFAULT_CHAT_FRAME = {AddMessage=function(_,message) table.insert(messages,message) end}
 local function Frame(name,parent)
- local frame={name=name,parent=parent,visible=false,scripts={},hooks={},textures={}}
+ local frame={name=name,parent=parent,visible=false,scripts={},hooks={},textures={},points={}}
  function frame:SetWidth(v) self.width=v end
  function frame:SetHeight(v) self.height=v end
- function frame:SetPoint(...) self.point={...} end
- function frame:ClearAllPoints() self.point=nil end
+ function frame:SetPoint(...) self.point={...}; table.insert(self.points,{...}) end
+ function frame:ClearAllPoints() self.point=nil; self.points={} end
  function frame:SetHitRectInsets(...) self.hitRectInsets={...} end
  function frame:SetFrameStrata(v) self.strata=v end
  function frame:SetToplevel(v) self.toplevel=v end
@@ -69,6 +69,8 @@ assert g.ContentManagerCollectionsMicroButton.visible
 assert g.ContentManagerCollectionsMicroButton.point[2].name == "LFDMicroButton"
 assert g.MainMenuMicroButton.point[2].name == "ContentManagerCollectionsMicroButton"
 assert g.ContentManagerCollectionsFrame.numTabs == 2
+assert g.ContentManagerCollectionsFrame.width == 940
+assert g.ContentManagerCollectionsFrame.height == 590
 assert g.ContentManagerCollectionsFrameTab1.text == "Appearances"
 assert g.ContentManagerCollectionsFrameTab2.text == "Toys"
 assert g.ContentManagerCollectionsMicroButton.tooltipText == "Collections"
@@ -107,21 +109,52 @@ function NativeTransmog_CloseCollections() appearancesHidden=appearancesHidden+1
 ''')
 g.ContentManagerCollectionsMicroButton.scripts["OnClick"]()
 assert g.ContentManagerCollectionsFrame.visible
+assert g.ContentManagerCollectionsFrame.width == 704
+assert g.ContentManagerCollectionsFrame.height == 616
+assert g.ContentManagerCollectionsFrame.TitleText.text == "Appearances"
 assert button.buttonState == "PUSHED" and button.buttonLocked
 assert icon.point[4] == 1 and icon.point[5] == 6
 assert g.NativeTransmogCollectionsFrame.visible
 assert not g.ToysFrame.visible
 assert g.appearancesShown == 1
+assert len(g.NativeTransmogCollectionsFrame.points) == 2
+assert g.NativeTransmogCollectionsFrame.points[1][1] == "TOPLEFT"
+assert g.NativeTransmogCollectionsFrame.points[1][2].name == "ContentManagerCollectionsFrame"
+assert g.NativeTransmogCollectionsFrame.points[2][1] == "BOTTOMRIGHT"
 
 g.ContentManagerCollectionsFrameTab2.scripts["OnClick"]()
 assert not g.NativeTransmogCollectionsFrame.visible
 assert g.ToysFrame.visible
 assert g.appearancesHidden == 1
+assert g.ContentManagerCollectionsFrame.width == 940
+assert g.ContentManagerCollectionsFrame.height == 590
+assert g.ContentManagerCollectionsFrame.TitleText.text == "Toys"
+assert len(g.ToysFrame.points) == 2
+
+# Switching back restores page-specific metadata and replaces, rather than
+# accumulating, the page and host anchors.
+g.ContentManagerCollectionsFrameTab1.scripts["OnClick"]()
+assert g.ContentManagerCollectionsFrame.width == 704
+assert g.ContentManagerCollectionsFrame.height == 616
+assert g.ContentManagerCollectionsFrame.TitleText.text == "Appearances"
+assert len(g.NativeTransmogCollectionsFrame.points) == 2
+assert len(g.ContentManagerCollectionsFrame.points) == 1
 
 g.ContentManagerCollectionsMicroButton.scripts["OnClick"]()
 assert not g.ContentManagerCollectionsFrame.visible
 assert button.buttonState == "NORMAL"
 assert icon.point[4] == 0 and icon.point[5] == 7
+
+# Repeated open/close runs the same deterministic layout without adding
+# anchors, extra controls, or offsets.
+for _ in range(3):
+    g.ContentManagerCollectionsMicroButton.scripts["OnClick"]()
+    assert g.ContentManagerCollectionsFrame.visible
+    assert len(g.NativeTransmogCollectionsFrame.points) == 2
+    assert len(g.ContentManagerCollectionsFrame.points) == 1
+    g.ContentManagerCollectionsMicroButton.scripts["OnClick"]()
+    assert not g.ContentManagerCollectionsFrame.visible
+assert g.ContentManagerCollectionsCloseButton.parent.name == "ContentManagerCollectionsFrame"
 
 duplicate = lua.table_from({"id": "appearances", "name": "Other", "order": 1,
                             "frame": "OtherFrame"})

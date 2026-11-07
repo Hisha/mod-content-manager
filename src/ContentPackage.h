@@ -289,10 +289,16 @@ struct ContentNativeCollectionPage {
     std::string loadTarget;
     std::string onShow;
     std::string onHide;
+    // Optional host-window metadata. A zero dimension and an empty title keep
+    // the legacy defaults, so existing schema-3 contributors remain valid.
+    std::string title;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
     bool operator==(ContentNativeCollectionPage const& o) const {
         return id == o.id && name == o.name && order == o.order &&
                frame == o.frame && loadTarget == o.loadTarget &&
-               onShow == o.onShow && onHide == o.onHide;
+               onShow == o.onShow && onHide == o.onHide &&
+               title == o.title && width == o.width && height == o.height;
     }
 };
 
