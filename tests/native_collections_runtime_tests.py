@@ -15,7 +15,7 @@ if len(sys.argv) != 2:
 
 lua = LuaRuntime()
 lua.execute(r'''
-messages, UISpecialFrames = {}, {}
+messages, UISpecialFrames, secureHooks = {}, {}, {}
 DEFAULT_CHAT_FRAME = {AddMessage=function(_,message) table.insert(messages,message) end}
 local function Frame(name,parent)
  local frame={name=name,parent=parent,visible=false,scripts={},hooks={},textures={}}
@@ -39,11 +39,12 @@ local function Frame(name,parent)
  function frame:SetText(v) self.text=v end
  function frame:SetID(v) self.id=v end
  function frame:GetName() return self.name end
+ function frame:GetParent() return self.parent end
  function frame:IsShown() return self.visible end
  function frame:SetScript(k,v) self.scripts[k]=v end
  function frame:HookScript(k,v) self.hooks[k]=v end
  function frame:CreateFontString() return Frame(nil,self) end
- function frame:CreateTexture() local texture=Frame(nil,self); table.insert(self.textures,texture); return texture end
+ function frame:CreateTexture(_,layer) local texture=Frame(nil,self); texture.layer=layer; table.insert(self.textures,texture); return texture end
  function frame:Show() self.visible=true; if self.scripts.OnShow then self.scripts.OnShow() end end
  function frame:Hide() self.visible=false; if self.scripts.OnHide then self.scripts.OnHide() end end
  return frame
@@ -57,7 +58,9 @@ function CreateFrame(_,name,parent) local frame=Frame(name,parent); if name then
 function PanelTemplates_SetTab(frame,index) frame.selectedTab=index end
 function PanelTemplates_SetNumTabs(frame,count) frame.numTabs=count end
 function PanelTemplates_TabResize() end
-function hooksecurefunc() end
+function UpdateMicroButtons() end
+function MoveMicroButtons() end
+function hooksecurefunc(name,callback) secureHooks[name]=callback end
 ''')
 lua.execute(Path(sys.argv[1]).read_text(encoding="utf-8"))
 g = lua.globals()
@@ -77,6 +80,7 @@ assert button.normalTexture == r"Interface\Buttons\UI-MicroButtonCharacter-Up"
 assert button.pushedTexture == r"Interface\Buttons\UI-MicroButtonCharacter-Down"
 assert button.highlightTexture == r"Interface\Buttons\UI-MicroButton-Hilight"
 assert button.highlightMode == "ADD"
+assert icon.layer == "OVERLAY"
 assert icon.width == 20 and icon.height == 20
 assert icon.point[1] == "BOTTOM" and icon.point[2].name == button.name
 assert icon.point[3] == "BOTTOM" and icon.point[4] == 0 and icon.point[5] == 7
@@ -84,6 +88,15 @@ button.scripts["OnMouseDown"]()
 assert icon.point[4] == 1 and icon.point[5] == 6
 button.scripts["OnMouseUp"]()
 assert icon.point[4] == 0 and icon.point[5] == 7
+
+# An addon-managed micro-menu owns anchors after it reparents the button.
+managedParent = lua.table_from({"name": "ManagedMicroMenu"})
+button.parent = managedParent
+button.point = lua.table_from({"managed"})
+g.MainMenuMicroButton.point = lua.table_from({"managed"})
+g.secureHooks["UpdateMicroButtons"]()
+assert button.point[1] == "managed"
+assert g.MainMenuMicroButton.point[1] == "managed"
 
 lua.execute(r'''
 NativeTransmogCollectionsFrame=CreateFrame("Frame","NativeTransmogCollectionsFrame",ContentManagerCollectionsFrame)

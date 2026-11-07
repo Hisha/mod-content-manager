@@ -493,14 +493,14 @@ bool ContentFrameXml::ComposeCollectionsLua(
         // its portrait separately in a y=5..30 aperture.  A 20-pixel chest at
         // bottom=7 is therefore centered in the visible aperture, not in the
         // otherwise transparent upper portion of the 28x58 button texture.
-        "local icon=button:CreateTexture(nil,\"ARTWORK\"); icon:SetWidth(20); icon:SetHeight(20); icon:SetPoint(\"BOTTOM\",button,\"BOTTOM\",0,7); icon:SetTexture(\"Interface\\\\Buttons\\\\ContentManagerCollections\")\n"
+        "local icon=button:CreateTexture(nil,\"OVERLAY\"); icon:SetWidth(20); icon:SetHeight(20); icon:SetPoint(\"BOTTOM\",button,\"BOTTOM\",0,7); icon:SetTexture(\"Interface\\\\Buttons\\\\ContentManagerCollections\")\n"
         "positionIcon=function(pressed) icon:ClearAllPoints(); icon:SetPoint(\"BOTTOM\",button,\"BOTTOM\",pressed and 1 or 0,pressed and 6 or 7) end\n"
         "button:SetScript(\"OnMouseDown\",function() positionIcon(true) end)\n"
         "button:SetScript(\"OnMouseUp\",function() positionIcon(host:IsShown()) end)\n"
         "button:SetScript(\"OnEnter\",function(self) GameTooltip:SetOwner(self,\"ANCHOR_RIGHT\"); GameTooltip:SetText(\"Collections\",1,1,1); GameTooltip:Show() end)\n"
         "button:SetScript(\"OnLeave\",function() GameTooltip:Hide() end)\n"
         "button:SetScript(\"OnClick\",function() if host:IsShown() then host:Hide() else host:Show() end end)\n"
-        "local function layout() if not LFDMicroButton then button:Hide(); return end button:Show(); button:ClearAllPoints(); button:SetPoint(\"LEFT\",LFDMicroButton,\"RIGHT\",-3,0); if MainMenuMicroButton then MainMenuMicroButton:ClearAllPoints(); MainMenuMicroButton:SetPoint(\"LEFT\",button,\"RIGHT\",-3,0) end end\n"
+        "local function layout() if button:GetParent()~=parent then return end if not LFDMicroButton then button:Hide(); return end button:Show(); button:ClearAllPoints(); button:SetPoint(\"LEFT\",LFDMicroButton,\"RIGHT\",-3,0); if MainMenuMicroButton then MainMenuMicroButton:ClearAllPoints(); MainMenuMicroButton:SetPoint(\"LEFT\",button,\"RIGHT\",-3,0) end end\n"
         "layout(); if hooksecurefunc then if type(UpdateMicroButtons)==\"function\" then hooksecurefunc(\"UpdateMicroButtons\",layout) end if type(MoveMicroButtons)==\"function\" then hooksecurefunc(\"MoveMicroButtons\",layout) end end\n";
     text = std::move(out);
     return true;

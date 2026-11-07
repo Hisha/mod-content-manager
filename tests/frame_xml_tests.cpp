@@ -657,9 +657,11 @@ int main(int argc, char** argv)
 		assert(collections.find("button:SetHighlightTexture(\"Interface\\\\Buttons\\\\UI-MicroButton-Hilight\",\"ADD\")") != std::string::npos);
 		assert(collections.find("UI-MicroButton-LFG-Up") == std::string::npos);
 		assert(collections.find("UI-MicroButton-LFG-Down") == std::string::npos);
+		assert(collections.find("button:CreateTexture(nil,\"OVERLAY\")") != std::string::npos);
 		assert(collections.find("icon:SetWidth(20); icon:SetHeight(20); icon:SetPoint(\"BOTTOM\",button,\"BOTTOM\",0,7)") != std::string::npos);
 		assert(collections.find("positionIcon=function(pressed)") != std::string::npos);
 		assert(collections.find("pressed and 1 or 0,pressed and 6 or 7") != std::string::npos);
+		assert(collections.find("if button:GetParent()~=parent then return end") != std::string::npos);
 		assert(collections.find("name=\"Appearances\"") < collections.find("name=\"Toys\""));
 
 		ContentFrameXml::ResourceSelection resources = {
