@@ -311,7 +311,8 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 			frameXmlResources.insert(ContentFrameXml::GeneratedResource::NativePve);
 		if (composingCollections) {
 			frameXmlResources.insert(ContentFrameXml::GeneratedResource::CollectionsController);
-			frameXmlResources.insert(ContentFrameXml::GeneratedResource::CollectionsIcon);
+			frameXmlResources.insert(ContentFrameXml::GeneratedResource::CollectionsEmblem);
+			frameXmlResources.insert(ContentFrameXml::GeneratedResource::CollectionsMicroButtonIcon);
 		}
 		bool composingFrameXml = !frameXmlResources.empty() ||
 			!frameXmlLoadEntries.empty();
@@ -1266,14 +1267,22 @@ ContentBuildResult ContentBuildService::Build(ContentManager const &manager,
 					result.workspace / std::filesystem::path(
 						ContentFrameXml::CollectionsLuaTarget()).generic_string(),
 					frameXmlHashes[ContentFrameXml::CollectionsLuaTarget()], error), error);
-				auto icon = ContentFrameXml::ComposeCollectionsIcon();
-				Require(ContentFrameXml::Stage(ContentFrameXml::CollectionsIconTarget(),
-					icon, result.workspace, error),
-					"Could not stage Collections icon: " + error);
+				auto emblem = ContentFrameXml::ComposeCollectionsEmblem();
+				Require(ContentFrameXml::Stage(ContentFrameXml::CollectionsEmblemTarget(),
+					emblem, result.workspace, error),
+					"Could not stage Collections emblem: " + error);
 				Require(ContentBuildHash::Calculate(
 					result.workspace / std::filesystem::path(
-						ContentFrameXml::CollectionsIconTarget()).generic_string(),
-					frameXmlHashes[ContentFrameXml::CollectionsIconTarget()], error), error);
+						ContentFrameXml::CollectionsEmblemTarget()).generic_string(),
+					frameXmlHashes[ContentFrameXml::CollectionsEmblemTarget()], error), error);
+				auto microButtonIcon = ContentFrameXml::ComposeCollectionsMicroButtonIcon();
+				Require(ContentFrameXml::Stage(ContentFrameXml::CollectionsMicroButtonIconTarget(),
+					microButtonIcon, result.workspace, error),
+					"Could not stage Collections micro-menu icon: " + error);
+				Require(ContentBuildHash::Calculate(
+					result.workspace / std::filesystem::path(
+						ContentFrameXml::CollectionsMicroButtonIconTarget()).generic_string(),
+					frameXmlHashes[ContentFrameXml::CollectionsMicroButtonIconTarget()], error), error);
 			}
 			std::string toc;
 			Require(ContentFrameXml::ComposeToc(stockToc, frameXmlLoadEntries,

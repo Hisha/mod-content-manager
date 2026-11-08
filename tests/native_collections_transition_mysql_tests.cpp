@@ -255,14 +255,16 @@ int main(int argc, char** argv)
     auto a = build("A");
     auto aParity = Parity(a);
     auto aHashes = aParity.at("frameXmlSha256");
-    assert(a.packageCount == 2 && a.fileCount == 6);
-    assert(aHashes.size() == 4);
+    assert(a.packageCount == 2 && a.fileCount == 7);
+    assert(aHashes.size() == 5);
     assert(aHashes.contains(ContentFrameXml::NativePveLuaTarget()));
     assert(aHashes.contains(ContentFrameXml::CollectionsLuaTarget()));
-    assert(aHashes.contains(ContentFrameXml::CollectionsIconTarget()));
+    assert(aHashes.contains(ContentFrameXml::CollectionsEmblemTarget()));
+    assert(aHashes.contains(ContentFrameXml::CollectionsMicroButtonIconTarget()));
     assert(aHashes.contains(ContentFrameXml::StockTocTarget()));
     assert(HasEntry(a.outputPath, ContentFrameXml::CollectionsLuaTarget()));
-    assert(HasEntry(a.outputPath, ContentFrameXml::CollectionsIconTarget()));
+    assert(HasEntry(a.outputPath, ContentFrameXml::CollectionsEmblemTarget()));
+    assert(HasEntry(a.outputPath, ContentFrameXml::CollectionsMicroButtonIconTarget()));
     assert(HasEntry(a.outputPath, "Interface/FrameXML/NativeTransmogFrame.xml"));
     assert(EntryText(a.outputPath, ContentFrameXml::CollectionsLuaTarget())
         .find("name=\"Appearances\"") != std::string::npos);
@@ -288,9 +290,11 @@ int main(int argc, char** argv)
     assert(bHashes.contains(ContentFrameXml::NativePveLuaTarget()));
     assert(bHashes.contains(ContentFrameXml::StockTocTarget()));
     assert(!bHashes.contains(ContentFrameXml::CollectionsLuaTarget()));
-    assert(!bHashes.contains(ContentFrameXml::CollectionsIconTarget()));
+    assert(!bHashes.contains(ContentFrameXml::CollectionsEmblemTarget()));
+    assert(!bHashes.contains(ContentFrameXml::CollectionsMicroButtonIconTarget()));
     assert(!HasEntry(b.outputPath, ContentFrameXml::CollectionsLuaTarget()));
-    assert(!HasEntry(b.outputPath, ContentFrameXml::CollectionsIconTarget()));
+    assert(!HasEntry(b.outputPath, ContentFrameXml::CollectionsEmblemTarget()));
+    assert(!HasEntry(b.outputPath, ContentFrameXml::CollectionsMicroButtonIconTarget()));
     assert(!HasEntry(b.outputPath, "Interface/FrameXML/NativeTransmogFrame.xml"));
     assert(Read(b.outputPath.string() + ".parity.json").find("Collections") ==
         std::string::npos);
@@ -315,7 +319,8 @@ int main(int argc, char** argv)
     assert(cHashes == aHashes);
     assert(MpqHash(c) == MpqHash(a));
     assert(HasEntry(c.outputPath, ContentFrameXml::CollectionsLuaTarget()));
-    assert(HasEntry(c.outputPath, ContentFrameXml::CollectionsIconTarget()));
+    assert(HasEntry(c.outputPath, ContentFrameXml::CollectionsEmblemTarget()));
+    assert(HasEntry(c.outputPath, ContentFrameXml::CollectionsMicroButtonIconTarget()));
     activate(c);
     assert(Active()->buildNumber == c.buildNumber);
     assert(State(b.buildNumber) == "SUPERSEDED" && State(c.buildNumber) == "ACTIVE");

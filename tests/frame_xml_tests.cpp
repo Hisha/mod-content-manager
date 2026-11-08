@@ -688,9 +688,16 @@ int main(int argc, char** argv)
 		assert(collections.find("Interface\\\\DialogFrame\\\\UI-DialogBox-Background-Dark") != std::string::npos);
 		assert(collections.find("Interface\\\\DialogFrame\\\\UI-DialogBox-Gold-Border") != std::string::npos);
 		assert(collections.find("Interface\\\\DialogFrame\\\\UI-DialogBox-Header") != std::string::npos);
+		assert(collections.find("ContentManagerCollectionsTitleBar") != std::string::npos);
+		assert(collections.find("titleBar:SetWidth(560); titleBar:SetHeight(32)") != std::string::npos);
+		assert(collections.find("titleBar:SetFrameLevel(host:GetFrameLevel()+4)") != std::string::npos);
+		assert(collections.find("titlePlate:SetWidth(560); titlePlate:SetHeight(64)") != std::string::npos);
+		assert(collections.find("title=titleBar:CreateFontString(nil,\"OVERLAY\",\"GameFontNormal\")") != std::string::npos);
+		assert(collections.find("local function layoutTitle(width) local titleWidth=math.max(240,math.min(560,width-120))") != std::string::npos);
 		assert(collections.find("DEFAULT_WIDTH,DEFAULT_HEIGHT,DEFAULT_ORDER,CONTENT_TOP,CONTENT_BOTTOM=940,590,1000,32,0") != std::string::npos);
 		assert(collections.find("title=\"Appearances\",width=704,height=616") != std::string::npos);
 		assert(collections.find("title:SetText(page.title and page.title~=\"\" and page.title or page.name)") != std::string::npos);
+		assert(collections.find("layoutTitle(width); title:SetText(page.title and page.title~=\"\" and page.title or page.name)") != std::string::npos);
 		assert(collections.find("frame:ClearAllPoints(); frame:SetPoint(\"TOPLEFT\",host,\"TOPLEFT\",0,-CONTENT_TOP); frame:SetPoint(\"BOTTOMRIGHT\",host,\"BOTTOMRIGHT\",0,CONTENT_BOTTOM)") != std::string::npos);
 		assert(collections.find("ContentManagerCollectionsEmblem") != std::string::npos);
 		assert(collections.find("Interface\\\\Minimap\\\\UI-Minimap-Background") == std::string::npos);
@@ -704,7 +711,8 @@ int main(int argc, char** argv)
 		assert(collections.find("ContentManagerCollectionsCloseButton") ==
 			collections.rfind("ContentManagerCollectionsCloseButton"));
 		assert(collections.find("ContentManagerCollectionsMicroButton") != std::string::npos);
-		assert(collections.find("ContentManagerCollections.tga") == std::string::npos);
+		assert(collections.find("Interface\\\\Buttons\\\\ContentManagerCollections\"") != std::string::npos);
+		assert(collections.find("Interface\\\\Buttons\\\\ContentManagerCollectionsMicroButton\"") != std::string::npos);
 		assert(collections.find("button:SetWidth(28); button:SetHeight(58); button:SetHitRectInsets(0,0,18,0)") != std::string::npos);
 		assert(collections.find("button:SetNormalTexture(\"Interface\\\\Buttons\\\\UI-MicroButtonCharacter-Up\")") != std::string::npos);
 		assert(collections.find("button:SetPushedTexture(\"Interface\\\\Buttons\\\\UI-MicroButtonCharacter-Down\")") != std::string::npos);
@@ -721,13 +729,16 @@ int main(int argc, char** argv)
 
 		ContentFrameXml::ResourceSelection resources = {
 			ContentFrameXml::GeneratedResource::CollectionsController,
-			ContentFrameXml::GeneratedResource::CollectionsIcon};
+			ContentFrameXml::GeneratedResource::CollectionsEmblem,
+			ContentFrameXml::GeneratedResource::CollectionsMicroButtonIcon};
 		auto targets = ContentFrameXml::Targets(resources);
-		assert(targets.size() == 3);
+		assert(targets.size() == 4);
 		assert(std::find(targets.begin(), targets.end(),
 			ContentFrameXml::CollectionsLuaTarget()) != targets.end());
 		assert(std::find(targets.begin(), targets.end(),
-			ContentFrameXml::CollectionsIconTarget()) != targets.end());
+			ContentFrameXml::CollectionsEmblemTarget()) != targets.end());
+		assert(std::find(targets.begin(), targets.end(),
+			ContentFrameXml::CollectionsMicroButtonIconTarget()) != targets.end());
 		std::vector<ContentFrameXml::LoadEntry> collectionLoads = {{
 			"Interface/FrameXML/NativeTransmogFrame.xml",
 			ContentFrameXml::CollectionsLuaTarget()}};
@@ -737,12 +748,17 @@ int main(int argc, char** argv)
 		assert(collectionToc.find("ContentManagerCollections.lua") <
 			collectionToc.find("NativeTransmogFrame.xml"));
 
-		auto icon = ContentFrameXml::ComposeCollectionsIcon();
-		assert(icon == ContentFrameXml::ComposeCollectionsIcon());
+		auto icon = ContentFrameXml::ComposeCollectionsEmblem();
+		assert(icon == ContentFrameXml::ComposeCollectionsEmblem());
 		assert(icon.size() == 18 + 128 * 128 * 4);
 		assert(icon[2] == 2 && icon[16] == 32 && icon[17] == 0x28);
 		assert(icon[12] == 128 && icon[13] == 0);
 		assert(icon[14] == 128 && icon[15] == 0);
+		auto chest = ContentFrameXml::ComposeCollectionsMicroButtonIcon();
+		assert(chest == ContentFrameXml::ComposeCollectionsMicroButtonIcon());
+		assert(chest != icon);
+		assert(chest.size() == 18 + 64 * 64 * 4);
+		assert(chest[2] == 2 && chest[12] == 64 && chest[14] == 64);
 		int minX = 128, minY = 128, maxX = -1, maxY = -1;
 		std::size_t transparent = 0, opaque = 0, purple = 0, gold = 0;
 		for (int y = 0; y < 128; ++y)
@@ -789,14 +805,16 @@ int main(int argc, char** argv)
              ContentBuildHash::Bytes({4, 5, 6})},
             {ContentFrameXml::CollectionsLuaTarget(),
              ContentBuildHash::Bytes({7, 8, 9})},
-            {ContentFrameXml::CollectionsIconTarget(),
+            {ContentFrameXml::CollectionsEmblemTarget(),
              ContentBuildHash::Bytes({10, 11, 12})},
+            {ContentFrameXml::CollectionsMicroButtonIconTarget(),
+             ContentBuildHash::Bytes({13, 14, 15})},
             {ContentFrameXml::StockTocTarget(),
              ContentBuildHash::Bytes({toc.begin(), toc.end()})}};
         auto artifact = Parity(hashes);
         auto document = json::parse(artifact);
         assert(document.at("format") == 9);
-        assert(document.at("frameXmlSha256").size() == 5);
+        assert(document.at("frameXmlSha256").size() == 6);
         auto declared = ContentServerBundle::ReadParityAllocations(artifact, {});
         assert(declared.frameXmlSha256 == hashes);
         std::string errorText;

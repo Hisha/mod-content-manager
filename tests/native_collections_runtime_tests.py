@@ -81,12 +81,16 @@ assert g.ContentManagerCollectionsFrameTab1.point[4] == 22
 assert g.ContentManagerCollectionsFrameTab1.point[5] == -26
 assert g.ContentManagerCollectionsFrameTab1.height == 32
 assert g.ContentManagerCollectionsFrameTab1.frameLevel == 3
+assert g.ContentManagerCollectionsTitleBar.parent.name == "ContentManagerCollectionsFrame"
+assert g.ContentManagerCollectionsTitleBar.width == 560
+assert g.ContentManagerCollectionsTitleBar.height == 32
+assert g.ContentManagerCollectionsTitleBar.frameLevel == 4
 assert g.ContentManagerCollectionsEmblem.parent.name == "ContentManagerCollectionsFrame"
 assert g.ContentManagerCollectionsEmblem.width == 72
 assert g.ContentManagerCollectionsEmblem.height == 72
 assert g.ContentManagerCollectionsEmblem.point[4] == -12
 assert g.ContentManagerCollectionsEmblem.point[5] == 8
-assert g.ContentManagerCollectionsEmblem.frameLevel == 5
+assert g.ContentManagerCollectionsEmblem.frameLevel == 7
 assert len(g.ContentManagerCollectionsEmblem.textures) == 1
 assert g.ContentManagerCollectionsEmblem.textures[1].allPoints
 assert g.ContentManagerCollectionsEmblem.textures[1].texture == r"Interface\Buttons\ContentManagerCollections"
@@ -100,6 +104,7 @@ assert button.pushedTexture == r"Interface\Buttons\UI-MicroButtonCharacter-Down"
 assert button.highlightTexture == r"Interface\Buttons\UI-MicroButton-Hilight"
 assert button.highlightMode == "ADD"
 assert icon.layer == "OVERLAY"
+assert icon.texture == r"Interface\Buttons\ContentManagerCollectionsMicroButton"
 assert icon.width == 20 and icon.height == 20
 assert icon.point[1] == "BOTTOM" and icon.point[2].name == button.name
 assert icon.point[3] == "BOTTOM" and icon.point[4] == 0 and icon.point[5] == 7

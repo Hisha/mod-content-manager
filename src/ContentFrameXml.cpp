@@ -87,10 +87,17 @@ std::string const& ContentFrameXml::CollectionsLuaTarget()
     return target;
 }
 
-std::string const& ContentFrameXml::CollectionsIconTarget()
+std::string const& ContentFrameXml::CollectionsEmblemTarget()
 {
     static std::string const target =
         "Interface/Buttons/ContentManagerCollections.tga";
+    return target;
+}
+
+std::string const& ContentFrameXml::CollectionsMicroButtonIconTarget()
+{
+    static std::string const target =
+        "Interface/Buttons/ContentManagerCollectionsMicroButton.tga";
     return target;
 }
 
@@ -455,18 +462,20 @@ bool ContentFrameXml::ComposeCollectionsLua(
         "local host=CreateFrame(\"Frame\",\"ContentManagerCollectionsFrame\",UIParent)\n"
         "host:SetWidth(DEFAULT_WIDTH); host:SetHeight(DEFAULT_HEIGHT); host:SetPoint(\"CENTER\"); host:SetFrameStrata(\"DIALOG\"); host:SetToplevel(true); host:SetMovable(true); host:EnableMouse(true); host:Hide()\n"
         "host:SetBackdrop({bgFile=\"Interface\\\\DialogFrame\\\\UI-DialogBox-Background-Dark\",edgeFile=\"Interface\\\\DialogFrame\\\\UI-DialogBox-Gold-Border\",tile=true,tileSize=32,edgeSize=32,insets={left=11,right=12,top=12,bottom=11}})\n"
-        "local titlePlate=host:CreateTexture(nil,\"BORDER\"); titlePlate:SetTexture(\"Interface\\\\DialogFrame\\\\UI-DialogBox-Header\"); titlePlate:SetWidth(420); titlePlate:SetHeight(64); titlePlate:SetPoint(\"TOP\",host,\"TOP\",0,12)\n"
-        "local title=host:CreateFontString(nil,\"ARTWORK\",\"GameFontNormalLarge\"); title:SetPoint(\"TOP\",0,-10); title:SetText(\"Collections\"); host.TitleText=title\n"
-        "local emblem=CreateFrame(\"Frame\",\"ContentManagerCollectionsEmblem\",host); emblem:SetWidth(72); emblem:SetHeight(72); emblem:SetPoint(\"TOPLEFT\",host,\"TOPLEFT\",-12,8); emblem:SetFrameLevel(host:GetFrameLevel()+5)\n"
+        "local titleBar=CreateFrame(\"Frame\",\"ContentManagerCollectionsTitleBar\",host); titleBar:SetWidth(560); titleBar:SetHeight(32); titleBar:SetPoint(\"TOP\",host,\"TOP\",0,5); titleBar:SetFrameLevel(host:GetFrameLevel()+4)\n"
+        "local titlePlate=titleBar:CreateTexture(nil,\"ARTWORK\"); titlePlate:SetTexture(\"Interface\\\\DialogFrame\\\\UI-DialogBox-Header\"); titlePlate:SetWidth(560); titlePlate:SetHeight(64); titlePlate:SetPoint(\"TOP\",titleBar,\"TOP\",0,12)\n"
+        "local title=titleBar:CreateFontString(nil,\"OVERLAY\",\"GameFontNormal\"); title:SetPoint(\"TOP\",titleBar,\"TOP\",0,-14); title:SetText(\"Collections\"); host.TitleText=title\n"
+        "local function layoutTitle(width) local titleWidth=math.max(240,math.min(560,width-120)); titleBar:SetWidth(titleWidth); titlePlate:SetWidth(titleWidth) end\n"
+        "local emblem=CreateFrame(\"Frame\",\"ContentManagerCollectionsEmblem\",host); emblem:SetWidth(72); emblem:SetHeight(72); emblem:SetPoint(\"TOPLEFT\",host,\"TOPLEFT\",-12,8); emblem:SetFrameLevel(host:GetFrameLevel()+7)\n"
         "local emblemIcon=emblem:CreateTexture(nil,\"ARTWORK\"); emblemIcon:SetAllPoints(emblem); emblemIcon:SetTexture(\"Interface\\\\Buttons\\\\ContentManagerCollections\")\n"
         "host.CollectionsIcon=emblem\n"
-        "local close=CreateFrame(\"Button\",\"ContentManagerCollectionsCloseButton\",host,\"UIPanelCloseButton\"); close:SetPoint(\"TOPRIGHT\",-5,-5); close:SetScript(\"OnClick\",function() host:Hide() end)\n"
+        "local close=CreateFrame(\"Button\",\"ContentManagerCollectionsCloseButton\",host,\"UIPanelCloseButton\"); close:SetPoint(\"TOPRIGHT\",-5,-5); close:SetFrameLevel(host:GetFrameLevel()+6); close:SetScript(\"OnClick\",function() host:Hide() end)\n"
         "UISpecialFrames[#UISpecialFrames+1]=host:GetName()\n"
         "local function report(message) if DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.AddMessage then DEFAULT_CHAT_FRAME:AddMessage(\"|cffff2020Collections:|r \"..message) end end\n"
         "local function invoke(name,page) if not name or name==\"\" then return true end local callback=_G[name]; if type(callback)~=\"function\" then report(\"page '\"..page.name..\"' is missing callback \"..name); return false end local ok,message=pcall(callback); if not ok then report(\"page '\"..page.name..\"' callback failed: \"..tostring(message)); return false end return true end\n"
         "local function hidePage(page) if not page then return end invoke(page.onHide,page); local frame=_G[page.frame]; if frame then frame:Hide() end end\n"
         "local function sortPages() ordered={} for _,page in pairs(registry) do table.insert(ordered,page) end table.sort(ordered,function(a,b) if a.order~=b.order then return a.order<b.order end local an,bn=string.lower(a.name),string.lower(b.name); if an==bn then return a.id<b.id end return an<bn end) end\n"
-        "local function layoutPage(page,frame) host:SetWidth(page.width or DEFAULT_WIDTH); host:SetHeight(page.height or DEFAULT_HEIGHT); host:ClearAllPoints(); host:SetPoint(\"CENTER\"); title:SetText(page.title and page.title~=\"\" and page.title or page.name); frame:ClearAllPoints(); frame:SetPoint(\"TOPLEFT\",host,\"TOPLEFT\",0,-CONTENT_TOP); frame:SetPoint(\"BOTTOMRIGHT\",host,\"BOTTOMRIGHT\",0,CONTENT_BOTTOM) end\n"
+        "local function layoutPage(page,frame) local width=page.width or DEFAULT_WIDTH; host:SetWidth(width); host:SetHeight(page.height or DEFAULT_HEIGHT); host:ClearAllPoints(); host:SetPoint(\"CENTER\"); layoutTitle(width); title:SetText(page.title and page.title~=\"\" and page.title or page.name); frame:ClearAllPoints(); frame:SetPoint(\"TOPLEFT\",host,\"TOPLEFT\",0,-CONTENT_TOP); frame:SetPoint(\"BOTTOMRIGHT\",host,\"BOTTOMRIGHT\",0,CONTENT_BOTTOM) end\n"
         "local function activatePage(page) local frame=page and _G[page.frame]; if not frame then if page then report(\"page '\"..page.name..\"' is missing frame \"..page.frame) end return false end if selectedId~=page.id then hidePage(registry[selectedId]) end; selectedId=nil; layoutPage(page,frame); frame:Show(); if not invoke(page.onShow,page) then frame:Hide(); return false end; selectedId=page.id; for index,candidate in ipairs(ordered) do if candidate.id==page.id and PanelTemplates_SetTab then PanelTemplates_SetTab(host,index) end end; return true end\n"
         "function ContentManagerCollections_SelectPage(id) local requested=registry[id]; if not requested then report(\"unknown page id \"..tostring(id)) elseif activatePage(requested) then return true end; for _,candidate in ipairs(ordered) do if candidate~=requested and activatePage(candidate) then return true end end; selectedId=nil; title:SetText(\"Collections\"); return false end\n"
         "local function rebuildTabs() sortPages(); local count=#ordered; for index,page in ipairs(ordered) do local tab=tabs[index] or CreateFrame(\"Button\",\"ContentManagerCollectionsFrameTab\"..index,host,\"CharacterFrameTabButtonTemplate\"); tabs[index]=tab; tab:SetID(index); tab:SetText(page.name); tab:SetHeight(32); tab:SetFrameLevel(host:GetFrameLevel()+3); tab:ClearAllPoints(); if index==1 then tab:SetPoint(\"BOTTOMLEFT\",host,\"BOTTOMLEFT\",22,-26) else tab:SetPoint(\"LEFT\",tabs[index-1],\"RIGHT\",-15,0) end local id=page.id; tab:SetScript(\"OnClick\",function() ContentManagerCollections_SelectPage(id) end); tab:Show(); if PanelTemplates_TabResize then PanelTemplates_TabResize(tab,0) end end for index=count+1,#tabs do tabs[index]:Hide() end host.numTabs=count; if PanelTemplates_SetNumTabs then PanelTemplates_SetNumTabs(host,count) end end\n"
@@ -498,7 +507,7 @@ bool ContentFrameXml::ComposeCollectionsLua(
         // its portrait separately in a y=5..30 aperture.  A 20-pixel chest at
         // bottom=7 is therefore centered in the visible aperture, not in the
         // otherwise transparent upper portion of the 28x58 button texture.
-        "local icon=button:CreateTexture(nil,\"OVERLAY\"); icon:SetWidth(20); icon:SetHeight(20); icon:SetPoint(\"BOTTOM\",button,\"BOTTOM\",0,7); icon:SetTexture(\"Interface\\\\Buttons\\\\ContentManagerCollections\")\n"
+        "local icon=button:CreateTexture(nil,\"OVERLAY\"); icon:SetWidth(20); icon:SetHeight(20); icon:SetPoint(\"BOTTOM\",button,\"BOTTOM\",0,7); icon:SetTexture(\"Interface\\\\Buttons\\\\ContentManagerCollectionsMicroButton\")\n"
         "positionIcon=function(pressed) icon:ClearAllPoints(); icon:SetPoint(\"BOTTOM\",button,\"BOTTOM\",pressed and 1 or 0,pressed and 6 or 7) end\n"
         "button:SetScript(\"OnMouseDown\",function() positionIcon(true) end)\n"
         "button:SetScript(\"OnMouseUp\",function() positionIcon(host:IsShown()) end)\n"
@@ -511,7 +520,7 @@ bool ContentFrameXml::ComposeCollectionsLua(
     return true;
 }
 
-std::vector<std::uint8_t> ContentFrameXml::ComposeCollectionsIcon()
+std::vector<std::uint8_t> ContentFrameXml::ComposeCollectionsEmblem()
 {
     // Original Content Manager artwork.  It is deliberately generated here so
     // the emblem remains deterministic, package-owned, and independent of any
@@ -610,6 +619,99 @@ std::vector<std::uint8_t> ContentFrameXml::ComposeCollectionsIcon()
     for (int y = 60; y <= 64; ++y)
         for (int x = 60; x <= 64; ++x)
             if (circle(x, y, 62, 62, 2)) pixel(x, y, 245, 220, 255, 255);
+    return bytes;
+}
+
+std::vector<std::uint8_t> ContentFrameXml::ComposeCollectionsMicroButtonIcon()
+{
+    // This is the original Collections micro-menu chest. Keep it independently
+    // generated and addressed so host-emblem revisions cannot replace it.
+    constexpr int width = 64, height = 64;
+    std::vector<std::uint8_t> bytes(18 + width * height * 4, 0);
+    bytes[2] = 2;
+    bytes[12] = width & 0xff; bytes[13] = width >> 8;
+    bytes[14] = height & 0xff; bytes[15] = height >> 8;
+    bytes[16] = 32; bytes[17] = 0x28;
+    auto pixel = [&](int x, int y, std::uint8_t r, std::uint8_t g,
+                     std::uint8_t b, std::uint8_t a) {
+        auto offset = 18 + static_cast<std::size_t>(y * width + x) * 4;
+        bytes[offset] = b; bytes[offset + 1] = g;
+        bytes[offset + 2] = r; bytes[offset + 3] = a;
+    };
+    auto lidEdge = [](int y) {
+        if (y <= 9) return 22;
+        if (y <= 11) return 17;
+        if (y <= 13) return 14;
+        if (y <= 15) return 11;
+        if (y <= 17) return 9;
+        return 7;
+    };
+    auto silhouette = [&](int x, int y) {
+        if (y >= 8 && y <= 29)
+        {
+            auto left = lidEdge(y);
+            return x >= left && x <= 63 - left;
+        }
+        if (y >= 26 && y <= 55)
+        {
+            if ((y == 26 || y == 55) && (x == 6 || x == 57)) return false;
+            return x >= 6 && x <= 57;
+        }
+        return false;
+    };
+
+    for (int y = 0; y < height; ++y)
+        for (int x = 0; x < width; ++x)
+            if (silhouette(x, y)) pixel(x, y, 28, 18, 14, 255);
+
+    for (int y = 11; y <= 26; ++y)
+    {
+        auto left = lidEdge(y) + 3;
+        for (int x = left; x <= 63 - left; ++x)
+        {
+            auto r = static_cast<std::uint8_t>(105 + (26 - y) * 3);
+            auto g = static_cast<std::uint8_t>(48 + (26 - y));
+            pixel(x, y, r, g, 24, 255);
+        }
+    }
+    for (int x = 10; x <= 53; ++x)
+        pixel(x, 23, 68, 30, 18, 255);
+
+    for (int y = 32; y <= 52; ++y)
+        for (int x = 9; x <= 54; ++x)
+            pixel(x, y, static_cast<std::uint8_t>(92 + (52 - y)),
+                  static_cast<std::uint8_t>(39 + (52 - y) / 3), 20, 255);
+    for (int x = 9; x <= 54; ++x)
+        for (int y : {39, 47}) pixel(x, y, 55, 27, 18, 255);
+
+    for (int y = 27; y <= 31; ++y)
+        for (int x = 7; x <= 56; ++x)
+            pixel(x, y, y == 31 ? 105 : 202 + (29 - y) * 8,
+                  y == 31 ? 65 : 142 + (29 - y) * 5,
+                  y == 31 ? 24 : 40, 255);
+    for (int y = 18; y <= 27; ++y)
+        for (int x = 28; x <= 35; ++x)
+            pixel(x, y, x == 28 || x == 35 ? 112 : 205,
+                  x == 28 || x == 35 ? 70 : 142, 35, 255);
+    for (int y = 33; y <= 52; ++y)
+        for (int x : {10, 11, 16, 17, 46, 47, 52, 53})
+            pixel(x, y, (x == 10 || x == 17 || x == 46 || x == 53) ? 112 : 190,
+                  (x == 10 || x == 17 || x == 46 || x == 53) ? 68 : 126,
+                  31, 255);
+
+    for (int y = 32; y <= 45; ++y)
+        for (int x = 25; x <= 38; ++x)
+        {
+            auto dx = x < 32 ? 31 - x : x - 32;
+            auto dy = y < 38 ? 38 - y : y - 39;
+            if (dx + dy > 8) continue;
+            bool edge = dx + dy >= 7;
+            pixel(x, y, edge ? 18 : 30, edge ? 48 : 112,
+                  edge ? 91 : static_cast<std::uint8_t>(185 + (45 - y) * 4), 255);
+        }
+    pixel(29, 35, 155, 224, 255, 255);
+    pixel(30, 35, 105, 190, 255, 255);
+    pixel(29, 36, 105, 190, 255, 255);
     return bytes;
 }
 
@@ -942,8 +1044,10 @@ std::vector<std::string> ContentFrameXml::Targets(
         targets.push_back(NativePveLuaTarget());
     if (resources.count(GeneratedResource::CollectionsController))
         targets.push_back(CollectionsLuaTarget());
-    if (resources.count(GeneratedResource::CollectionsIcon))
-        targets.push_back(CollectionsIconTarget());
+    if (resources.count(GeneratedResource::CollectionsEmblem))
+        targets.push_back(CollectionsEmblemTarget());
+    if (resources.count(GeneratedResource::CollectionsMicroButtonIcon))
+        targets.push_back(CollectionsMicroButtonIconTarget());
     std::sort(targets.begin(), targets.end());
     return targets;
 }
@@ -953,5 +1057,6 @@ std::vector<std::string> ContentFrameXml::AllTargets()
     return Targets({GeneratedResource::FloorNames,
                     GeneratedResource::NativePve,
                     GeneratedResource::CollectionsController,
-                    GeneratedResource::CollectionsIcon});
+                    GeneratedResource::CollectionsEmblem,
+                    GeneratedResource::CollectionsMicroButtonIcon});
 }

@@ -37,14 +37,16 @@ public:
         FloorNames,
         NativePve,
         CollectionsController,
-        CollectionsIcon
+        CollectionsEmblem,
+        CollectionsMicroButtonIcon
     };
     using ResourceSelection = std::set<GeneratedResource>;
 
     static std::string const& GeneratedLuaTarget();
     static std::string const& NativePveLuaTarget();
     static std::string const& CollectionsLuaTarget();
-    static std::string const& CollectionsIconTarget();
+    static std::string const& CollectionsEmblemTarget();
+    static std::string const& CollectionsMicroButtonIconTarget();
     static std::string const& StockTocTarget();
     // Stock Interface/FrameXML/FrameXML.toc line that declares where a modded
     // module is allowed to be added. The insertion is refused unless this exact
@@ -85,8 +87,9 @@ public:
     static bool ComposeCollectionsLua(
         std::vector<NativeCollectionPage> const& pages,
         std::string& text, std::string& error);
-    // Deterministic 64x64 uncompressed TGA horseshoe owned by Content Manager.
-    static std::vector<std::uint8_t> ComposeCollectionsIcon();
+    // Deterministic, independently addressed host-emblem and micro-menu art.
+    static std::vector<std::uint8_t> ComposeCollectionsEmblem();
+    static std::vector<std::uint8_t> ComposeCollectionsMicroButtonIcon();
     // Stock TOC bytes with the optional generated floor-name module and all
     // package load entries inserted deterministically. Anchors may be stock or
     // contributed entries; duplicate/case-alias targets, missing or ambiguous
