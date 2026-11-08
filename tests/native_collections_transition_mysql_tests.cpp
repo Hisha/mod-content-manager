@@ -269,6 +269,9 @@ int main(int argc, char** argv)
     assert(EntryText(a.outputPath, ContentFrameXml::CollectionsLuaTarget())
         .find("name=\"Appearances\"") != std::string::npos);
     assert(EntryText(a.outputPath, ContentFrameXml::CollectionsLuaTarget())
+        .find("Interface\\\\DialogFrame\\\\UI-DialogBox-Gold-Header") !=
+        std::string::npos);
+    assert(EntryText(a.outputPath, ContentFrameXml::CollectionsLuaTarget())
         .find("order=1000,frame=\"NativeTransmogCollectionsFrame\",title=\"Appearances\",width=704,height=616") != std::string::npos);
     auto aPublication = activate(a);
     assert(Active()->buildNumber == a.buildNumber);

@@ -39,6 +39,8 @@ local function Frame(name,parent)
  function frame:SetHighlightTexture(v,m) self.highlightTexture=v; self.highlightMode=m end
  function frame:SetButtonState(v,locked) self.buttonState=v; self.buttonLocked=locked end
  function frame:SetText(v) self.text=v end
+ function frame:SetJustifyH(v) self.justifyH=v end
+ function frame:SetJustifyV(v) self.justifyV=v end
  function frame:SetID(v) self.id=v end
  function frame:GetName() return self.name end
  function frame:GetParent() return self.parent end
@@ -85,6 +87,13 @@ assert g.ContentManagerCollectionsTitleBar.parent.name == "ContentManagerCollect
 assert g.ContentManagerCollectionsTitleBar.width == 560
 assert g.ContentManagerCollectionsTitleBar.height == 32
 assert g.ContentManagerCollectionsTitleBar.frameLevel == 4
+title = g.ContentManagerCollectionsFrame.TitleText
+assert title.parent.name == "ContentManagerCollectionsTitleBar"
+assert title.point[1] == "CENTER"
+assert title.point[2].name == "ContentManagerCollectionsTitleBar"
+assert title.point[3] == "CENTER"
+assert title.width == 512 and title.height == 18
+assert title.justifyH == "CENTER" and title.justifyV == "MIDDLE"
 assert g.ContentManagerCollectionsEmblem.parent.name == "ContentManagerCollectionsFrame"
 assert g.ContentManagerCollectionsEmblem.width == 72
 assert g.ContentManagerCollectionsEmblem.height == 72
@@ -135,6 +144,7 @@ assert g.ContentManagerCollectionsFrame.visible
 assert g.ContentManagerCollectionsFrame.width == 704
 assert g.ContentManagerCollectionsFrame.height == 616
 assert g.ContentManagerCollectionsFrame.TitleText.text == "Appearances"
+assert g.ContentManagerCollectionsFrame.TitleText.width == 512
 assert button.buttonState == "PUSHED" and button.buttonLocked
 assert icon.point[4] == 1 and icon.point[5] == 6
 assert g.NativeTransmogCollectionsFrame.visible
@@ -155,6 +165,7 @@ assert g.appearancesHidden == 1
 assert g.ContentManagerCollectionsFrame.width == 800
 assert g.ContentManagerCollectionsFrame.height == 520
 assert g.ContentManagerCollectionsFrame.TitleText.text == "Heirlooms"
+assert g.ContentManagerCollectionsFrame.TitleText.width == 512
 assert g.ContentManagerCollectionsFrame.selectedTab == 2
 assert len(g.HeirloomsFrame.points) == 2
 
