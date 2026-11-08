@@ -92,6 +92,7 @@ assert title.parent.name == "ContentManagerCollectionsTitleBar"
 assert title.point[1] == "CENTER"
 assert title.point[2].name == "ContentManagerCollectionsTitleBar"
 assert title.point[3] == "CENTER"
+assert title.point[4] == 0 and title.point[5] == 14
 assert title.width == 512 and title.height == 18
 assert title.justifyH == "CENTER" and title.justifyV == "MIDDLE"
 assert g.ContentManagerCollectionsEmblem.parent.name == "ContentManagerCollectionsFrame"
@@ -166,6 +167,8 @@ assert g.ContentManagerCollectionsFrame.width == 800
 assert g.ContentManagerCollectionsFrame.height == 520
 assert g.ContentManagerCollectionsFrame.TitleText.text == "Heirlooms"
 assert g.ContentManagerCollectionsFrame.TitleText.width == 512
+assert g.ContentManagerCollectionsFrame.TitleText.point[4] == 0
+assert g.ContentManagerCollectionsFrame.TitleText.point[5] == 14
 assert g.ContentManagerCollectionsFrame.selectedTab == 2
 assert len(g.HeirloomsFrame.points) == 2
 
@@ -175,6 +178,8 @@ assert g.ToysFrame.visible
 assert g.ContentManagerCollectionsFrame.width == 940
 assert g.ContentManagerCollectionsFrame.height == 590
 assert g.ContentManagerCollectionsFrame.TitleText.text == "Toy Box"
+assert g.ContentManagerCollectionsFrame.TitleText.point[4] == 0
+assert g.ContentManagerCollectionsFrame.TitleText.point[5] == 14
 assert g.ContentManagerCollectionsFrame.selectedTab == 3
 
 # Switching back restores page-specific metadata and replaces, rather than
@@ -183,6 +188,8 @@ g.ContentManagerCollectionsFrameTab1.scripts["OnClick"]()
 assert g.ContentManagerCollectionsFrame.width == 704
 assert g.ContentManagerCollectionsFrame.height == 616
 assert g.ContentManagerCollectionsFrame.TitleText.text == "Appearances"
+assert g.ContentManagerCollectionsFrame.TitleText.point[4] == 0
+assert g.ContentManagerCollectionsFrame.TitleText.point[5] == 14
 assert len(g.NativeTransmogCollectionsFrame.points) == 2
 assert len(g.ContentManagerCollectionsFrame.points) == 1
 

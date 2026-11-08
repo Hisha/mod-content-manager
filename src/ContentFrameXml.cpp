@@ -464,7 +464,9 @@ bool ContentFrameXml::ComposeCollectionsLua(
         "host:SetBackdrop({bgFile=\"Interface\\\\DialogFrame\\\\UI-DialogBox-Background-Dark\",edgeFile=\"Interface\\\\DialogFrame\\\\UI-DialogBox-Gold-Border\",tile=true,tileSize=32,edgeSize=32,insets={left=11,right=12,top=12,bottom=11}})\n"
         "local titleBar=CreateFrame(\"Frame\",\"ContentManagerCollectionsTitleBar\",host); titleBar:SetWidth(560); titleBar:SetHeight(32); titleBar:SetPoint(\"TOP\",host,\"TOP\",0,5); titleBar:SetFrameLevel(host:GetFrameLevel()+4)\n"
         "local titlePlate=titleBar:CreateTexture(nil,\"ARTWORK\"); titlePlate:SetTexture(\"Interface\\\\DialogFrame\\\\UI-DialogBox-Gold-Header\"); titlePlate:SetWidth(560); titlePlate:SetHeight(64); titlePlate:SetPoint(\"CENTER\",titleBar,\"CENTER\")\n"
-        "local title=titleBar:CreateFontString(nil,\"OVERLAY\",\"GameFontNormal\"); title:SetWidth(512); title:SetHeight(18); title:SetPoint(\"CENTER\",titleBar,\"CENTER\"); title:SetJustifyH(\"CENTER\"); title:SetJustifyV(\"MIDDLE\"); title:SetText(\"Collections\"); host.TitleText=title\n"
+        // The 64px Blizzard texture's dark field centers near source row 18,
+        // 14px above row 32; the artwork below row 39 is transparent padding.
+        "local title=titleBar:CreateFontString(nil,\"OVERLAY\",\"GameFontNormal\"); title:SetWidth(512); title:SetHeight(18); title:SetPoint(\"CENTER\",titleBar,\"CENTER\",0,14); title:SetJustifyH(\"CENTER\"); title:SetJustifyV(\"MIDDLE\"); title:SetText(\"Collections\"); host.TitleText=title\n"
         "local function layoutTitle(width) local titleWidth=math.max(240,math.min(560,width-120)); titleBar:SetWidth(titleWidth); titlePlate:SetWidth(titleWidth); title:SetWidth(titleWidth-48) end\n"
         "local emblem=CreateFrame(\"Frame\",\"ContentManagerCollectionsEmblem\",host); emblem:SetWidth(72); emblem:SetHeight(72); emblem:SetPoint(\"TOPLEFT\",host,\"TOPLEFT\",-12,8); emblem:SetFrameLevel(host:GetFrameLevel()+7)\n"
         "local emblemIcon=emblem:CreateTexture(nil,\"ARTWORK\"); emblemIcon:SetAllPoints(emblem); emblemIcon:SetTexture(\"Interface\\\\Buttons\\\\ContentManagerCollections\")\n"
